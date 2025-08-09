@@ -4,9 +4,19 @@ from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
-load_dotenv()
-TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("OWNER_ID", "0"))
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+# نجعل قراءة .env اختيارية فقط للتشغيل المحلي
+ENV_PATH = Path(".env")
+if ENV_PATH.exists():
+    load_dotenv(ENV_PATH, override=True)
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")  # قراءة التوكن من بيئة التشغيل مباشرة
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN غير موجود في بيئة التشغيل (Environment Variables)")
+
 
 # رقم الواتساب (بدون الصفر الأول)
 WHATSAPP_NUMBER = "966578363737"  # 966 مفتاح السعودية
