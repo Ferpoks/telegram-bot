@@ -1,8 +1,0 @@
-telegram-bot/
-├─ bot.py
-├─ requirements.txt
-├─ Procfile
-├─ runtime.txt
-├─ .gitignore
-├─ products.json        (اختياري لأسعار/عروض محفوظة)
-└─ README.md            (اختياري)
