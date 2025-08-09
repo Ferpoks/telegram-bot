@@ -168,10 +168,10 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ===== تشغيل البوت =====
 def main():
-    if not TOKEN:
+    if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN غير موجود في ملف .env")
 
-    app = Application.builder().token(TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu))
     app.add_handler(CallbackQueryHandler(on_button))
