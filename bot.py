@@ -2,7 +2,6 @@
 import os, json, sqlite3, threading
 from pathlib import Path
 from urllib.parse import quote_plus
-import time
 
 from dotenv import load_dotenv
 from telegram import (
@@ -78,6 +77,16 @@ def user_revoke(uid: int | str):
     with _conn_lock:
         _db().execute("UPDATE users SET premium=0 WHERE id=?", (uid,))
         _db().commit()
+
+# دالة المساعدة
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("""
+    📜 الأوامر المتاحة:
+    /start – بدء البوت
+    /id – عرض معرف المستخدم
+    /grant <id> – منح الصلاحية للمستخدم
+    /revoke <id> – سحب الصلاحية من المستخدم
+    """)
 
 # ========= ثوابت قابلة للتعديل =========
 MAIN_CHANNEL = "@ferpoks"  # <-- عدّلها ليوزر قناتك العامة
@@ -162,12 +171,6 @@ T = {
     }
 }
 
-# === دوال ترجمة بسيطة ===
-def tr_for_user(uid: int, key: str) -> str:
-    u = user_get(uid)
-    lang = u.get("lang", "ar")
-    return T.get(lang, T["ar"]).get(key, key)
-
 # === القوائم ===
 def main_menu_kb(uid: int) -> InlineKeyboardMarkup:
     lang = user_get(uid).get("lang", "ar")
@@ -191,6 +194,15 @@ def main_menu_kb(uid: int) -> InlineKeyboardMarkup:
 # === أوامر عامّة ===
 async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(str(update.effective_user.id))
+
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("""
+    📜 الأوامر المتاحة:
+    /start – بدء البوت
+    /id – عرض معرف المستخدم
+    /grant <id> – منح الصلاحية للمستخدم
+    /revoke <id> – سحب الصلاحية من المستخدم
+    """)
 
 # رسالة البداية + صورة
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -259,7 +271,7 @@ def main():
     init_db()
     app = Application.builder().token(BOT_TOKEN).post_init(on_startup).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("help", help_cmd))  # إضافة دالة المساعدة هنا
     app.add_handler(CommandHandler("id", cmd_id))
     app.add_handler(CommandHandler("grant", grant))
     app.add_handler(CommandHandler("revoke", revoke))
@@ -268,6 +280,5 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
 
