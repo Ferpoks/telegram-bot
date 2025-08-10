@@ -29,6 +29,7 @@ OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
 AI_ENABLED = bool(OPENAI_API_KEY)
 DB_PATH = os.getenv("DB_PATH", "/var/data/bot.db")
 
+# عميل OpenAI (يتفعّل فقط إذا فيه مفتاح)
 client = OpenAI(api_key=OPENAI_API_KEY) if AI_ENABLED else None
 
 # ============ قاعدة البيانات ============
@@ -82,7 +83,6 @@ def user_set_verify(uid: int|str, ok: bool):
         _db().commit()
 
 def user_should_force_verify(u: dict, ttl_seconds: int = 86400) -> bool:
-    # تحقّق يومي: إذا أكبر من 24 ساعة نعيد التحقق
     last = int(u.get("verified_at") or 0)
     return (time.time() - last) > ttl_seconds
 
@@ -118,9 +118,9 @@ def ai_get_mode(uid: int|str) -> str|None:
 # ============ ثوابت ============
 OWNER_ID = 6468743821
 
-# القناة العامة: نستخدم اليوزر العام فقط كما طلبت
-MAIN_CHANNEL_USERNAME = "Ferp0ks"    # بدون @
-MAIN_CHANNEL_LINK = "https://t.me/Ferp0ks"  # يظهر في زر الانضمام
+# قناة التحقق (يوزر عام بدون @)
+MAIN_CHANNEL_USERNAME = "Ferp0ks"
+MAIN_CHANNEL_LINK = "https://t.me/Ferp0ks"   # لزر الانضمام
 
 OWNER_DEEP_LINK = "tg://user?id=6468743821"
 
@@ -220,21 +220,20 @@ def tr(k: str) -> str:
     }
     return M.get(k, k)
 
-# ============ تحقّق فعلي + كاش يومي ============
+# ============ تحقّق فعلي + Retries + كاش يومي ============
 _member_cache = {}
 
 async def is_member(
     context: ContextTypes.DEFAULT_TYPE,
     user_id: int,
     force: bool = False,
-    retries: int = 2,
-    backoff: float = 0.6
+    retries: int = 3,
+    backoff: float = 0.7
 ) -> bool:
     """
-    تحقّق فعلي من عضوية القناة:
-    - يعتمد على @MAIN_CHANNEL_USERNAME
-    - يعيد المحاولة تلقائياً (للتأخير المؤقت من تيليجرام)
-    - يخزّن النتيجة 60 ثانية في كاش الذاكرة، ويُحفظ في جدول users (verified_ok/verified_at)
+    تحقّق فعلي من عضوية القناة عبر @MAIN_CHANNEL_USERNAME
+    مع إعادة محاولة تلقائية عند الفشل المؤقت + كاش 60 ثانية.
+    كما يخزّن النتيجة في جدول users (verified_ok/verified_at).
     """
     now = time.time()
     if not force:
@@ -266,14 +265,13 @@ async def is_member(
             await asyncio.sleep(backoff * attempt)
 
     _member_cache[user_id] = (last_ok, now + 60)
-    # خزّن أيضاً في users للتحقّق اليومي
-    user_set_verify(user_id, last_ok)
+    user_set_verify(user_id, last_ok)  # سجّل آخر نتيجة
     return last_ok
 
 def passes_gate(u: dict) -> bool:
-    """يعتمد على آخر نتيجة تحقق محفوظة، ويجبر إعادة التحقق إذا مر > 24 ساعة."""
+    # يعتمد على آخر نتيجة تحقق محفوظة، ويجبر إعادة التحقق إذا مر > 24 ساعة
     if user_should_force_verify(u, ttl_seconds=86400):
-        return False  # لازم إعادة تحقّق
+        return False
     return bool(u.get("verified_ok"))
 
 # ============ تعديل آمن ============
@@ -368,7 +366,7 @@ def ai_stop_kb() -> InlineKeyboardMarkup:
 
 # ============ أوامر / ============
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📜 الأوامر:\n/start – بدء\n/help – مساعدة")
+    await update.message.reply_text("📜 الأوامر:\n/start – بدء\n/help – مساعدة\n/debugverify – تشخيص التحقق\n/dv – تشخيص سريع")
 
 async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
@@ -379,9 +377,11 @@ async def refresh_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await on_startup(context.application)
     await update.message.reply_text("✅ تم تحديث قائمة الأوامر.")
 
-async def debugverify(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# تشخيص: /debugverify أو /dv
+async def debug_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    ok = await is_member(context, uid, force=True)
+    print(f"[debug_verify] received from user={uid}")
+    ok = await is_member(context, uid, force=True, retries=3, backoff=0.7)
     await update.message.reply_text(f"member={ok} (check logs for details)")
 
 # ============ /start ============
@@ -389,26 +389,29 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     init_db()
     uid = update.effective_user.id
     u = user_get(uid)
+    chat_id = update.effective_chat.id
 
+    # 1) رسالة الترحيب
     if Path(WELCOME_PHOTO).exists():
         with open(WELCOME_PHOTO, "rb") as f:
-            await context.bot.send_photo(update.effective_chat.id, InputFile(f), caption=WELCOME_TEXT_AR)
+            await context.bot.send_photo(chat_id, InputFile(f), caption=WELCOME_TEXT_AR)
     else:
-        await update.message.reply_text(WELCOME_TEXT_AR)
+        await context.bot.send_message(chat_id, WELCOME_TEXT_AR)
 
-    # تحقّق عند البدء: إذا مر > 24 ساعة، أعِد التحقق
-    if user_should_force_verify(u):
-        ok = await is_member(context, uid, force=True)
-    else:
-        ok = bool(u.get("verified_ok"))
+    # 2) هل نحتاج التحقق الآن؟ (أول مرة أو بعد 24 ساعة)
+    need_verify_now = (not bool(u.get("verified_ok"))) or user_should_force_verify(u)
 
-    if not ok:
-        await update.message.reply_text("🔐 انضم للقناة لاستخدام البوت:", reply_markup=gate_kb())
-        await update.message.reply_text(tr("need_admin"))
-        return
+    if need_verify_now:
+        ok = await is_member(context, uid, force=True, retries=3, backoff=0.7)
+        user_set_verify(uid, ok)
+        if not ok:
+            await context.bot.send_message(chat_id, "🔐 انضم للقناة لاستخدام البوت:", reply_markup=gate_kb())
+            await context.bot.send_message(chat_id, tr("need_admin"))
+            return
 
-    await update.message.reply_text("👇 القائمة:", reply_markup=bottom_menu_kb(uid))
-    await update.message.reply_text("📂 الأقسام:", reply_markup=sections_list_kb())
+    # 3) عرض القوائم
+    await context.bot.send_message(chat_id, "👇 القائمة:", reply_markup=bottom_menu_kb(uid))
+    await context.bot.send_message(chat_id, "📂 الأقسام:", reply_markup=sections_list_kb())
 
 # ============ الأزرار ============
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -421,7 +424,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # زر التحقق
     if q.data == "verify":
         print(f"[verify] user={uid} forcing check …")
-        ok = await is_member(context, uid, force=True)
+        ok = await is_member(context, uid, force=True, retries=3, backoff=0.7)
         if ok:
             await safe_edit(q, "👌 تم التحقق من اشتراكك بالقناة.\nاختر من القائمة بالأسفل:", kb=bottom_menu_kb(uid))
             await q.message.reply_text("📂 الأقسام:", reply_markup=sections_list_kb())
@@ -429,9 +432,9 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, "❗️ ما زلت غير مشترك أو تعذّر التحقق.\nانضم ثم اضغط تحقّق.\n\n" + tr("need_admin"), kb=gate_kb())
         return
 
-    # حارس قبل كل شيء: لو مر > 24 ساعة، أعد التحقق؛ وإلا استخدم آخر نتيجة
+    # حارس: لو مر > 24 ساعة، أعد التحقق الآن
     if user_should_force_verify(u):
-        is_ok = await is_member(context, uid, force=True)
+        is_ok = await is_member(context, uid, force=True, retries=3, backoff=0.7)
     else:
         is_ok = bool(u.get("verified_ok"))
 
@@ -533,9 +536,9 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     u = user_get(uid)
 
-    # تحقّق يومي: لو مر > 24 ساعة، أعِد التحقّق الآن
+    # تحقّق يومي: لو مر > 24 ساعة، أعد التحقّق الآن
     if user_should_force_verify(u):
-        ok = await is_member(context, uid, force=True)
+        ok = await is_member(context, uid, force=True, retries=3, backoff=0.7)
     else:
         ok = bool(u.get("verified_ok"))
 
@@ -577,10 +580,17 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
 # ============ الإقلاع ============
 async def on_startup(app: Application):
     await app.bot.delete_webhook(drop_pending_updates=True)
+    # أوامر عامة لكل المستخدمين
     await app.bot.set_my_commands(
-        [BotCommand("start", "بدء"), BotCommand("help", "مساعدة")],
+        [
+            BotCommand("start", "بدء"),
+            BotCommand("help", "مساعدة"),
+            BotCommand("debugverify", "تشخيص التحقق"),
+            BotCommand("dv", "تشخيص سريع"),
+        ],
         scope=BotCommandScopeDefault()
     )
+    # أوامر خاصة للمالك (تظهر لك فقط)
     try:
         await app.bot.set_my_commands(
             [
@@ -591,6 +601,7 @@ async def on_startup(app: Application):
                 BotCommand("revoke", "سحب صلاحية VIP"),
                 BotCommand("refreshcmds", "تحديث قائمة الأوامر"),
                 BotCommand("debugverify", "تشخيص التحقق"),
+                BotCommand("dv", "تشخيص سريع"),
             ],
             scope=BotCommandScopeChat(chat_id=OWNER_ID)
         )
@@ -604,16 +615,25 @@ def main():
            .post_init(on_startup)
            .concurrent_updates(True)
            .build())
+
+    # أوامر
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("id", cmd_id))
     app.add_handler(CommandHandler("grant", grant))
     app.add_handler(CommandHandler("revoke", revoke))
     app.add_handler(CommandHandler("refreshcmds", refresh_cmds))
-    app.add_handler(CommandHandler("debugverify", debugverify))
+    app.add_handler(CommandHandler(["debugverify", "dv"], debug_verify))
+
+    # أزرار
     app.add_handler(CallbackQueryHandler(on_button))
+
+    # رسائل نصية عامة (بدون أوامر)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, guard_messages))
+
+    # أخطاء
     app.add_error_handler(on_error)
+
     app.run_polling()
 
 if __name__ == "__main__":
