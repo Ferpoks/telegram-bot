@@ -72,9 +72,9 @@ def user_is_premium(uid: int|str) -> bool:
 
 # ========= ثوابت =========
 OWNER_ID = 6468743821                         # حسابك فقط
-MAIN_CHANNEL_USERNAME = "Ferp0ks"             # يوزر القناة العام بدون @
-MAIN_CHANNEL_LINK = "https://t.me/Ferp0ks"    # زر الانضمام
-OWNER_DEEP_LINK = "tg://user?id=6468743821"   # رابط محادثتك المباشر
+MAIN_CHANNEL_USERNAME = "Ferp0ks"             # انتبه: فيها رقم صفر 0
+MAIN_CHANNEL_LINK = "https://t.me/Ferp0ks"
+OWNER_DEEP_LINK = "tg://user?id=6468743821"
 
 WELCOME_PHOTO = "assets/ferpoks.jpg"
 WELCOME_TEXT_AR = (
@@ -84,7 +84,6 @@ WELCOME_TEXT_AR = (
 )
 
 # ========= الأقسام (free/vip) =========
-# ملاحظة: photo اختياري (رابط صورة مباشر). local_file لإرسال ملف محلي بدلاً من الرابط.
 SECTIONS = {
     # --- مجانية ---
     "suppliers_pack": {
@@ -163,20 +162,21 @@ def tr(k: str) -> str:
     }
     return M.get(k, k)
 
-# ========= كاش عضوية القناة =========
+# ========= كاش عضوية القناة (مع force) =========
 _member_cache = {}
-async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int, force: bool=False) -> bool:
     now = time.time()
-    cached = _member_cache.get(user_id)
-    if cached and cached[1] > now:
-        return cached[0]
+    if not force:
+        cached = _member_cache.get(user_id)
+        if cached and cached[1] > now:
+            return cached[0]
     try:
-        chat_ref = f"@{MAIN_CHANNEL_USERNAME}" if MAIN_CHANNEL_USERNAME else None
+        chat_ref = f"@{MAIN_CHANNEL_USERNAME}"
         cm = await context.bot.get_chat_member(chat_ref, user_id)
         ok = cm.status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER)
     except Exception:
         ok = False
-    _member_cache[user_id] = (ok, now + 600)
+    _member_cache[user_id] = (ok, now + 60)  # كاش دقيقة فقط
     return ok
 
 # ========= تعديل آمن =========
@@ -235,9 +235,13 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📜 الأوامر:\n/start – بدء\n/help – مساعدة")
 
 async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID:
-        return
+    if update.effective_user.id != OWNER_ID: return
     await update.message.reply_text(str(update.effective_user.id))
+
+async def refresh_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != OWNER_ID: return
+    await on_startup(context.application)
+    await update.message.reply_text("✅ تم تحديث قائمة الأوامر.")
 
 # ========= /start =========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -258,7 +262,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(tr("need_admin"))
         return
 
-    # قائمة + الأقسام (تظهر للجميع بعد الاشتراك)
+    # قائمة + الأقسام
     await update.message.reply_text("👇 القائمة:", reply_markup=bottom_menu_kb(uid))
     await update.message.reply_text("📂 الأقسام:", reply_markup=sections_list_kb())
 
@@ -269,9 +273,10 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = q.from_user.id
     await q.answer()
 
-    # تحقق
+    # تحقّق فوري (force=True) لتجاوز الكاش
     if q.data == "verify":
-        if await is_member(context, uid):
+        ok = await is_member(context, uid, force=True)
+        if ok:
             await safe_edit(q, "👌 تم التحقق من اشتراكك بالقناة.\nاختر من القائمة بالأسفل:", bottom_menu_kb(uid))
             await q.message.reply_text("📂 الأقسام:", reply_markup=sections_list_kb())
         else:
@@ -307,10 +312,8 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         key = q.data.replace("sec_", "")
         sec = SECTIONS.get(key)
         if not sec:
-            await safe_edit(q, "قريباً…", sections_list_kb())
-            return
+            await safe_edit(q, "قريباً…", sections_list_kb()); return
 
-        # مجاني أو VIP؟
         is_free = bool(sec.get("is_free"))
         is_allowed = is_free or (user_is_premium(uid) or uid == OWNER_ID)
 
@@ -319,11 +322,9 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photo = sec.get("photo")
 
         if not is_allowed:
-            # مقفول للمشتركين VIP
             await safe_edit(q, f"🔒 {title}\n\n{tr('access_denied')}\n\n💳 السعر: 10$ — راسل الإدارة للترقية.", vip_prompt_kb())
             return
 
-        # مفتوح
         text = f"{title}\n\n{desc}\n\n🔗 الرابط المباشر:\n{link}"
         if local and Path(local).exists():
             await safe_edit(q, f"{title}\n\n{desc}", section_back_kb())
@@ -363,12 +364,12 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # تنظيف Webhook + ضبط أوامر /
 async def on_startup(app: Application):
     await app.bot.delete_webhook(drop_pending_updates=True)
-    # عامة للجميع
+    # أوامر عامة
     await app.bot.set_my_commands(
         [BotCommand("start", "بدء"), BotCommand("help", "مساعدة")],
         scope=BotCommandScopeDefault()
     )
-    # خاصة بك فقط
+    # أوامر المالك فقط
     try:
         await app.bot.set_my_commands(
             [
@@ -377,6 +378,7 @@ async def on_startup(app: Application):
                 BotCommand("id", "معرّفك"),
                 BotCommand("grant", "منح صلاحية VIP"),
                 BotCommand("revoke", "سحب صلاحية VIP"),
+                BotCommand("refreshcmds", "تحديث قائمة الأوامر"),
             ],
             scope=BotCommandScopeChat(chat_id=OWNER_ID)
         )
@@ -395,6 +397,7 @@ def main():
     app.add_handler(CommandHandler("id", cmd_id))
     app.add_handler(CommandHandler("grant", grant))
     app.add_handler(CommandHandler("revoke", revoke))
+    app.add_handler(CommandHandler("refreshcmds", refresh_cmds))
     app.add_handler(CallbackQueryHandler(on_button))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, guard_messages))
     app.run_polling()
