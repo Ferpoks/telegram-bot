@@ -31,6 +31,11 @@ if not BOT_TOKEN:
 
 DB_PATH = os.getenv("DB_PATH", "/var/data/bot.db")
 OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
+
+# نماذج قابلة للتغيير من Environment
+OPENAI_CHAT_MODEL  = os.getenv("OPENAI_CHAT_MODEL", "gpt-4.1")   # اضبطها في Render إلى gpt-4.5 لو متاح
+OPENAI_IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-1")
+
 AI_ENABLED = bool(OPENAI_API_KEY) and (OpenAI is not None)
 client = OpenAI(api_key=OPENAI_API_KEY) if AI_ENABLED else None
 
@@ -59,7 +64,6 @@ CHANNEL_ID = None  # مثال: -1001234567890
 async def on_startup(app: Application):
     await app.bot.delete_webhook(drop_pending_updates=True)
 
-    # 🔎 حل اسم القناة إلى chat_id مرة واحدة
     global CHANNEL_ID
     CHANNEL_ID = None
     for u in MAIN_CHANNEL_USERNAMES:
@@ -73,7 +77,6 @@ async def on_startup(app: Application):
     if CHANNEL_ID is None:
         print("[startup] ❌ could not resolve channel id; will fallback to @username")
 
-    # أوامر عامة
     await app.bot.set_my_commands(
         [
             BotCommand("start", "بدء"),
@@ -83,7 +86,6 @@ async def on_startup(app: Application):
         ],
         scope=BotCommandScopeDefault()
     )
-    # أوامر المالك
     try:
         await app.bot.set_my_commands(
             [
@@ -112,7 +114,6 @@ def _db():
     return conn
 
 def migrate_db():
-    """ترقية تلقائية لو سكيمة users قديمة وما فيها verified_*"""
     with _conn_lock:
         c = _db().cursor()
         c.execute("PRAGMA table_info(users)")
@@ -125,7 +126,6 @@ def migrate_db():
 
 def init_db():
     with _conn_lock:
-        # أبسط إنشاء ممكن… لو الجدول موجود قديم ما نخربه
         _db().execute("""
         CREATE TABLE IF NOT EXISTS users (
           id TEXT PRIMARY KEY,
@@ -193,7 +193,6 @@ def tr(k: str) -> str:
 
 # ========= الأقسام =========
 SECTIONS = {
-    # مجانية
     "suppliers_pack": {
         "title": "📦 بكج الموردين (مجاني)",
         "desc": "ملف شامل لأرقام ومصادر الموردين.",
@@ -212,7 +211,6 @@ SECTIONS = {
         "link": "https://drive.google.com/drive/folders/1-UADEMHUswoCyo853FdTu4R4iuUx_f3I?usp=drive_link",
         "photo": None, "is_free": True,
     },
-    # VIP
     "kash_malik": {
         "title": "♟️ كش ملك (VIP)",
         "desc": "قسم كش ملك – محتوى مميز.",
@@ -309,11 +307,11 @@ async def safe_edit(q, text=None, kb=None):
 # ========= حالات العضوية المسموحة =========
 ALLOWED_STATUSES = {ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR}
 try:
-    ALLOWED_STATUSES.add(ChatMemberStatus.OWNER)  # بعض الإصدارات
+    ALLOWED_STATUSES.add(ChatMemberStatus.OWNER)
 except AttributeError:
     pass
 
-# ========= التحقق من العضوية (chat_id أولاً ثم @username) =========
+# ========= التحقق من العضوية =========
 _member_cache = {}  # {uid: (ok, expire)}
 async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int,
                     force=False, retries=3, backoff=0.7) -> bool:
@@ -344,20 +342,66 @@ async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int,
     user_set_verify(user_id, False)
     return False
 
-# ========= AI (اختياري) =========
+# ========= AI =========
+def _chat_with_fallback(messages):
+    """
+    يحاول الموديل المحدد في OPENAI_CHAT_MODEL أولاً،
+    ثم يسقط تلقائياً على بدائل آمنة لو الموديل غير متاح/موقوف.
+    """
+    if not AI_ENABLED or client is None:
+        return None, "ai_disabled"
+
+    primary = OPENAI_CHAT_MODEL.strip()
+    fallbacks = [m for m in [
+        primary,
+        "gpt-4.1",     # بديل موثوق
+        "gpt-4o"       # بديل آخر
+    ] if m]  # نحافظ على الترتيب ونتجنب التكرار
+
+    last_err = None
+    for model in fallbacks:
+        try:
+            r = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=0.7
+            )
+            return r, None
+        except Exception as e:
+            msg = str(e)
+            last_err = msg
+            # مشاكل الموديل: جرّب التالي
+            if ("model_not_found" in msg or "Not found" in msg or "deprecated" in msg):
+                continue
+            # مشاكل الرصيد أو المفتاح: أرجع فوراً برسالة واضحة
+            if "insufficient_quota" in msg or "You exceeded your current quota" in msg:
+                return None, "quota"
+            if "invalid_api_key" in msg or "Incorrect API key" in msg:
+                return None, "apikey"
+            # غير ذلك: جرّب التالي ثم نرجع آخر خطأ عام
+            continue
+    # لو فشل كل شيء
+    return None, (last_err or "unknown")
+
 def ai_chat_reply(prompt: str) -> str:
     if not AI_ENABLED or client is None:
         return tr("ai_disabled")
     try:
-        r = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role":"system","content":"أجب بالعربية بإيجاز."},
-                      {"role":"user","content":prompt}],
-            temperature=0.7
-        )
+        r, err = _chat_with_fallback([
+            {"role":"system","content":"أجب بالعربية بإيجاز."},
+            {"role":"user","content":prompt}
+        ])
+        if err == "ai_disabled":
+            return tr("ai_disabled")
+        if err == "quota":
+            return "⚠️ نفاد الرصيد في حساب OpenAI."
+        if err == "apikey":
+            return "⚠️ مفتاح OpenAI غير صالح أو مفقود."
+        if r is None:
+            return "⚠️ تعذّر التنفيذ حالياً. جرّب لاحقاً."
         return (r.choices[0].message.content or "").strip()
-    except Exception as e:
-        return f"⚠️ تعذّر الحصول على رد: {e}"
+    except Exception:
+        return "⚠️ تعذّر التنفيذ حالياً. جرّب لاحقاً."
 
 def ai_image_url(prompt: str) -> str:
     """توليد صورة وإرجاع رابط مباشر (حجم مدعوم)."""
@@ -365,10 +409,10 @@ def ai_image_url(prompt: str) -> str:
         return tr("ai_disabled")
     try:
         img = client.images.generate(
-            model="gpt-image-1",
+            model=OPENAI_IMAGE_MODEL,   # gpt-image-1 غالباً
             prompt=prompt,
-            size="1024x1024",       # ← تعديل مهم: 512x512 لم يعد مدعوم
-            response_format="url"   # ← نطلب URL ليتوافق مع كود الإرسال الحالي
+            size="1024x1024",           # الأحجام المدعومة مذكورة في الدوك.
+            response_format="url"
         )
         return img.data[0].url
     except Exception as e:
@@ -379,7 +423,7 @@ def ai_image_url(prompt: str) -> str:
             return "⚠️ نفاد الرصيد في حساب OpenAI."
         if "invalid_api_key" in msg or "Incorrect API key" in msg:
             return "⚠️ مفتاح OpenAI غير صالح أو مفقود."
-        return f"⚠️ تعذّر إنشاء الصورة: {e}"
+        return "⚠️ تعذّر إنشاء الصورة حالياً. جرّب لاحقاً."
 
 # ========= أوامر =========
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -406,7 +450,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user_get(uid)
 
-    # ترحيب
     try:
         if Path(WELCOME_PHOTO).exists():
             with open(WELCOME_PHOTO, "rb") as f:
@@ -416,7 +459,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print("[welcome] ERROR:", e)
 
-    # تحقّق واضح: إمّا بوابة أو قائمة
     try:
         ok = await is_member(context, uid, force=True, retries=3, backoff=0.7)
     except Exception as e:
@@ -453,7 +495,6 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, "❗️ ما زلت غير مشترك أو تعذّر التحقق.\nانضم ثم اضغط تحقّق.\n\n" + need_admin_text(), kb=gate_kb())
         return
 
-    # لازم يكون مشترك
     if not await is_member(context, uid, retries=3, backoff=0.7):
         await safe_edit(q, "🔐 انضم للقناة لاستخدام البوت:", kb=gate_kb()); return
 
@@ -557,19 +598,14 @@ async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
     print(f"⚠️ Error: {getattr(context, 'error', 'unknown')}")
 
-# ========= الإقلاع (حل chat_id + الأوامر) مكرر للاستخدام اليدوي =========
-async def on_startup_manual(app: Application):
-    await on_startup(app)
-
 # ========= نقطة التشغيل =========
 def main():
     init_db()
     app = (Application.builder()
            .token(BOT_TOKEN)
-           .post_init(on_startup)   # on_startup معرّفة فوق، فيعمل على Render
+           .post_init(on_startup)
            .concurrent_updates(True)
            .build())
-    # أوامر
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("id", cmd_id))
@@ -577,11 +613,8 @@ def main():
     app.add_handler(CommandHandler("revoke", revoke))
     app.add_handler(CommandHandler("refreshcmds", refresh_cmds))
     app.add_handler(CommandHandler(["debugverify","dv"], debug_verify))
-    # أزرار
     app.add_handler(CallbackQueryHandler(on_button))
-    # رسائل عامة
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, guard_messages))
-    # أخطاء
     app.add_error_handler(on_error)
     app.run_polling()
 
