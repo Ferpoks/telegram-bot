@@ -52,7 +52,7 @@ WELCOME_TEXT_AR = (
     "المحتوى المجاني متاح للجميع، ومحتوى VIP فيه ميزات أقوى. ✨"
 )
 
-CHANNEL_ID = None  # سيتم تحديده عند التشغيل
+CHANNEL_ID = None  # سيتم حله عند الإقلاع
 
 # ========= قاعدة البيانات =========
 _conn_lock = threading.Lock()
@@ -91,7 +91,7 @@ def init_db():
         _db().commit()
     migrate_db()
 
-def user_get(uid):
+def user_get(uid: int|str) -> dict:
     uid = str(uid)
     with _conn_lock:
         c = _db().cursor()
@@ -103,40 +103,36 @@ def user_get(uid):
             return {"id": uid, "premium": 0, "verified_ok": 0, "verified_at": 0}
         return dict(r)
 
-def user_set_verify(uid, ok):
+def user_set_verify(uid: int|str, ok: bool):
     with _conn_lock:
         _db().execute("UPDATE users SET verified_ok=?, verified_at=? WHERE id=?",
                       (1 if ok else 0, int(time.time()), str(uid)))
         _db().commit()
 
-def user_is_premium(uid):
+def user_is_premium(uid: int|str) -> bool:
     return bool(user_get(uid)["premium"])
-def user_grant(uid):
+def user_grant(uid: int|str):
     with _conn_lock:
-        _db().execute("UPDATE users SET premium=1 WHERE id=?", (str(uid),))
-        _db().commit()
-def user_revoke(uid):
+        _db().execute("UPDATE users SET premium=1 WHERE id=?", (str(uid),)); _db().commit()
+def user_revoke(uid: int|str):
     with _conn_lock:
-        _db().execute("UPDATE users SET premium=0 WHERE id=?", (str(uid),))
-        _db().commit()
+        _db().execute("UPDATE users SET premium=0 WHERE id=?", (str(uid),)); _db().commit()
 
-def ai_set_mode(uid, mode):
+def ai_set_mode(uid: int|str, mode: str|None):
     with _conn_lock:
         _db().execute(
             "INSERT INTO ai_state (user_id, mode, updated_at) VALUES (?, ?, strftime('%s','now')) "
             "ON CONFLICT(user_id) DO UPDATE SET mode=excluded.mode, updated_at=strftime('%s','now')",
             (str(uid), mode)
-        )
-        _db().commit()
-def ai_get_mode(uid):
+        ); _db().commit()
+def ai_get_mode(uid: int|str):
     with _conn_lock:
         c = _db().cursor()
         c.execute("SELECT mode FROM ai_state WHERE user_id=?", (str(uid),))
-        r = c.fetchone()
-        return r["mode"] if r else None
+        r = c.fetchone(); return r["mode"] if r else None
 
 # ========= نصوص =========
-def tr(k):
+def tr(k: str) -> str:
     M = {
         "follow_btn": "📣 الانضمام للقناة",
         "check_btn": "✅ تحقّق",
@@ -146,10 +142,36 @@ def tr(k):
     }
     return M.get(k, k)
 
-# ========= باقي الكود =========
-# (هنا باقي الكود هو نفسه الذي أرسلته سابقًا، بدون حذف أي جزء من الأوامر أو الأقسام أو المعالجة)
+# ========= الأقسام =========
+SECTIONS = {
+    "suppliers_pack": {"title": "📦 بكج الموردين (مجاني)", "desc": "ملف شامل لأرقام الموردين.", "link": "https://docs.google.com/document/d/...", "photo": None, "is_free": True},
+    "python_zero": {"title": "🐍 بايثون من الصفر (مجاني)", "desc": "تعلم بايثون مجانًا.", "link": "https://...", "photo": None, "is_free": True},
+    "ai_hub": {"title": "🧠 الذكاء الاصطناعي (VIP)", "desc": "مركز أدوات AI.", "link": "https://t.me/ferpokss", "photo": None, "is_free": False},
+}
 
-# ========= نقطة التشغيل =========
+# ========= لوحات الأزرار =========
+def gate_kb(): return InlineKeyboardMarkup([[InlineKeyboardButton(tr("follow_btn"), url=MAIN_CHANNEL_LINK)],[InlineKeyboardButton(tr("check_btn"), callback_data="verify")]])
+def bottom_menu_kb(uid: int): return InlineKeyboardMarkup([[InlineKeyboardButton("👤 معلوماتي", callback_data="myinfo")],[InlineKeyboardButton("⚡ ترقية إلى VIP", callback_data="upgrade")],[InlineKeyboardButton("📨 تواصل", url=OWNER_DEEP_LINK)]])
+def sections_list_kb(): 
+    rows = [[InlineKeyboardButton(("🟢" if sec.get("is_free") else "🔒") + " " + sec['title'], callback_data=f"sec_{k}")] for k, sec in SECTIONS.items()]
+    rows.append([InlineKeyboardButton(tr("back"), callback_data="back_home")])
+    return InlineKeyboardMarkup(rows)
+def ai_hub_kb(): return InlineKeyboardMarkup([[InlineKeyboardButton("🤖 دردشة AI", callback_data="ai_chat")],[InlineKeyboardButton("🖼️ توليد صورة", callback_data="ai_image")],[InlineKeyboardButton("↩️ رجوع", callback_data="back_sections")]])
+def ai_stop_kb(): return InlineKeyboardMarkup([[InlineKeyboardButton("🔚 إنهاء", callback_data="ai_stop")],[InlineKeyboardButton("↩️ رجوع", callback_data="back_sections")]])
+
+# ========= on_startup =========
+async def on_startup(app):
+    global CHANNEL_ID
+    await app.bot.delete_webhook(drop_pending_updates=True)
+    for u in MAIN_CHANNEL_USERNAMES:
+        try:
+            chat = await app.bot.get_chat(f"@{u}")
+            CHANNEL_ID = chat.id
+            break
+        except Exception as e:
+            print(f"[startup] فشل {u}: {e}")
+
+# ========= main =========
 def main():
     init_db()
     app = (Application.builder()
@@ -157,17 +179,9 @@ def main():
            .post_init(on_startup)
            .concurrent_updates(True)
            .build())
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_cmd))
-    app.add_handler(CommandHandler("id", cmd_id))
-    app.add_handler(CommandHandler("grant", grant))
-    app.add_handler(CommandHandler("revoke", revoke))
-    app.add_handler(CommandHandler("refreshcmds", refresh_cmds))
-    app.add_handler(CommandHandler(["debugverify","dv"], debug_verify))
-    app.add_handler(CallbackQueryHandler(on_button))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, guard_messages))
-    app.add_error_handler(on_error)
+    app.add_handler(CommandHandler("start", lambda u, c: u.message.reply_text("مرحباً!")))
     app.run_polling()
 
 if __name__ == "__main__":
     main()
+
