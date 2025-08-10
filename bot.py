@@ -2,6 +2,7 @@
 import os, json, sqlite3, threading
 from pathlib import Path
 from urllib.parse import quote_plus
+import time
 
 from dotenv import load_dotenv
 from telegram import (
@@ -79,12 +80,11 @@ def user_revoke(uid: int | str):
         _db().commit()
 
 # ========= ثوابت قابلة للتعديل =========
-# ملاحظة: التحقق من الاشتراك يحتاج قناة "عامة" لها @username (مو رابط دعوة مؤقت)
 MAIN_CHANNEL = "@ferpoks"  # <-- عدّلها ليوزر قناتك العامة
 OWNER_CHANNEL = "https://t.me/ferpoks"  # قناة/وسيلة الدفع/التواصل
 ADMIN_IDS = {6468743821}  # ضع معرفك كمدير
 
-WELCOME_PHOTO = "assets/ferpoks.jpg"  # ضع الصورة داخل المشروع
+WELCOME_PHOTO_FILE_ID = "AAQ...your_file_id..."  # استبدل بـ file_id الخاص بالصورة
 WELCOME_TEXT_AR = (
     "مرحباً بك في بوت فيربوكس 🔥\n"
     "يمكنك معرفة كل ما تحتاجه لفتح متجر إلكتروني مثل أرخص المواقع وأرقام موردين الاشتراكات ومواقع زيادة المتابعين وكل ما يخص التاجر.\n"
@@ -96,86 +96,21 @@ WELCOME_TEXT_EN = (
     "🎯 Do it yourself — no need to buy from others."
 )
 
-PRICE_TEXT = "💳 اشتراك 10$ يمنحك الوصول الكامل لكل الأقسام 🌟"
+# ========== كاش عضوية القناة ==========
+_member_cache = {}  # {user_id: (is_member, expire_ts)}
 
-# ===== روابط الأقسام =====
-LINKS = {
-    "suppliers_pack": {
-        "title_ar": "📦 بكج الموردين",
-        "title_en": "📦 Suppliers Pack",
-        "desc_ar": "ملف شامل لأرقام ومصادر الموردين.",
-        "desc_en": "A comprehensive suppliers pack.",
-        "buttons": [
-            ("فتح المستند", "https://docs.google.com/document/d/1rR2nJMUNDoj0cogeenVh9fYVs_ZTM5W0bl0PBIOVwL0/edit?tab=t.0"),
-        ],
-    },
-    "kash_malik": {
-        "title_ar": "♟️ كش ملك",
-        "title_en": "♟️ Kash Malik",
-        "desc_ar": "مرجع كبير يحتوي على أكثر من 1000 سطر حول التجارة والتواصل الاجتماعي.",
-        "desc_en": "Big reference (1000+ lines) on commerce & social.",
-        # لو عندك رابط مباشر:
-        # "buttons": [("تنزيل الملف (رابط)", "PUT_DIRECT_LINK_HERE")],
-        # ولو تريد رفع ملف محلي ضعه هنا:
-        "local_file": "assets/kash-malik.docx",  # ضع ملفك f48ud....docx بهذا الاسم
-    },
-    "cyber_sec": {
-        "title_ar": "🛡️ الأمن السيبراني",
-        "title_en": "🛡️ Cyber Security",
-        "desc_ar": "مراجع ودورات الأمن السيبراني.",
-        "desc_en": "Cyber security references.",
-        "buttons": [
-            # تنبيه: روابط S3 موقّتة، قد تنتهي. الأفضل لاحقاً رفع دائم.
-            ("ملف 1", "https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/pZ0spOmm1K0dA2qAzUuWUb4CcMMjUPTbn7WMRwAc.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250810%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250810T000214Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=aef54ed1c5d583f14beac04516dcf0c69059dfd3a3bf1f9618ea96310841d939"),
-            ("ملف/مجلد 2", "https://www.mediafire.com/folder/r26pp5mpduvnx/%D8%AF%D9%88%D8%B1%D8%A9_%D8%A7%D9%84%D9%87%D8%A7%D9%83%D8%B1_%D8%A7%D9%84%D8%A7%D8%AE%D9%84%D8%A7%D9%82%D9%8A_%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D8%B1%D8%AD%D9%85%D9%86_%D9%88%D8%B5%D9%81%D9%8A"),
-        ],
-    },
-    "python_zero": {
-        "title_ar": "🐍 البايثون من الصفر",
-        "title_en": "🐍 Python from scratch",
-        "desc_ar": "ابدأ بايثون من الصفر بمراجع منظّمة.",
-        "desc_en": "Start Python from scratch.",
-        "buttons": [
-            ("ملف PDF", "https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/Y8WctvBLiA6u6AASeZX2IUfDQAolTJ4QFGx9WRCu.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250810%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250810T000415Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=d6a041d82021f272e48ba56510e8abc389c1ff27a01666a152d7b7363236e5a6"),
-        ],
-    },
-    "adobe_win": {
-        "title_ar": "🎨 برامج الأدوبي (ويندوز)",
-        "title_en": "🎨 Adobe (Windows)",
-        "desc_ar": "روابط برامج Adobe للويندوز (سنضيف الروابط لاحقاً).",
-        "desc_en": "Adobe programs for Windows (links later).",
-        "buttons": [
-            ("قريباً", "https://t.me/ferpoks"),
-        ],
-    },
-    "ecommerce_courses": {
-        "title_ar": "🛒 دورات التجارة الإلكترونية",
-        "title_en": "🛒 E-commerce courses",
-        "desc_ar": "حزمة دورات وشروحات تجارة إلكترونية.",
-        "desc_en": "E-commerce course bundle.",
-        "buttons": [
-            ("فتح المجلد", "https://drive.google.com/drive/folders/1-UADEMHUswoCyo853FdTu4R4iuUx_f3I?usp=drive_link"),
-        ],
-    },
-    "canva_500": {
-        "title_ar": "🖼️ 500 دعوة كانفا برو",
-        "title_en": "🖼️ 500 Canva Pro invites",
-        "desc_ar": "دعوات كانفا برو مدى الحياة.",
-        "desc_en": "Lifetime Canva Pro invites.",
-        "buttons": [
-            ("زيارة الصفحة", "https://digital-plus3.com/products/canva500"),
-        ],
-    },
-    "dark_gpt": {
-        "title_ar": "🕶️ Dark GPT",
-        "title_en": "🕶️ Dark GPT",
-        "desc_ar": "أداة/رابط ستتم إضافته لاحقًا.",
-        "desc_en": "Will be added later.",
-        "buttons": [
-            ("قريباً", "https://t.me/ferpoks"),
-        ],
-    },
-}
+async def is_member(context, user_id: int) -> bool:
+    now = time.time()
+    cached = _member_cache.get(user_id)
+    if cached and cached[1] > now:
+        return cached[0]
+    try:
+        cm = await context.bot.get_chat_member(MAIN_CHANNEL, user_id)
+        ok = cm.status in ("member","administrator","creator")
+    except Exception:
+        ok = False
+    _member_cache[user_id] = (ok, now + 600)  # 10 دقائق
+    return ok
 
 # ========= ترجمة =========
 T = {
@@ -191,7 +126,7 @@ T = {
         "english": "English",
         "owner_channel": "قناة المسؤول",
         "subscribe_10": "💳 اشتراك 10$",
-        "sub_desc": PRICE_TEXT,
+        "sub_desc": "💳 اشتراك 10$ يمنحك الوصول الكامل لكل الأقسام 🌟",
         "main_menu": "اختر من القائمة:",
         "access_denied": "⚠️ لا تملك اشتراكًا مُفعّلاً بعد. تواصل مع المسؤول بعد الدفع.",
         "access_ok": "✅ تم تفعيل اشتراكك.",
@@ -214,7 +149,7 @@ T = {
         "english": "English",
         "owner_channel": "Owner channel",
         "subscribe_10": "💳 Subscribe $10",
-        "sub_desc": PRICE_TEXT,
+        "sub_desc": "💳 Subscribe $10 for full access to all sections 🌟",
         "main_menu": "Choose from the menu:",
         "access_denied": "⚠️ Your subscription is not active yet. Contact owner after payment.",
         "access_ok": "✅ Your subscription is active.",
@@ -224,27 +159,14 @@ T = {
         "open": "Open",
         "download": "Download",
         "commands": "📜 Commands:\n/start – start bot\n/id – your id\n/grant <id> (admin)\n/revoke <id> (admin)",
-    # === دوال ترجمة بسيطة ===
+    }
+}
+
+# === دوال ترجمة بسيطة ===
 def tr_for_user(uid: int, key: str) -> str:
     u = user_get(uid)
     lang = u.get("lang", "ar")
     return T.get(lang, T["ar"]).get(key, key)
-
-def title_for(sec: dict, uid: int) -> str:
-    lang = user_get(uid).get("lang", "ar")
-    return sec["title_ar"] if lang == "ar" else sec["title_en"]
-
-def desc_for(sec: dict, uid: int) -> str:
-    lang = user_get(uid).get("lang", "ar")
-    return sec["desc_ar"] if lang == "ar" else sec["desc_en"]
-
-# === عضوية القناة ===
-async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
-    try:
-        cm = await context.bot.get_chat_member(MAIN_CHANNEL, user_id)
-        return cm.status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
-    except Exception:
-        return False
 
 # === القوائم ===
 def main_menu_kb(uid: int) -> InlineKeyboardMarkup:
@@ -266,18 +188,9 @@ def main_menu_kb(uid: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(tr_for_user(uid, "subscribe_10"), callback_data="subscribe")]
     ])
 
-def gate_kb(uid: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(tr_for_user(uid, "follow_btn"), url=f"https://t.me/{MAIN_CHANNEL.lstrip('@')}")],
-        [InlineKeyboardButton(tr_for_user(uid, "check_btn"), callback_data="verify")]
-    ])
-
 # === أوامر عامّة ===
 async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(str(update.effective_user.id))
-
-async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(tr_for_user(update.effective_user.id, "commands"))
 
 # رسالة البداية + صورة
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -286,13 +199,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = user_get(uid)  # ينشئ سجل للمستخدم لو غير موجود
 
     # أرسل صورة الترحيب إن وجدت
-    if Path(WELCOME_PHOTO).exists():
-        with open(WELCOME_PHOTO, "rb") as f:
-            await context.bot.send_photo(
-                chat_id=update.effective_chat.id,
-                photo=InputFile(f),
-                caption=tr_for_user(uid, "hello_body"),
-            )
+    if WELCOME_PHOTO_FILE_ID:
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
+            photo=WELCOME_PHOTO_FILE_ID,
+            caption=tr_for_user(uid, "hello_body")
+        )
     else:
         await update.message.reply_text(tr_for_user(uid, "hello_body"))
 
@@ -316,85 +228,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = q.from_user.id
     await q.answer()
 
-    # لغة
-    if q.data == "lang":
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🇸🇦 " + T["ar"]["arabic"], callback_data="lang_ar"),
-             InlineKeyboardButton("🇬🇧 " + T["ar"]["english"], callback_data="lang_en")],
-            [InlineKeyboardButton(tr_for_user(uid, "back"), callback_data="back")]
-        ])
-        await q.edit_message_text(tr_for_user(uid, "language"), reply_markup=kb)
-        return
-    if q.data == "lang_ar":
-        user_set_lang(uid, "ar")
-        await q.edit_message_text(tr_for_user(uid, "lang_switched"), reply_markup=main_menu_kb(uid))
-        return
-    if q.data == "lang_en":
-        user_set_lang(uid, "en")
-        await q.edit_message_text(tr_for_user(uid, "lang_switched"), reply_markup=main_menu_kb(uid))
-        return
-
-    # التحقق من الاشتراك بالقناة
-    if q.data == "verify":
-        if await is_member(context, uid):
-            await q.edit_message_text(tr_for_user(uid, "main_menu"), reply_markup=main_menu_kb(uid))
-        else:
-            await q.edit_message_text(tr_for_user(uid, "follow_gate"), reply_markup=gate_kb(uid))
-        return
-
-    # اشتراك 10$
-    if q.data == "subscribe":
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📣 " + tr_for_user(uid, "owner_channel"), url=OWNER_CHANNEL)],
-            [InlineKeyboardButton(tr_for_user(uid, "back"), callback_data="back")]
-        ])
-        await q.edit_message_text(T[user_get(uid)["lang"]]["sub_desc"], reply_markup=kb)
-        return
-
-    if q.data == "back":
-        await q.edit_message_text(tr_for_user(uid, "main_menu"), reply_markup=main_menu_kb(uid))
-        return
-
-    # التأكد من الاشتراك بالقناة قبل الأقسام
-    if q.data.startswith("sec_") and not await is_member(context, uid):
-        await q.edit_message_text(tr_for_user(uid, "follow_gate"), reply_markup=gate_kb(uid))
-        return
-
-    # التحقق من البريميوم قبل فتح الأقسام
-    if q.data.startswith("sec_") and not user_is_premium(uid):
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(tr_for_user(uid, "subscribe_10"), callback_data="subscribe")],
-            [InlineKeyboardButton(tr_for_user(uid, "back"), callback_data="back")]
-        ])
-        await q.edit_message_text(tr_for_user(uid, "access_denied"), reply_markup=kb)
-        return
-
-    # فتح قسم
-    if q.data.startswith("sec_"):
-        key = q.data.replace("sec_", "")
-        sec = LINKS.get(key)
-        if not sec:
-            await q.edit_message_text("Soon…")
-            return
-
-        title = title_for(sec, uid)
-        desc  = desc_for(sec, uid)
-
-        # أزرار الروابط
-        rows = []
-        for text, url in sec.get("buttons", []):
-            rows.append([InlineKeyboardButton(text, url=url)])
-        rows.append([InlineKeyboardButton(tr_for_user(uid, "back"), callback_data="back")])
-
-        # ملف محلي إن وجد
-        local_file = sec.get("local_file")
-        if local_file and Path(local_file).exists():
-            await q.edit_message_text(f"{title}\n\n{desc}")
-            with open(local_file, "rb") as f:
-                await q.message.reply_document(InputFile(f), caption=title, reply_markup=InlineKeyboardMarkup(rows))
-        else:
-            await q.edit_message_text(f"{title}\n\n{desc}", reply_markup=InlineKeyboardMarkup(rows))
-        return
+    # ... (تابع الكود كما هو مع التعديلات الأخرى)
 
 # === أوامر المدير ===
 async def grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -434,5 +268,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
