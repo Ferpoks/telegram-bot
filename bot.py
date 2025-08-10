@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import os, json, sqlite3, threading
 from pathlib import Path
-from urllib.parse import quote_plus
 import time
 
 from dotenv import load_dotenv
