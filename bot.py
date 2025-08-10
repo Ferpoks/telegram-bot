@@ -1,4 +1,4 @@
- # -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 import os, sqlite3, threading, time
 from pathlib import Path
 
@@ -71,69 +71,80 @@ def user_is_premium(uid: int|str) -> bool:
     return bool(user_get(uid)["premium"])
 
 # ========= ثوابت =========
-OWNER_ID = 6468743821                       # حسابك فقط
-MAIN_CHANNEL_USERNAME = "Ferp0ks"           # يوزر القناة العام بدون @
-MAIN_CHANNEL_LINK = "https://t.me/Ferp0ks"  # زر الانضمام
-OWNER_DEEP_LINK = "tg://user?id=6468743821" # رابط محادثتك (يعمل بدون @)
+OWNER_ID = 6468743821                         # حسابك فقط
+MAIN_CHANNEL_USERNAME = "Ferp0ks"             # يوزر القناة العام بدون @
+MAIN_CHANNEL_LINK = "https://t.me/Ferp0ks"    # زر الانضمام
+OWNER_DEEP_LINK = "tg://user?id=6468743821"   # رابط محادثتك المباشر
 
 WELCOME_PHOTO = "assets/ferpoks.jpg"
 WELCOME_TEXT_AR = (
     "مرحباً بك في بوت فيربوكس 🔥\n"
-    "تعرف على أرخص المصادر، موردي الاشتراكات، أدوات زيادة المتابعين والمزيد.\n"
-    "🎯 افعل كل شيء بنفسك."
+    "هنا تلاقي مصادر وأدوات للتجارة الإلكترونية، بايثون، الأمن السيبراني وغيرهم.\n"
+    "المحتوى المجاني متاح للجميع، ومحتوى VIP فيه ميزات أقوى. ✨"
 )
 
-# ========= الأقسام (8 أقسام) =========
+# ========= الأقسام (free/vip) =========
+# ملاحظة: photo اختياري (رابط صورة مباشر). local_file لإرسال ملف محلي بدلاً من الرابط.
 SECTIONS = {
+    # --- مجانية ---
     "suppliers_pack": {
-        "title": "📦 بكج الموردين",
+        "title": "📦 بكج الموردين (مجاني)",
         "desc": "ملف شامل لأرقام ومصادر الموردين.",
         "link": "https://docs.google.com/document/d/1rR2nJMUNDoj0cogeenVh9fYVs_ZTM5W0bl0PBIOVwL0/edit?tab=t.0",
-        "photo": None,  # ضع رابط صورة مباشرة إن وجدت
-    },
-    "kash_malik": {
-        "title": "♟️ كش ملك",
-        "desc": "قسم كش ملك – محتوى مميز.",
-        "link": "https://drd3m.com/ref/ixeuw",
         "photo": None,
-        # إن أردت إرسال ملف محلي بدلاً من الرابط:
-        "local_file": "assets/kash-malik.docx",  # ضع الملف بهذا الاسم داخل المشروع إن توفر
-    },
-    "cyber_sec": {
-        "title": "🛡️ الأمن السيبراني",
-        "desc": "الأمن السيبراني من الصفر \"Cyber security\" 🧑‍💻",
-        "link": "https://www.mediafire.com/folder/r26pp5mpduvnx/%D8%AF%D9%88%D8%B1%D8%A9_%D8%A7%D9%84%D9%87%D8%A7%D9%83%D8%B1_%D8%A7%D9%84%D8%A7%D8%AE%D9%84%D8%A7%D9%82%D9%8A_%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D8%B1%D8%AD%D9%85%D9%86_%D9%88%D8%B5%D9%81%D9%8A",
-        "photo": None,
+        "is_free": True,
     },
     "python_zero": {
-        "title": "🐍 بايثون من الصفر",
-        "desc": "دليلك الكامل لتعلّم لغة البايثون من الصفر حتى الاحتراف، مجانًا 🤩👑",
+        "title": "🐍 بايثون من الصفر (مجاني)",
+        "desc": "دليلك الكامل لتعلّم البايثون من الصفر حتى الاحتراف مجانًا 🤩👑",
         "link": "https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/Y8WctvBLiA6u6AASeZX2IUfDQAolTJ4QFGx9WRCu.pdf",
         "photo": None,
+        "is_free": True,
     },
     "ecommerce_courses": {
-        "title": "🛒 التجارة الإلكترونية",
+        "title": "🛒 التجارة الإلكترونية (مجاني)",
         "desc": "حزمة دورات وشروحات تجارة إلكترونية (أكثر من 7 ملفات).",
         "link": "https://drive.google.com/drive/folders/1-UADEMHUswoCyo853FdTu4R4iuUx_f3I?usp=drive_link",
         "photo": None,
+        "is_free": True,
+    },
+
+    # --- VIP ---
+    "kash_malik": {
+        "title": "♟️ كش ملك (VIP)",
+        "desc": "قسم كش ملك – محتوى مميز.",
+        "link": "https://drd3m.com/ref/ixeuw",
+        "photo": None,
+        "local_file": "assets/kash-malik.docx",
+        "is_free": False,
+    },
+    "cyber_sec": {
+        "title": "🛡️ الأمن السيبراني (VIP)",
+        "desc": "الأمن السيبراني من الصفر \"Cyber security\" 🧑‍💻",
+        "link": "https://www.mediafire.com/folder/r26pp5mpduvnx/%D8%AF%D9%88%D8%B1%D8%A9_%D8%A7%D9%84%D9%87%D8%A7%D9%83%D8%B1_%D8%A7%D9%84%D8%A7%D8%AE%D9%84%D8%A7%D9%82%D9%8A_%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D8%B1%D8%AD%D9%85%D9%86_%D9%88%D8%B5%D9%81%D9%8A",
+        "photo": None,
+        "is_free": False,
     },
     "canva_500": {
-        "title": "🖼️ 500 دعوة Canva Pro",
+        "title": "🖼️ 500 دعوة Canva Pro (VIP)",
         "desc": "دعوات كانفا برو مدى الحياة.",
         "link": "https://digital-plus3.com/products/canva500?srsltid=AfmBOoq01P0ACvybFJkhb2yVBPSUPJadwrOw9LZmNxSUzWPDY8v_42C1",
         "photo": None,
+        "is_free": False,
     },
     "dark_gpt": {
-        "title": "🕶️ Dark GPT",
-        "desc": "سيتم إضافة التفاصيل لاحقًا.",
-        "link": "https://t.me/Ferp0ks",  # مؤقتًا إلى القناة
-        "photo": None,
-    },
-    "adobe_win": {
-        "title": "🎨 برامج Adobe (ويندوز)",
-        "desc": "روابط برامج Adobe للويندوز (قريبًا).",
+        "title": "🕶️ Dark GPT (VIP)",
+        "desc": "أداة متقدمة، التفاصيل لاحقاً.",
         "link": "https://t.me/Ferp0ks",
         "photo": None,
+        "is_free": False,
+    },
+    "adobe_win": {
+        "title": "🎨 برامج Adobe (ويندوز) (VIP)",
+        "desc": "روابط Adobe للويندوز (قريباً).",
+        "link": "https://t.me/Ferp0ks",
+        "photo": None,
+        "is_free": False,
     },
 }
 
@@ -144,11 +155,11 @@ def tr(k: str) -> str:
         "follow_btn": "📣 الانضمام للقناة",
         "check_btn": "✅ تحقّق",
         "owner_contact": "📨 تواصل مع الإدارة",
-        "subscribe_10": "💳 تفعيل بـ 10$",
-        "access_denied": "⚠️ لا تملك اشتراكًا مُفعّلاً بعد.",
+        "subscribe_10": "💳 ترقية إلى VIP بـ 10$",
+        "access_denied": "⚠️ هذا القسم خاص بمشتركي VIP.",
         "access_ok": "✅ تم تفعيل اشتراكك.",
         "back": "↩️ رجوع",
-        "need_admin": "⚠️ إن لم يعمل التحقق: تأكّد أن البوت مُضاف **مشرفًا** في القناة @Ferp0ks.",
+        "need_admin": "⚠️ لو ما اشتغل التحقق: تأكّد أن البوت مشرف في @Ferp0ks.",
     }
     return M.get(k, k)
 
@@ -196,19 +207,26 @@ def gate_kb() -> InlineKeyboardMarkup:
 def bottom_menu_kb(uid: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("👤 معلوماتي", callback_data="myinfo")],
-        [InlineKeyboardButton("⚡ تفعيل البوت", callback_data="subscribe")],
+        [InlineKeyboardButton("⚡ ترقية إلى VIP", callback_data="upgrade")],
         [InlineKeyboardButton("📨 تواصل مع الإدارة", url=OWNER_DEEP_LINK)],
     ])
 
 def sections_list_kb() -> InlineKeyboardMarkup:
     rows = []
     for key, sec in SECTIONS.items():
-        rows.append([InlineKeyboardButton(sec["title"], callback_data=f"sec_{key}")])
+        lock = "🟢" if sec.get("is_free") else "🔒"
+        rows.append([InlineKeyboardButton(f"{lock} {sec['title']}", callback_data=f"sec_{key}")])
     rows.append([InlineKeyboardButton(tr("back"), callback_data="back_home")])
     return InlineKeyboardMarkup(rows)
 
 def section_back_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📂 رجوع للأقسام", callback_data="back_sections")]
+    ])
+
+def vip_prompt_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚡ اشترك الآن / تواصل", url=OWNER_DEEP_LINK)],
         [InlineKeyboardButton(tr("back"), callback_data="back_sections")]
     ])
 
@@ -217,7 +235,6 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📜 الأوامر:\n/start – بدء\n/help – مساعدة")
 
 async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # متاح لك فقط
     if update.effective_user.id != OWNER_ID:
         return
     await update.message.reply_text(str(update.effective_user.id))
@@ -241,11 +258,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(tr("need_admin"))
         return
 
-    # قائمة سفليّة
+    # قائمة + الأقسام (تظهر للجميع بعد الاشتراك)
     await update.message.reply_text("👇 القائمة:", reply_markup=bottom_menu_kb(uid))
-    # إن كان مفعّلاً أو أنت → الأقسام
-    if user_is_premium(uid) or uid == OWNER_ID:
-        await update.message.reply_text("📂 الأقسام:", reply_markup=sections_list_kb())
+    await update.message.reply_text("📂 الأقسام:", reply_markup=sections_list_kb())
 
 # ========= الأزرار =========
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -257,11 +272,8 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # تحقق
     if q.data == "verify":
         if await is_member(context, uid):
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("⚡ اشترك الآن / تواصل", url=OWNER_DEEP_LINK)],
-                [InlineKeyboardButton(tr("back"), callback_data="back_home")]
-            ])
-            await safe_edit(q, "👌 تم التحقق من اشتراكك بالقناة.\n\n💳 السعر: 10$ للوصول الكامل.\nبعد الدفع سيتم تفعيل حسابك.", kb)
+            await safe_edit(q, "👌 تم التحقق من اشتراكك بالقناة.\nاختر من القائمة بالأسفل:", bottom_menu_kb(uid))
+            await q.message.reply_text("📂 الأقسام:", reply_markup=sections_list_kb())
         else:
             await safe_edit(q, "❗️ ما زلت غير مشترك أو تعذّر التحقق.\nانضم ثم اضغط تحقّق.\n\n" + tr("need_admin"), gate_kb())
         return
@@ -274,19 +286,12 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "myinfo":
         name = q.from_user.full_name
         uid_txt = str(uid)
-        txt = f"👤 اسمك: {name}\n🆔 معرفك: {uid_txt}\n\n— شارك المعرف مع الإدارة للتفعيل."
+        txt = f"👤 اسمك: {name}\n🆔 معرفك: {uid_txt}\n\n— شارك المعرف مع الإدارة للترقية إلى VIP."
         await safe_edit(q, txt, bottom_menu_kb(uid))
         return
 
-    if q.data == "subscribe":
-        if user_is_premium(uid) or uid == OWNER_ID:
-            await safe_edit(q, "✅ اشتراكك مفعّل. هذه الأقسام:", sections_list_kb())
-        else:
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("⚡ اشترك الآن / تواصل", url=OWNER_DEEP_LINK)],
-                [InlineKeyboardButton(tr("back"), callback_data="back_home")]
-            ])
-            await safe_edit(q, "💳 السعر: 10$ للوصول الكامل.\nبعد الدفع سيتم تفعيل حسابك.", kb)
+    if q.data == "upgrade":
+        await safe_edit(q, "💳 ترقية إلى VIP بـ 10$.\nتواصل مع الإدارة لإتمام الترقية:", vip_prompt_kb())
         return
 
     if q.data == "back_home":
@@ -299,22 +304,27 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # الأقسام
     if q.data.startswith("sec_"):
-        if not (user_is_premium(uid) or uid == OWNER_ID):
-            await safe_edit(q, tr("access_denied"), bottom_menu_kb(uid))
-            return
-
         key = q.data.replace("sec_", "")
         sec = SECTIONS.get(key)
         if not sec:
             await safe_edit(q, "قريباً…", sections_list_kb())
             return
 
+        # مجاني أو VIP؟
+        is_free = bool(sec.get("is_free"))
+        is_allowed = is_free or (user_is_premium(uid) or uid == OWNER_ID)
+
         title, desc, link = sec["title"], sec["desc"], sec["link"]
         local = sec.get("local_file")
         photo = sec.get("photo")
 
+        if not is_allowed:
+            # مقفول للمشتركين VIP
+            await safe_edit(q, f"🔒 {title}\n\n{tr('access_denied')}\n\n💳 السعر: 10$ — راسل الإدارة للترقية.", vip_prompt_kb())
+            return
+
+        # مفتوح
         text = f"{title}\n\n{desc}\n\n🔗 الرابط المباشر:\n{link}"
-        # إن كان عندنا صورة أو ملف
         if local and Path(local).exists():
             await safe_edit(q, f"{title}\n\n{desc}", section_back_kb())
             with open(local, "rb") as f:
@@ -353,20 +363,20 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # تنظيف Webhook + ضبط أوامر /
 async def on_startup(app: Application):
     await app.bot.delete_webhook(drop_pending_updates=True)
-    # أوامر عامة للجميع
+    # عامة للجميع
     await app.bot.set_my_commands(
         [BotCommand("start", "بدء"), BotCommand("help", "مساعدة")],
         scope=BotCommandScopeDefault()
     )
-    # أوامر خاصة بك أنت فقط
+    # خاصة بك فقط
     try:
         await app.bot.set_my_commands(
             [
                 BotCommand("start", "بدء"),
                 BotCommand("help", "مساعدة"),
                 BotCommand("id", "معرّفك"),
-                BotCommand("grant", "منح صلاحية"),
-                BotCommand("revoke", "سحب صلاحية"),
+                BotCommand("grant", "منح صلاحية VIP"),
+                BotCommand("revoke", "سحب صلاحية VIP"),
             ],
             scope=BotCommandScopeChat(chat_id=OWNER_ID)
         )
