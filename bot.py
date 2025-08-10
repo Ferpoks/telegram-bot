@@ -2,6 +2,7 @@
 import os, json, sqlite3, threading
 from pathlib import Path
 from urllib.parse import quote_plus
+import time
 
 from dotenv import load_dotenv
 from telegram import (
@@ -78,15 +79,11 @@ def user_revoke(uid: int | str):
         _db().execute("UPDATE users SET premium=0 WHERE id=?", (uid,))
         _db().commit()
 
-# دالة المساعدة
-async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("""
-    📜 الأوامر المتاحة:
-    /start – بدء البوت
-    /id – عرض معرف المستخدم
-    /grant <id> – منح الصلاحية للمستخدم
-    /revoke <id> – سحب الصلاحية من المستخدم
-    """)
+# دالة الترجمة
+def tr_for_user(uid: int, key: str) -> str:
+    u = user_get(uid)
+    lang = u.get("lang", "ar")  # الحصول على اللغة من قاعدة البيانات
+    return T.get(lang, T["ar"]).get(key, key)  # إرجاع الترجمة المناسبة
 
 # ========= ثوابت قابلة للتعديل =========
 MAIN_CHANNEL = "@ferpoks"  # <-- عدّلها ليوزر قناتك العامة
@@ -280,5 +277,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
