@@ -35,8 +35,8 @@ AI_ENABLED = bool(OPENAI_API_KEY) and (OpenAI is not None)
 client = OpenAI(api_key=OPENAI_API_KEY) if AI_ENABLED else None
 
 OWNER_ID = 6468743821
-MAIN_CHANNEL_USERNAME = "Ferp0ks"           # بدون @
-MAIN_CHANNEL_LINK = "https://t.me/Ferp0ks"  # لزر الانضمام
+MAIN_CHANNEL_USERNAME = "ferpokss"
+MAIN_CHANNEL_LINK = "https://t.me/ferpokss"
 OWNER_DEEP_LINK = "tg://user?id=6468743821"
 
 WELCOME_PHOTO = "assets/ferpoks.jpg"
