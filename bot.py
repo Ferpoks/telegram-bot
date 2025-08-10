@@ -25,11 +25,12 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN غير موجود في Environment Variables")
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
+AI_ENABLED = bool(OPENAI_API_KEY)
 DB_PATH = os.getenv("DB_PATH", "/var/data/bot.db")
 
-# عميل OpenAI (SDK)
-client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+# عميل OpenAI (SDK) - يتفعّل فقط إذا فيه مفتاح
+client = OpenAI(api_key=OPENAI_API_KEY) if AI_ENABLED else None
 
 # ============ قاعدة البيانات ============
 _conn_lock = threading.Lock()
@@ -199,6 +200,7 @@ def tr(k: str) -> str:
         "access_ok": "✅ تم تفعيل اشتراكك.",
         "back": "↩️ رجوع",
         "need_admin": "⚠️ لو ما اشتغل التحقق: تأكّد أن البوت مشرف في @Ferp0ks.",
+        "ai_disabled": "🧠 ميزة الذكاء الاصطناعي غير مفعّلة حالياً (مفقود OPENAI_API_KEY). تواصل مع الإدارة للتفعيل.",
     }
     return M.get(k, k)
 
@@ -213,7 +215,7 @@ async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int, force: boo
     try:
         chat_ref = f"@{MAIN_CHANNEL_USERNAME}"
         cm = await context.bot.get_chat_member(chat_ref, user_id)
-        ok = cm.status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER)
+        ok = cm.status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
     except Exception:
         ok = False
     _member_cache[user_id] = (ok, now + 60)
@@ -239,8 +241,8 @@ async def safe_edit(q, text: str | None = None, kb: InlineKeyboardMarkup | None 
 
 # ============ AI ============
 def ai_chat_reply(prompt: str) -> str:
-    if client is None:
-        return "🔧 ميزة الذكاء الاصطناعي غير مفعّلة (مفقود OPENAI_API_KEY)."
+    if not AI_ENABLED or client is None:
+        return tr("ai_disabled")
     try:
         resp = client.chat.completions.create(
             model="gpt-3.5-turbo",
@@ -255,8 +257,8 @@ def ai_chat_reply(prompt: str) -> str:
         return f"⚠️ تعذّر الحصول على رد: {e}"
 
 def ai_image_url(prompt: str) -> str:
-    if client is None:
-        return "🔧 ميزة الصور غير مفعّلة (مفقود OPENAI_API_KEY)."
+    if not AI_ENABLED or client is None:
+        return tr("ai_disabled")
     try:
         img = client.images.generate(model="gpt-image-1", prompt=prompt, size="512x512")
         return img.data[0].url
@@ -352,59 +354,65 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "verify":
         ok = await is_member(context, uid, force=True)
         if ok:
-            await safe_edit(q, "👌 تم التحقق من اشتراكك بالقناة.\nاختر من القائمة بالأسفل:", bottom_menu_kb(uid))
+            await safe_edit(q, "👌 تم التحقق من اشتراكك بالقناة.\nاختر من القائمة بالأسفل:", kb=bottom_menu_kb(uid))
             await q.message.reply_text("📂 الأقسام:", reply_markup=sections_list_kb())
         else:
-            await safe_edit(q, "❗️ ما زلت غير مشترك أو تعذّر التحقق.\nانضم ثم اضغط تحقّق.\n\n" + tr("need_admin"), gate_kb())
+            await safe_edit(q, "❗️ ما زلت غير مشترك أو تعذّر التحقق.\nانضم ثم اضغط تحقّق.\n\n" + tr("need_admin"), kb=gate_kb())
         return
 
     if not await is_member(context, uid):
-        await safe_edit(q, "🔐 انضم للقناة لاستخدام البوت:", gate_kb()); return
+        await safe_edit(q, "🔐 انضم للقناة لاستخدام البوت:", kb=gate_kb()); return
 
     if q.data == "myinfo":
         name = q.from_user.full_name
         uid_txt = str(uid)
         txt = f"👤 اسمك: {name}\n🆔 معرفك: {uid_txt}\n\n— شارك المعرف مع الإدارة للترقية إلى VIP."
-        await safe_edit(q, txt, bottom_menu_kb(uid)); return
+        await safe_edit(q, txt, kb=bottom_menu_kb(uid)); return
 
     if q.data == "upgrade":
-        await safe_edit(q, "💳 ترقية إلى VIP بـ 10$.\nتواصل مع الإدارة لإتمام الترقية:", vip_prompt_kb()); return
+        await safe_edit(q, "💳 ترقية إلى VIP بـ 10$.\nتواصل مع الإدارة لإتمام الترقية:", kb=vip_prompt_kb()); return
 
     if q.data == "back_home":
-        await safe_edit(q, "👇 القائمة:", bottom_menu_kb(uid)); return
+        await safe_edit(q, "👇 القائمة:", kb=bottom_menu_kb(uid)); return
 
     if q.data == "back_sections":
-        await safe_edit(q, "📂 الأقسام:", reply_markup=sections_list_kb()); return
+        await safe_edit(q, "📂 الأقسام:", kb=sections_list_kb()); return
 
     # أدوات الذكاء الاصطناعي
     if q.data == "ai_chat":
+        if not AI_ENABLED:
+            await safe_edit(q, tr("ai_disabled"), kb=vip_prompt_kb()); return
         if not (user_is_premium(uid) or uid == OWNER_ID):
-            await safe_edit(q, f"🔒 {SECTIONS['ai_hub']['title']}\n\n{tr('access_denied')}\n\n💳 السعر: 10$ — راسل الإدارة للترقية.", vip_prompt_kb()); return
+            await safe_edit(q, f"🔒 {SECTIONS['ai_hub']['title']}\n\n{tr('access_denied')}\n\n💳 السعر: 10$ — راسل الإدارة للترقية.", kb=vip_prompt_kb()); return
         ai_set_mode(uid, "ai_chat")
-        await safe_edit(q, "🤖 وضع الدردشة مفعّل.\nأرسل سؤالك الآن.", ai_stop_kb()); return
+        await safe_edit(q, "🤖 وضع الدردشة مفعّل.\nأرسل سؤالك الآن.", kb=ai_stop_kb()); return
 
     if q.data == "ai_image":
+        if not AI_ENABLED:
+            await safe_edit(q, tr("ai_disabled"), kb=vip_prompt_kb()); return
         if not (user_is_premium(uid) or uid == OWNER_ID):
-            await safe_edit(q, f"🔒 {SECTIONS['ai_hub']['title']}\n\n{tr('access_denied')}\n\n💳 السعر: 10$ — راسل الإدارة للترقية.", vip_prompt_kb()); return
+            await safe_edit(q, f"🔒 {SECTIONS['ai_hub']['title']}\n\n{tr('access_denied')}\n\n💳 السعر: 10$ — راسل الإدارة للترقية.", kb=vip_prompt_kb()); return
         ai_set_mode(uid, "ai_image")
-        await safe_edit(q, "🖼️ وضع توليد الصور مفعّل.\nأرسل وصف الصورة بالعربية (مثال: \"قطة تقرأ كتابًا على الشاطئ\").", ai_stop_kb()); return
+        await safe_edit(q, "🖼️ وضع توليد الصور مفعّل.\nأرسل وصف الصورة بالعربية (مثال: \"قطة تقرأ كتابًا على الشاطئ\").", kb=ai_stop_kb()); return
 
     if q.data == "ai_stop":
         ai_set_mode(uid, None)
-        await safe_edit(q, "🔚 تم إنهاء وضع الذكاء الاصطناعي.", sections_list_kb()); return
+        await safe_edit(q, "🔚 تم إنهاء وضع الذكاء الاصطناعي.", kb=sections_list_kb()); return
 
     # الأقسام
     if q.data.startswith("sec_"):
         key = q.data.replace("sec_", "")
         sec = SECTIONS.get(key)
         if not sec:
-            await safe_edit(q, "قريباً…", sections_list_kb()); return
+            await safe_edit(q, "قريباً…", kb=sections_list_kb()); return
 
         # مركز AI يفتح قائمة فرعية
         if key == "ai_hub":
+            if not AI_ENABLED:
+                await safe_edit(q, tr("ai_disabled"), kb=vip_prompt_kb()); return
             if not (sec.get("is_free") or user_is_premium(uid) or uid == OWNER_ID):
-                await safe_edit(q, f"🔒 {sec['title']}\n\n{tr('access_denied')}\n\n💳 السعر: 10$ — راسل الإدارة للترقية.", vip_prompt_kb()); return
-            await safe_edit(q, f"{sec['title']}\n\n{sec['desc']}\n\nاختر أداة:", ai_hub_kb()); return
+                await safe_edit(q, f"🔒 {sec['title']}\n\n{tr('access_denied')}\n\n💳 السعر: 10$ — راسل الإدارة للترقية.", kb=vip_prompt_kb()); return
+            await safe_edit(q, f"{sec['title']}\n\n{sec['desc']}\n\nاختر أداة:", kb=ai_hub_kb()); return
 
         is_free = bool(sec.get("is_free"))
         is_allowed = is_free or (user_is_premium(uid) or uid == OWNER_ID)
@@ -414,21 +422,21 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photo = sec.get("photo")
 
         if not is_allowed:
-            await safe_edit(q, f"🔒 {title}\n\n{tr('access_denied')}\n\n💳 السعر: 10$ — راسل الإدارة للترقية.", vip_prompt_kb()); return
+            await safe_edit(q, f"🔒 {title}\n\n{tr('access_denied')}\n\n💳 السعر: 10$ — راسل الإدارة للترقية.", kb=vip_prompt_kb()); return
 
         text = f"{title}\n\n{desc}\n\n🔗 الرابط المباشر:\n{link}"
         if local and Path(local).exists():
-            await safe_edit(q, f"{title}\n\n{desc}", section_back_kb())
+            await safe_edit(q, f"{title}\n\n{desc}", kb=section_back_kb())
             with open(local, "rb") as f:
                 await q.message.reply_document(InputFile(f), caption=f"{title}\n\n🔗 {link}")
         elif photo:
-            await safe_edit(q, f"{title}\n\n{desc}", section_back_kb())
+            await safe_edit(q, f"{title}\n\n{desc}", kb=section_back_kb())
             try:
                 await q.message.reply_photo(photo=photo, caption=f"{title}\n\n🔗 {link}")
             except Exception:
                 await q.message.reply_text(text, reply_markup=section_back_kb())
         else:
-            await safe_edit(q, text, section_back_kb())
+            await safe_edit(q, text, kb=section_back_kb())
         return
 
 # ============ أوامر المدير ============
@@ -482,6 +490,11 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👇 القائمة:", reply_markup=bottom_menu_kb(uid))
     await update.message.reply_text("📂 الأقسام:", reply_markup=sections_list_kb())
 
+# ============ مُعالج أخطاء عام ============
+async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
+    # تسجيل الخطأ في اللوق بدون إسقاط البوت
+    print(f"⚠️ Error: {getattr(context, 'error', 'unknown')}")
+
 # ============ الإقلاع ============
 async def on_startup(app: Application):
     await app.bot.delete_webhook(drop_pending_updates=True)
@@ -521,6 +534,7 @@ def main():
     app.add_handler(CommandHandler("refreshcmds", refresh_cmds))
     app.add_handler(CallbackQueryHandler(on_button))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, guard_messages))
+    app.add_error_handler(on_error)
     app.run_polling()
 
 if __name__ == "__main__":
