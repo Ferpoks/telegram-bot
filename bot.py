@@ -170,6 +170,13 @@ T = {
     }
 }
 
+# === دالة gate_kb لعرض زر الاشتراك بالقناة ===
+def gate_kb(uid: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(tr_for_user(uid, "follow_btn"), url=f"https://t.me/{MAIN_CHANNEL.lstrip('@')}")],
+        [InlineKeyboardButton(tr_for_user(uid, "check_btn"), callback_data="verify")]
+    ])
+
 # === القوائم ===
 def main_menu_kb(uid: int) -> InlineKeyboardMarkup:
     lang = user_get(uid).get("lang", "ar")
@@ -289,3 +296,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
