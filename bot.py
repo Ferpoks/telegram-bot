@@ -71,19 +71,15 @@ def user_is_premium(uid: int|str) -> bool:
     return bool(user_get(uid)["premium"])
 
 # ========= ثوابت =========
-OWNER_ID = 6468743821
-ADMIN_IDS = {OWNER_ID}
+OWNER_ID = 6468743821                 # حسابك فقط
+ADMIN_IDS = {OWNER_ID}                # أوامر المدير محصورة عليك
 
 # القناة:
-# لو صار عندك @username عام للقناة، احطه هنا بدون @ (وإلا اتركه فاضي)
-MAIN_CHANNEL_USERNAME = os.getenv("MAIN_CHANNEL_USERNAME", "").strip()
-# معرّف القناة (يعمل دائماً سواء عامة/خاصة)
-MAIN_CHANNEL_ID = int(os.getenv("MAIN_CHANNEL_ID", "-1002840134926"))
-# رابط الانضمام/القناة المستخدم في الأزرار (أعطيتني هذا)
-MAIN_CHANNEL_LINK = "https://t.me/+oIYmTi_gWuxiNmZk"
+MAIN_CHANNEL_ID = int(os.getenv("MAIN_CHANNEL_ID", "-1002840134926"))  # معرّف القناة
+MAIN_CHANNEL_LINK = "https://t.me/+oIYmTi_gWuxiNmZk"                   # زر الانضمام
 
-# رابط تواصل/دفع (استبدله برابطك لو تحب)
-OWNER_CONTACT_URL = MAIN_CHANNEL_LINK
+# رابط محادثتك (يعمل بدون @يوزر)
+OWNER_DEEP_LINK = "tg://user?id=6468743821"
 
 WELCOME_PHOTO = "assets/ferpoks.jpg"
 WELCOME_TEXT_AR = (
@@ -104,8 +100,7 @@ LINKS = {
     "kash_malik": {
         "title": "♟️ كش ملك",
         "desc": "مرجع كبير حول التجارة والتواصل الاجتماعي.",
-        # ضع الملف داخل المشروع بهذا الاسم لإرساله مباشرة:
-        "local_file": "assets/kash-malik.docx",
+        "local_file": "assets/kash-malik.docx",  # ضع الملف بهذا الاسم إن أردت إرساله
     },
     "cyber_sec": {
         "title": "🛡️ الأمن السيبراني",
@@ -147,21 +142,20 @@ LINKS = {
 }
 
 # ========= نصوص =========
-T = {
-    "ar": {
-        "follow_gate": "🔐 يجب الاشتراك بالقناة الأساسية أولاً.",
+def tr(k: str) -> str:
+    M = {
+        "follow_gate": "🔐 يجب الاشتراك بالقناة أولاً.",
         "follow_btn": "📣 الانضمام للقناة",
         "check_btn": "✅ تحقّق",
-        "owner_channel": "قناة/التواصل",
+        "owner_contact": "📨 تواصل مع الإدارة",
         "subscribe_10": "💳 تفعيل بـ 10$",
         "access_denied": "⚠️ لا تملك اشتراكًا مُفعّلاً بعد.",
         "access_ok": "✅ تم تفعيل اشتراكك.",
         "back": "↩️ رجوع",
     }
-}
-def tr(k: str) -> str: return T["ar"].get(k, k)
+    return M.get(k, k)
 
-# ========= عضوية القناة (مع كاش) =========
+# ========= كاش عضوية القناة =========
 _member_cache = {}
 async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
     now = time.time()
@@ -169,8 +163,7 @@ async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
     if cached and cached[1] > now:
         return cached[0]
     try:
-        chat_ref = f"@{MAIN_CHANNEL_USERNAME}" if MAIN_CHANNEL_USERNAME else MAIN_CHANNEL_ID
-        cm = await context.bot.get_chat_member(chat_ref, user_id)
+        cm = await context.bot.get_chat_member(MAIN_CHANNEL_ID, user_id)
         ok = cm.status in (
             ChatMemberStatus.MEMBER,
             ChatMemberStatus.ADMINISTRATOR,
@@ -181,9 +174,8 @@ async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
     _member_cache[user_id] = (ok, now + 600)
     return ok
 
-# ========= أدوات تعديل آمن =========
+# ========= تعديل آمن =========
 async def safe_edit(q, text: str | None = None, kb: InlineKeyboardMarkup | None = None):
-    """يعدّل نص/أزرار الرسالة ويتجاهل خطأ message is not modified."""
     try:
         if text is not None:
             await q.edit_message_text(text, reply_markup=kb)
@@ -207,14 +199,14 @@ def gate_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(tr("check_btn"), callback_data="verify")]
     ])
 
-def commands_kb(uid: int) -> InlineKeyboardMarkup:
+def bottom_menu_kb(uid: int) -> InlineKeyboardMarkup:
+    # 3 أزرار فقط كما طلبت
     rows = [
-        [InlineKeyboardButton("💳 تفعيل الاشتراك 10$", callback_data="subscribe")],
-        [InlineKeyboardButton("📣 " + tr("owner_channel"), url=OWNER_CONTACT_URL)],
-        [InlineKeyboardButton("🌐 تغيير اللغة", callback_data="lang")],
+        [InlineKeyboardButton("👤 معلوماتي", callback_data="myinfo")],
+        [InlineKeyboardButton("⚡ تفعيل البوت", callback_data="subscribe")],
+        [InlineKeyboardButton("📨 تواصل مع الإدارة", url=OWNER_DEEP_LINK)],
     ]
-    if uid == OWNER_ID:
-        rows.append([InlineKeyboardButton("🔧 لوحة المسؤول", callback_data="admin")])
+    # لا نضيف أي زر إدارة هنا نهائياً
     return InlineKeyboardMarkup(rows)
 
 def sections_kb(uid: int) -> InlineKeyboardMarkup:
@@ -231,11 +223,10 @@ def sections_kb(uid: int) -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(rows)
 
-# ========= أوامر نصية =========
+# ========= أوامر / =========
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "📜 الأوامر:\n/start – بدء\n/id – رقمك\n/grant <id> (مدير)\n/revoke <id> (مدير)"
-    )
+    # ما نُظهر أوامر المدير هنا للمستخدمين
+    await update.message.reply_text("📜 الأوامر:\n/start – بدء\n/id – رقمك")
 
 async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(str(update.effective_user.id))
@@ -253,15 +244,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(WELCOME_TEXT_AR)
 
-    # لازم يكون مشترك
+    # لازم الاشتراك أولاً
     if not await is_member(context, uid):
-        await update.message.reply_text(tr("follow_gate"), reply_markup=gate_kb())
+        await update.message.reply_text("🔐 انضم للقناة لاستخدام البوت:", reply_markup=gate_kb())
         return
 
-    # قائمة أوامر كأزرار مباشرة
-    await update.message.reply_text("👇 القائمة:", reply_markup=commands_kb(uid))
-
-    # لو بريميوم أو المالك → أظهر الأقسام فوراً
+    # قائمة سفليّة (3 أزرار) + إن كان بريميوم أو أنت → الأقسام
+    await update.message.reply_text("👇 القائمة:", reply_markup=bottom_menu_kb(uid))
     if user_is_premium(uid) or uid == OWNER_ID:
         await update.message.reply_text("📂 الأقسام:", reply_markup=sections_kb(uid))
 
@@ -272,54 +261,59 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = q.from_user.id
     await q.answer()
 
-    # تحقق عضوية القناة قبل أي شيء (عدا verify)
-    if q.data != "verify" and not await is_member(context, uid):
-        await safe_edit(q, tr("follow_gate"), gate_kb())
-        return
-
+    # verify يعمل حتى لغير المشتركين
     if q.data == "verify":
         if await is_member(context, uid):
-            await safe_edit(q, "👌 تم التحقق. اختر من القائمة:", commands_kb(uid))
-            if user_is_premium(uid) or uid == OWNER_ID:
-                await q.message.reply_text("📂 الأقسام:", reply_markup=sections_kb(uid))
+            # بعد التحقق مباشرة: نعرض له السعر + زر محادثتك
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("⚡ اشترك الآن / تواصل", url=OWNER_DEEP_LINK)],
+                [InlineKeyboardButton(tr("back"), callback_data="back_home")]
+            ])
+            await safe_edit(q, "👌 تم التحقق من اشتراكك بالقناة.\n\n💳 السعر: 10$ للوصول الكامل.\nبعد الدفع سيتم تفعيل حسابك.", kb)
         else:
-            await safe_edit(q, tr("follow_gate"), gate_kb())
+            await safe_edit(q, "❗️ ما زلت غير مشترك. انضم ثم اضغط تحقّق.", gate_kb())
+        return
+
+    # باقي الأزرار تتطلب اشتراك قناة
+    if not await is_member(context, uid):
+        await safe_edit(q, "🔐 انضم للقناة لاستخدام البوت:", gate_kb())
+        return
+
+    if q.data == "myinfo":
+        name = q.from_user.full_name
+        uid_txt = str(uid)
+        txt = f"👤 اسمك: {name}\n🆔 معرفك: {uid_txt}\n\n— شارك المعرف مع الإدارة للتفعيل."
+        await safe_edit(q, txt, bottom_menu_kb(uid))
         return
 
     if q.data == "subscribe":
         if user_is_premium(uid) or uid == OWNER_ID:
+            # مفعل: أظهر الأقسام
             await safe_edit(q, "✅ اشتراكك مفعّل. اختر قسماً:", sections_kb(uid))
         else:
+            # غير مفعل: أظهر السعر + رابط محادثتك
             kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("⚡ ادفع/تواصل الآن", url=OWNER_CONTACT_URL)],
+                [InlineKeyboardButton("⚡ اشترك الآن / تواصل", url=OWNER_DEEP_LINK)],
                 [InlineKeyboardButton(tr("back"), callback_data="back_home")]
             ])
             await safe_edit(q, "💳 السعر: 10$ للوصول الكامل.\nبعد الدفع سيتم تفعيل حسابك.", kb)
         return
 
     if q.data == "back_home":
-        await safe_edit(q, "👇 القائمة:", commands_kb(uid))
+        await safe_edit(q, "👇 القائمة:", bottom_menu_kb(uid))
         return
 
-    if q.data == "admin":
-        if uid != OWNER_ID:
-            return
-        await safe_edit(q, "🔧 لوحة المسؤول:\n"
-                           "• /grant <id> — منح صلاحية\n"
-                           "• /revoke <id> — سحب صلاحية\n"
-                           "• /id — عرض معرفك")
-        return
-
-    # الأقسام
+    # فتح الأقسام — فقط للمفعّلين أو أنت
     if q.data.startswith("sec_"):
         if not (user_is_premium(uid) or uid == OWNER_ID):
-            await safe_edit(q, tr("access_denied"), commands_kb(uid))
+            await safe_edit(q, tr("access_denied"), bottom_menu_kb(uid))
             return
         key = q.data.replace("sec_", "")
         sec = LINKS.get(key)
         if not sec:
             await safe_edit(q, "قريباً…", sections_kb(uid))
             return
+
         title, desc = sec["title"], sec["desc"]
         rows = []
         for text, url in sec.get("buttons", []):
@@ -335,7 +329,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, f"{title}\n\n{desc}", InlineKeyboardMarkup(rows))
         return
 
-# ========= أوامر المدير =========
+# ========= أوامر المدير (مخفية عن الجميع) =========
 async def grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS: return
     if not context.args:
@@ -354,7 +348,7 @@ async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if not await is_member(context, uid):
-        await update.message.reply_text(tr("follow_gate"), reply_markup=gate_kb())
+        await update.message.reply_text("🔐 انضم للقناة لاستخدام البوت:", reply_markup=gate_kb())
 
 # تنظيف Webhook + ضبط أوامر /
 async def on_startup(app: Application):
