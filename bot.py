@@ -29,7 +29,6 @@ OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
 AI_ENABLED = bool(OPENAI_API_KEY)
 DB_PATH = os.getenv("DB_PATH", "/var/data/bot.db")
 
-# عميل OpenAI (SDK) - يتفعّل فقط إذا فيه مفتاح
 client = OpenAI(api_key=OPENAI_API_KEY) if AI_ENABLED else None
 
 # ============ قاعدة البيانات ============
@@ -49,7 +48,9 @@ def init_db():
         CREATE TABLE IF NOT EXISTS users (
           id TEXT PRIMARY KEY,
           lang TEXT DEFAULT 'ar',
-          premium INTEGER DEFAULT 0
+          premium INTEGER DEFAULT 0,
+          verified_ok INTEGER DEFAULT 0,
+          verified_at INTEGER DEFAULT 0
         );
         """)
         _db().execute("""
@@ -65,13 +66,25 @@ def user_get(uid: int|str) -> dict:
     uid = str(uid)
     with _conn_lock:
         c = _db().cursor()
-        c.execute("SELECT id, lang, premium FROM users WHERE id=?", (uid,))
+        c.execute("SELECT * FROM users WHERE id=?", (uid,))
         r = c.fetchone()
         if not r:
             c.execute("INSERT INTO users (id) VALUES (?);", (uid,))
             _db().commit()
-            return {"id": uid, "lang": "ar", "premium": 0}
-        return {"id": r["id"], "lang": r["lang"], "premium": r["premium"]}
+            return {"id": uid, "lang": "ar", "premium": 0, "verified_ok": 0, "verified_at": 0}
+        return dict(r)
+
+def user_set_verify(uid: int|str, ok: bool):
+    uid = str(uid)
+    now = int(time.time())
+    with _conn_lock:
+        _db().execute("UPDATE users SET verified_ok=?, verified_at=? WHERE id=?", (1 if ok else 0, now, uid))
+        _db().commit()
+
+def user_should_force_verify(u: dict, ttl_seconds: int = 86400) -> bool:
+    # تحقّق يومي: إذا أكبر من 24 ساعة نعيد التحقق
+    last = int(u.get("verified_at") or 0)
+    return (time.time() - last) > ttl_seconds
 
 def user_is_premium(uid: int|str) -> bool:
     return bool(user_get(uid)["premium"])
@@ -105,12 +118,9 @@ def ai_get_mode(uid: int|str) -> str|None:
 # ============ ثوابت ============
 OWNER_ID = 6468743821
 
-# استخدم ID القناة (أدق). إن رغبت باليوزر فقط، اجعل MAIN_CHANNEL_ID=None
-MAIN_CHANNEL_ID = -1002840134926
-MAIN_CHANNEL_USERNAME = "Ferp0ks"  # احتياط لو MAIN_CHANNEL_ID=None
-
-# الرابط المستخدم في زر الانضمام (عام أو دعوة)
-MAIN_CHANNEL_LINK = "https://t.me/Ferp0ks"  # أو "https://t.me/+oIYmTi_gWuxiNmZk"
+# القناة العامة: نستخدم اليوزر العام فقط كما طلبت
+MAIN_CHANNEL_USERNAME = "Ferp0ks"    # بدون @
+MAIN_CHANNEL_LINK = "https://t.me/Ferp0ks"  # يظهر في زر الانضمام
 
 OWNER_DEEP_LINK = "tg://user?id=6468743821"
 
@@ -210,21 +220,21 @@ def tr(k: str) -> str:
     }
     return M.get(k, k)
 
-# ============ كاش + تحقّق فعلي مع Retries ============
+# ============ تحقّق فعلي + كاش يومي ============
 _member_cache = {}
 
 async def is_member(
     context: ContextTypes.DEFAULT_TYPE,
     user_id: int,
     force: bool = False,
-    retries: int = 3,
-    backoff: float = 0.7
+    retries: int = 2,
+    backoff: float = 0.6
 ) -> bool:
     """
     تحقّق فعلي من عضوية القناة:
-    - يجرّب ID ثم @username
-    - يعيد المحاولة تلقائياً عند الفشل المؤقت
-    - يخزّن النتيجة 60 ثانية في الكاش
+    - يعتمد على @MAIN_CHANNEL_USERNAME
+    - يعيد المحاولة تلقائياً (للتأخير المؤقت من تيليجرام)
+    - يخزّن النتيجة 60 ثانية في كاش الذاكرة، ويُحفظ في جدول users (verified_ok/verified_at)
     """
     now = time.time()
     if not force:
@@ -238,27 +248,13 @@ async def is_member(
         attempt += 1
         ok = False
         errors = []
-
-        # 1) جرّب ID القناة
         try:
-            if isinstance(MAIN_CHANNEL_ID, int):
-                cm = await context.bot.get_chat_member(MAIN_CHANNEL_ID, user_id)
-                status = getattr(cm, "status", None)
-                print(f"[is_member] try#{attempt} via ID status={status} user={user_id}")
-                ok = status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
+            cm = await context.bot.get_chat_member(f"@{MAIN_CHANNEL_USERNAME}", user_id)
+            status = getattr(cm, "status", None)
+            print(f"[is_member] try#{attempt} via @USERNAME status={status} user={user_id}")
+            ok = status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
         except Exception as e:
-            errors.append(f"ID:{e}")
-
-        # 2) لو ما تأكد، جرّب @username
-        if not ok:
-            try:
-                chat_ref = f"@{MAIN_CHANNEL_USERNAME}"
-                cm = await context.bot.get_chat_member(chat_ref, user_id)
-                status = getattr(cm, "status", None)
-                print(f"[is_member] try#{attempt} via USERNAME status={status} user={user_id}")
-                ok = status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
-            except Exception as e:
-                errors.append(f"USER:{e}")
+            errors.append(str(e))
 
         if errors:
             print(f"[is_member] try#{attempt} errors => {' | '.join(errors)}")
@@ -267,10 +263,18 @@ async def is_member(
         if ok:
             break
         if attempt < retries:
-            await asyncio.sleep(backoff * attempt)  # backoff تصاعدي
+            await asyncio.sleep(backoff * attempt)
 
     _member_cache[user_id] = (last_ok, now + 60)
+    # خزّن أيضاً في users للتحقّق اليومي
+    user_set_verify(user_id, last_ok)
     return last_ok
+
+def passes_gate(u: dict) -> bool:
+    """يعتمد على آخر نتيجة تحقق محفوظة، ويجبر إعادة التحقق إذا مر > 24 ساعة."""
+    if user_should_force_verify(u, ttl_seconds=86400):
+        return False  # لازم إعادة تحقّق
+    return bool(u.get("verified_ok"))
 
 # ============ تعديل آمن ============
 async def safe_edit(q, text: str | None = None, kb: InlineKeyboardMarkup | None = None):
@@ -375,17 +379,16 @@ async def refresh_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await on_startup(context.application)
     await update.message.reply_text("✅ تم تحديث قائمة الأوامر.")
 
-# تشخيص سريع
-async def debug_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def debugverify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    ok = await is_member(context, uid, force=True, retries=3, backoff=0.7)
-    await update.message.reply_text(f"member={ok} (check logs for status details)")
+    ok = await is_member(context, uid, force=True)
+    await update.message.reply_text(f"member={ok} (check logs for details)")
 
 # ============ /start ============
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     init_db()
     uid = update.effective_user.id
-    user_get(uid)
+    u = user_get(uid)
 
     if Path(WELCOME_PHOTO).exists():
         with open(WELCOME_PHOTO, "rb") as f:
@@ -393,7 +396,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(WELCOME_TEXT_AR)
 
-    if not await is_member(context, uid, retries=3, backoff=0.7):
+    # تحقّق عند البدء: إذا مر > 24 ساعة، أعِد التحقق
+    if user_should_force_verify(u):
+        ok = await is_member(context, uid, force=True)
+    else:
+        ok = bool(u.get("verified_ok"))
+
+    if not ok:
         await update.message.reply_text("🔐 انضم للقناة لاستخدام البوت:", reply_markup=gate_kb())
         await update.message.reply_text(tr("need_admin"))
         return
@@ -406,11 +415,13 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     init_db()
     q = update.callback_query
     uid = q.from_user.id
+    u = user_get(uid)
     await q.answer()
 
+    # زر التحقق
     if q.data == "verify":
-        print(f"[verify] user={uid} forcing check with retries…")
-        ok = await is_member(context, uid, force=True, retries=3, backoff=0.7)
+        print(f"[verify] user={uid} forcing check …")
+        ok = await is_member(context, uid, force=True)
         if ok:
             await safe_edit(q, "👌 تم التحقق من اشتراكك بالقناة.\nاختر من القائمة بالأسفل:", kb=bottom_menu_kb(uid))
             await q.message.reply_text("📂 الأقسام:", reply_markup=sections_list_kb())
@@ -418,7 +429,13 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, "❗️ ما زلت غير مشترك أو تعذّر التحقق.\nانضم ثم اضغط تحقّق.\n\n" + tr("need_admin"), kb=gate_kb())
         return
 
-    if not await is_member(context, uid, retries=3, backoff=0.7):
+    # حارس قبل كل شيء: لو مر > 24 ساعة، أعد التحقق؛ وإلا استخدم آخر نتيجة
+    if user_should_force_verify(u):
+        is_ok = await is_member(context, uid, force=True)
+    else:
+        is_ok = bool(u.get("verified_ok"))
+
+    if not is_ok:
         await safe_edit(q, "🔐 انضم للقناة لاستخدام البوت:", kb=gate_kb()); return
 
     if q.data == "myinfo":
@@ -464,7 +481,6 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not sec:
             await safe_edit(q, "قريباً…", kb=sections_list_kb()); return
 
-        # مركز AI يفتح قائمة فرعية
         if key == "ai_hub":
             if not AI_ENABLED:
                 await safe_edit(q, tr("ai_disabled"), kb=vip_prompt_kb()); return
@@ -515,9 +531,15 @@ async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ============ الرسائل ============
 async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
+    u = user_get(uid)
 
-    # لازم يكون مشترك بالقناة أولاً
-    if not await is_member(context, uid, retries=3, backoff=0.7):
+    # تحقّق يومي: لو مر > 24 ساعة، أعِد التحقّق الآن
+    if user_should_force_verify(u):
+        ok = await is_member(context, uid, force=True)
+    else:
+        ok = bool(u.get("verified_ok"))
+
+    if not ok:
         await update.message.reply_text("🔐 انضم للقناة لاستخدام البوت:", reply_markup=gate_kb())
         return
 
@@ -568,7 +590,7 @@ async def on_startup(app: Application):
                 BotCommand("grant", "منح صلاحية VIP"),
                 BotCommand("revoke", "سحب صلاحية VIP"),
                 BotCommand("refreshcmds", "تحديث قائمة الأوامر"),
-                BotCommand("debugverify", "تشخيص التحقّق"),
+                BotCommand("debugverify", "تشخيص التحقق"),
             ],
             scope=BotCommandScopeChat(chat_id=OWNER_ID)
         )
@@ -588,7 +610,7 @@ def main():
     app.add_handler(CommandHandler("grant", grant))
     app.add_handler(CommandHandler("revoke", revoke))
     app.add_handler(CommandHandler("refreshcmds", refresh_cmds))
-    app.add_handler(CommandHandler("debugverify", debug_verify))
+    app.add_handler(CommandHandler("debugverify", debugverify))
     app.add_handler(CallbackQueryHandler(on_button))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, guard_messages))
     app.add_error_handler(on_error)
