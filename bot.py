@@ -65,14 +65,25 @@ def _db():
         _db._conn = conn
     return conn
 
+def migrate_db():
+    """ترقية تلقائية لو سكيمة users قديمة وما فيها verified_*"""
+    with _conn_lock:
+        c = _db().cursor()
+        c.execute("PRAGMA table_info(users)")
+        cols = {row["name"] for row in c.fetchall()}
+        if "verified_ok" not in cols:
+            _db().execute("ALTER TABLE users ADD COLUMN verified_ok INTEGER DEFAULT 0;")
+        if "verified_at" not in cols:
+            _db().execute("ALTER TABLE users ADD COLUMN verified_at INTEGER DEFAULT 0;")
+        _db().commit()
+
 def init_db():
     with _conn_lock:
+        # أبسط إنشاء ممكن… لو الجدول موجود قديم ما نخربه
         _db().execute("""
         CREATE TABLE IF NOT EXISTS users (
           id TEXT PRIMARY KEY,
-          premium INTEGER DEFAULT 0,
-          verified_ok INTEGER DEFAULT 0,
-          verified_at INTEGER DEFAULT 0
+          premium INTEGER DEFAULT 0
         );""")
         _db().execute("""
         CREATE TABLE IF NOT EXISTS ai_state (
@@ -81,6 +92,7 @@ def init_db():
           updated_at INTEGER
         );""")
         _db().commit()
+    migrate_db()
 
 def user_get(uid: int|str) -> dict:
     uid = str(uid)
@@ -248,6 +260,13 @@ async def safe_edit(q, text=None, kb=None):
         else:
             print("safe_edit error:", e)
 
+# ========= حالات العضوية المسموحة =========
+ALLOWED_STATUSES = {ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR}
+try:
+    ALLOWED_STATUSES.add(ChatMemberStatus.OWNER)  # بعض الإصدارات
+except AttributeError:
+    pass
+
 # ========= التحقق من العضوية (chat_id أولاً ثم @username) =========
 _member_cache = {}  # {uid: (ok, expire)}
 async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int,
@@ -258,17 +277,14 @@ async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int,
         if cached and cached[1] > now:
             return cached[0]
 
-    last_ok = False
     for attempt in range(1, retries + 1):
-        # لو قدرنا نستخدم chat_id فهو الأدق
         targets = [CHANNEL_ID] if CHANNEL_ID is not None else [f"@{u}" for u in MAIN_CHANNEL_USERNAMES]
         for target in targets:
             try:
                 cm = await context.bot.get_chat_member(target, user_id)
                 status = getattr(cm, "status", None)
                 print(f"[is_member] try#{attempt} target={target} status={status} user={user_id}")
-                ok = status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
-                last_ok = ok
+                ok = status in ALLOWED_STATUSES
                 if ok:
                     _member_cache[user_id] = (True, now + 60)
                     user_set_verify(user_id, True)
