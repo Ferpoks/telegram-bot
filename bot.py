@@ -105,12 +105,12 @@ def ai_get_mode(uid: int|str) -> str|None:
 # ============ ثوابت ============
 OWNER_ID = 6468743821
 
-# استخدم ID القناة (أدق من اليوزر). إن رغبت باليوزر فقط، اجعل MAIN_CHANNEL_ID=None
+# استخدم ID القناة (أدق). إن رغبت باليوزر فقط، اجعل MAIN_CHANNEL_ID=None
 MAIN_CHANNEL_ID = -1002840134926
 MAIN_CHANNEL_USERNAME = "Ferp0ks"  # احتياط لو MAIN_CHANNEL_ID=None
 
-# اختر الرابط المفضل لزر الانضمام (عام أو رابط دعوة)
-MAIN_CHANNEL_LINK = "https://t.me/Ferp0ks"  # أو: "https://t.me/+oIYmTi_gWuxiNmZk"
+# الرابط المستخدم في زر الانضمام (عام أو دعوة)
+MAIN_CHANNEL_LINK = "https://t.me/Ferp0ks"  # أو "https://t.me/+oIYmTi_gWuxiNmZk"
 
 OWNER_DEEP_LINK = "tg://user?id=6468743821"
 
@@ -210,7 +210,7 @@ def tr(k: str) -> str:
     }
     return M.get(k, k)
 
-# ============ كاش عضوية القناة (باستخدام ID) ============
+# ============ كاش عضوية القناة (ID ثم USERNAME) ============
 _member_cache = {}
 async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int, force: bool=False) -> bool:
     now = time.time()
@@ -219,13 +219,32 @@ async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int, force: boo
         if cached and cached[1] > now:
             return cached[0]
 
+    ok = False
+    errors = []
+
+    # 1) جرّب ID أولاً
     try:
-        chat_ref = MAIN_CHANNEL_ID if isinstance(MAIN_CHANNEL_ID, int) else f"@{MAIN_CHANNEL_USERNAME}"
-        cm = await context.bot.get_chat_member(chat_ref, user_id)
-        ok = cm.status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
+        if isinstance(MAIN_CHANNEL_ID, int):
+            cm = await context.bot.get_chat_member(MAIN_CHANNEL_ID, user_id)
+            status = getattr(cm, "status", None)
+            print(f"[is_member] via ID status={status} for user={user_id}")
+            ok = status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
     except Exception as e:
-        print(f"[is_member] get_chat_member failed: {e}")
-        ok = False
+        errors.append(f"ID:{e}")
+
+    # 2) لو فشل، جرّب USERNAME
+    if not ok:
+        try:
+            chat_ref = f"@{MAIN_CHANNEL_USERNAME}"
+            cm = await context.bot.get_chat_member(chat_ref, user_id)
+            status = getattr(cm, "status", None)
+            print(f"[is_member] via USERNAME status={status} for user={user_id}")
+            ok = status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
+        except Exception as e:
+            errors.append(f"USER:{e}")
+
+    if errors:
+        print(f"[is_member] errors => {' | '.join(errors)}")
 
     _member_cache[user_id] = (ok, now + 60)
     return ok
@@ -332,6 +351,12 @@ async def refresh_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
     await on_startup(context.application)
     await update.message.reply_text("✅ تم تحديث قائمة الأوامر.")
+
+# تشخيص سريع
+async def debug_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    ok = await is_member(context, uid, force=True)
+    await update.message.reply_text(f"member={ok} (check logs for status details)")
 
 # ============ /start ============
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -520,6 +545,7 @@ async def on_startup(app: Application):
                 BotCommand("grant", "منح صلاحية VIP"),
                 BotCommand("revoke", "سحب صلاحية VIP"),
                 BotCommand("refreshcmds", "تحديث قائمة الأوامر"),
+                BotCommand("debugverify", "تشخيص التحقّق"),
             ],
             scope=BotCommandScopeChat(chat_id=OWNER_ID)
         )
@@ -539,6 +565,7 @@ def main():
     app.add_handler(CommandHandler("grant", grant))
     app.add_handler(CommandHandler("revoke", revoke))
     app.add_handler(CommandHandler("refreshcmds", refresh_cmds))
+    app.add_handler(CommandHandler("debugverify", debug_verify))
     app.add_handler(CallbackQueryHandler(on_button))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, guard_messages))
     app.add_error_handler(on_error)
