@@ -224,5 +224,215 @@ T = {
         "open": "Open",
         "download": "Download",
         "commands": "📜 Commands:\n/start – start bot\n/id – your id\n/grant <id> (admin)\n/revoke <id> (admin)",
-   
+    # === دوال ترجمة بسيطة ===
+def tr_for_user(uid: int, key: str) -> str:
+    u = user_get(uid)
+    lang = u.get("lang", "ar")
+    return T.get(lang, T["ar"]).get(key, key)
+
+def title_for(sec: dict, uid: int) -> str:
+    lang = user_get(uid).get("lang", "ar")
+    return sec["title_ar"] if lang == "ar" else sec["title_en"]
+
+def desc_for(sec: dict, uid: int) -> str:
+    lang = user_get(uid).get("lang", "ar")
+    return sec["desc_ar"] if lang == "ar" else sec["desc_en"]
+
+# === عضوية القناة ===
+async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+    try:
+        cm = await context.bot.get_chat_member(MAIN_CHANNEL, user_id)
+        return cm.status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
+    except Exception:
+        return False
+
+# === القوائم ===
+def main_menu_kb(uid: int) -> InlineKeyboardMarkup:
+    lang = user_get(uid).get("lang", "ar")
+    def L(ar, en): return ar if lang == "ar" else en
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(L("📦 بكج الموردين", "📦 Suppliers Pack"), callback_data="sec_suppliers_pack")],
+        [InlineKeyboardButton(L("♟️ كش ملك", "♟️ Kash Malik"), callback_data="sec_kash_malik")],
+        [InlineKeyboardButton(L("🛡️ الأمن السيبراني", "🛡️ Cyber Security"), callback_data="sec_cyber_sec")],
+        [InlineKeyboardButton(L("🐍 البايثون من الصفر", "🐍 Python from scratch"), callback_data="sec_python_zero")],
+        [InlineKeyboardButton(L("🎨 برامج الأدوبي (ويندوز)", "🎨 Adobe (Windows)"), callback_data="sec_adobe_win")],
+        [InlineKeyboardButton(L("🛒 دورات التجارة الإلكترونية", "🛒 E-commerce courses"), callback_data="sec_ecommerce_courses")],
+        [InlineKeyboardButton(L("🖼️ 500 دعوة كانفا برو", "🖼️ 500 Canva Pro invites"), callback_data="sec_canva_500")],
+        [InlineKeyboardButton("🕶️ Dark GPT", callback_data="sec_dark_gpt")],
+        [
+            InlineKeyboardButton("📣 " + tr_for_user(uid, "owner_channel"), url=OWNER_CHANNEL),
+            InlineKeyboardButton(tr_for_user(uid, "language"), callback_data="lang")
+        ],
+        [InlineKeyboardButton(tr_for_user(uid, "subscribe_10"), callback_data="subscribe")]
+    ])
+
+def gate_kb(uid: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(tr_for_user(uid, "follow_btn"), url=f"https://t.me/{MAIN_CHANNEL.lstrip('@')}")],
+        [InlineKeyboardButton(tr_for_user(uid, "check_btn"), callback_data="verify")]
+    ])
+
+# === أوامر عامّة ===
+async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(str(update.effective_user.id))
+
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(tr_for_user(update.effective_user.id, "commands"))
+
+# رسالة البداية + صورة
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    init_db()  # تأكيد إنشاء الجدول
+    uid = update.effective_user.id
+    u = user_get(uid)  # ينشئ سجل للمستخدم لو غير موجود
+
+    # أرسل صورة الترحيب إن وجدت
+    if Path(WELCOME_PHOTO).exists():
+        with open(WELCOME_PHOTO, "rb") as f:
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=InputFile(f),
+                caption=tr_for_user(uid, "hello_body"),
+            )
+    else:
+        await update.message.reply_text(tr_for_user(uid, "hello_body"))
+
+    # بوابة الاشتراك بالقناة
+    if not await is_member(context, uid):
+        await update.message.reply_text(tr_for_user(uid, "follow_gate"), reply_markup=gate_kb(uid))
+        return
+
+    name = update.effective_user.full_name
+    username = ("@" + update.effective_user.username) if update.effective_user.username else "—"
+    about = tr_for_user(uid, "start_about")
+    await update.message.reply_text(
+        f"👋 {name} {username}\n{about}\n\n{tr_for_user(uid,'main_menu')}",
+        reply_markup=main_menu_kb(uid)
+    )
+
+# === الأزرار ===
+async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    init_db()
+    q = update.callback_query
+    uid = q.from_user.id
+    await q.answer()
+
+    # لغة
+    if q.data == "lang":
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🇸🇦 " + T["ar"]["arabic"], callback_data="lang_ar"),
+             InlineKeyboardButton("🇬🇧 " + T["ar"]["english"], callback_data="lang_en")],
+            [InlineKeyboardButton(tr_for_user(uid, "back"), callback_data="back")]
+        ])
+        await q.edit_message_text(tr_for_user(uid, "language"), reply_markup=kb)
+        return
+    if q.data == "lang_ar":
+        user_set_lang(uid, "ar")
+        await q.edit_message_text(tr_for_user(uid, "lang_switched"), reply_markup=main_menu_kb(uid))
+        return
+    if q.data == "lang_en":
+        user_set_lang(uid, "en")
+        await q.edit_message_text(tr_for_user(uid, "lang_switched"), reply_markup=main_menu_kb(uid))
+        return
+
+    # التحقق من الاشتراك بالقناة
+    if q.data == "verify":
+        if await is_member(context, uid):
+            await q.edit_message_text(tr_for_user(uid, "main_menu"), reply_markup=main_menu_kb(uid))
+        else:
+            await q.edit_message_text(tr_for_user(uid, "follow_gate"), reply_markup=gate_kb(uid))
+        return
+
+    # اشتراك 10$
+    if q.data == "subscribe":
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📣 " + tr_for_user(uid, "owner_channel"), url=OWNER_CHANNEL)],
+            [InlineKeyboardButton(tr_for_user(uid, "back"), callback_data="back")]
+        ])
+        await q.edit_message_text(T[user_get(uid)["lang"]]["sub_desc"], reply_markup=kb)
+        return
+
+    if q.data == "back":
+        await q.edit_message_text(tr_for_user(uid, "main_menu"), reply_markup=main_menu_kb(uid))
+        return
+
+    # التأكد من الاشتراك بالقناة قبل الأقسام
+    if q.data.startswith("sec_") and not await is_member(context, uid):
+        await q.edit_message_text(tr_for_user(uid, "follow_gate"), reply_markup=gate_kb(uid))
+        return
+
+    # التحقق من البريميوم قبل فتح الأقسام
+    if q.data.startswith("sec_") and not user_is_premium(uid):
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(tr_for_user(uid, "subscribe_10"), callback_data="subscribe")],
+            [InlineKeyboardButton(tr_for_user(uid, "back"), callback_data="back")]
+        ])
+        await q.edit_message_text(tr_for_user(uid, "access_denied"), reply_markup=kb)
+        return
+
+    # فتح قسم
+    if q.data.startswith("sec_"):
+        key = q.data.replace("sec_", "")
+        sec = LINKS.get(key)
+        if not sec:
+            await q.edit_message_text("Soon…")
+            return
+
+        title = title_for(sec, uid)
+        desc  = desc_for(sec, uid)
+
+        # أزرار الروابط
+        rows = []
+        for text, url in sec.get("buttons", []):
+            rows.append([InlineKeyboardButton(text, url=url)])
+        rows.append([InlineKeyboardButton(tr_for_user(uid, "back"), callback_data="back")])
+
+        # ملف محلي إن وجد
+        local_file = sec.get("local_file")
+        if local_file and Path(local_file).exists():
+            await q.edit_message_text(f"{title}\n\n{desc}")
+            with open(local_file, "rb") as f:
+                await q.message.reply_document(InputFile(f), caption=title, reply_markup=InlineKeyboardMarkup(rows))
+        else:
+            await q.edit_message_text(f"{title}\n\n{desc}", reply_markup=InlineKeyboardMarkup(rows))
+        return
+
+# === أوامر المدير ===
+async def grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+    if not context.args:
+        await update.message.reply_text("استخدم: /grant <user_id>")
+        return
+    target = context.args[0]
+    user_grant(target)
+    await update.message.reply_text(f"✅ تم تفعيل الاشتراك للمستخدم {target}")
+
+async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+    if not context.args:
+        await update.message.reply_text("استخدم: /revoke <user_id>")
+        return
+    target = context.args[0]
+    user_revoke(target)
+    await update.message.reply_text(f"❌ تم إلغاء الاشتراك للمستخدم {target}")
+
+# حذف أي Webhook قديم عند الإقلاع (لتجنّب Conflict)
+async def on_startup(app):
+    await app.bot.delete_webhook(drop_pending_updates=True)
+
+def main():
+    init_db()
+    app = Application.builder().token(BOT_TOKEN).post_init(on_startup).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("id", cmd_id))
+    app.add_handler(CommandHandler("grant", grant))
+    app.add_handler(CommandHandler("revoke", revoke))
+    app.add_handler(CallbackQueryHandler(on_button))
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
+
 
