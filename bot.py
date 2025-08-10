@@ -35,9 +35,15 @@ AI_ENABLED = bool(OPENAI_API_KEY) and (OpenAI is not None)
 client = OpenAI(api_key=OPENAI_API_KEY) if AI_ENABLED else None
 
 OWNER_ID = 6468743821
-MAIN_CHANNEL_USERNAME = "ferpokss"
-MAIN_CHANNEL_LINK = "https://t.me/ferpokss"
-OWNER_DEEP_LINK = "tg://user?id=6468743821"
+
+# 🔁 دعم تغيير اسم القناة بسهولة (الأول هو الحالي)
+MAIN_CHANNEL_USERNAMES = ["ferpokss", "Ferp0ks"]   # بدون @
+MAIN_CHANNEL_LINK = f"https://t.me/{MAIN_CHANNEL_USERNAMES[0]}"
+
+def need_admin_text() -> str:
+    return f"⚠️ لو ما اشتغل التحقق: تأكّد أن البوت مشرف في @{MAIN_CHANNEL_USERNAMES[0]}."
+
+OWNER_DEEP_LINK = f"tg://user?id={OWNER_ID}"
 
 WELCOME_PHOTO = "assets/ferpoks.jpg"
 WELCOME_TEXT_AR = (
@@ -113,12 +119,11 @@ def ai_get_mode(uid: int|str):
         c.execute("SELECT mode FROM ai_state WHERE user_id=?", (str(uid),))
         r = c.fetchone(); return r["mode"] if r else None
 
-# ========= نصوص =========
+# ========= نصوص قصيرة =========
 def tr(k: str) -> str:
     M = {
         "follow_btn": "📣 الانضمام للقناة",
         "check_btn": "✅ تحقّق",
-        "need_admin": "⚠️ لو ما اشتغل التحقق: تأكّد أن البوت مشرف في @Ferp0ks.",
         "access_denied": "⚠️ هذا القسم خاص بمشتركي VIP.",
         "back": "↩️ رجوع",
         "ai_disabled": "🧠 ميزة الذكاء الاصطناعي غير مفعّلة حالياً (مفقود OPENAI_API_KEY).",
@@ -168,19 +173,19 @@ SECTIONS = {
     "dark_gpt": {
         "title": "🕶️ Dark GPT (VIP)",
         "desc": "أداة متقدمة، التفاصيل لاحقاً.",
-        "link": "https://t.me/Ferp0ks",
+        "link": "https://t.me/ferpokss",
         "photo": None, "is_free": False,
     },
     "adobe_win": {
         "title": "🎨 برامج Adobe (ويندوز) (VIP)",
         "desc": "روابط Adobe للويندوز (قريباً).",
-        "link": "https://t.me/Ferp0ks",
+        "link": "https://t.me/ferpokss",
         "photo": None, "is_free": False,
     },
     "ai_hub": {
         "title": "🧠 الذكاء الاصطناعي (VIP)",
         "desc": "مركز أدوات الذكاء الاصطناعي: دردشة AI + تحويل نص إلى صورة.",
-        "link": "https://t.me/Ferp0ks",
+        "link": "https://t.me/ferpokss",
         "photo": None, "is_free": False,
     },
 }
@@ -240,7 +245,7 @@ async def safe_edit(q, text=None, kb=None):
         else:
             print("safe_edit error:", e)
 
-# ========= التحقق من العضوية =========
+# ========= التحقق من العضوية (يدعم أكثر من @username) =========
 _member_cache = {}  # {uid: (ok, expire)}
 async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int,
                     force=False, retries=3, backoff=0.7) -> bool:
@@ -251,24 +256,28 @@ async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int,
             return cached[0]
 
     last_ok = False
-    for i in range(1, retries+1):
-        try:
-            cm = await context.bot.get_chat_member(f"@{MAIN_CHANNEL_USERNAME}", user_id)
-            status = getattr(cm, "status", None)
-            print(f"[is_member] try#{i} status={status} user={user_id}")
-            ok = status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
-            last_ok = ok
-            if ok: break
-        except Exception as e:
-            print(f"[is_member] try#{i} ERROR: {e}")
-        if i < retries:
-            await asyncio.sleep(backoff * i)
+    for attempt in range(1, retries + 1):
+        for username in MAIN_CHANNEL_USERNAMES:
+            try:
+                cm = await context.bot.get_chat_member(f"@{username}", user_id)
+                status = getattr(cm, "status", None)
+                print(f"[is_member] try#{attempt} @{username} status={status} user={user_id}")
+                ok = status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
+                last_ok = ok
+                if ok:
+                    _member_cache[user_id] = (True, now + 60)
+                    user_set_verify(user_id, True)
+                    return True
+            except Exception as e:
+                print(f"[is_member] try#{attempt} @{username} ERROR: {e}")
+        if attempt < retries:
+            await asyncio.sleep(backoff * attempt)
 
-    _member_cache[user_id] = (last_ok, now + 60)
-    user_set_verify(user_id, last_ok)
-    return last_ok
+    _member_cache[user_id] = (False, now + 60)
+    user_set_verify(user_id, False)
+    return False
 
-# ========= AI =========
+# ========= AI (اختياري) =========
 def ai_chat_reply(prompt: str) -> str:
     if not AI_ENABLED or client is None:
         return tr("ai_disabled")
@@ -337,7 +346,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not ok:
         try:
             await context.bot.send_message(chat_id, "🔐 انضم للقناة لاستخدام البوت:", reply_markup=gate_kb())
-            await context.bot.send_message(chat_id, tr("need_admin"))
+            await context.bot.send_message(chat_id, need_admin_text())
         except Exception as e:
             print("[start] gate send ERROR:", e)
         return
@@ -361,7 +370,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, "👌 تم التحقق من اشتراكك بالقناة.\nاختر من القائمة بالأسفل:", kb=bottom_menu_kb(uid))
             await q.message.reply_text("📂 الأقسام:", reply_markup=sections_list_kb())
         else:
-            await safe_edit(q, "❗️ ما زلت غير مشترك أو تعذّر التحقق.\nانضم ثم اضغط تحقّق.\n\n" + tr("need_admin"), kb=gate_kb())
+            await safe_edit(q, "❗️ ما زلت غير مشترك أو تعذّر التحقق.\nانضم ثم اضغط تحقّق.\n\n" + need_admin_text(), kb=gate_kb())
         return
 
     # لازم يكون مشترك
