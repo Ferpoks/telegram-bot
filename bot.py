@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import os, sqlite3, threading, time
+import os, sqlite3, threading, time, json, requests
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -11,7 +11,7 @@ from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
     ContextTypes, MessageHandler, filters
 )
-from telegram.constants import ChatMemberStatus
+from telegram.constants import ChatMemberStatus, ChatAction
 from telegram.error import BadRequest
 
 # ========= بيئة التشغيل =========
@@ -23,6 +23,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN غير موجود")
 
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 DB_PATH = os.getenv("DB_PATH", "/var/data/bot.db")
 _conn_lock = threading.Lock()
 
@@ -41,6 +42,13 @@ def init_db():
           id TEXT PRIMARY KEY,
           lang TEXT DEFAULT 'ar',
           premium INTEGER DEFAULT 0
+        );
+        """)
+        _db().execute("""
+        CREATE TABLE IF NOT EXISTS ai_state (
+          user_id TEXT PRIMARY KEY,
+          mode TEXT DEFAULT NULL,
+          updated_at INTEGER
         );
         """)
         _db().commit()
@@ -69,6 +77,22 @@ def user_revoke(uid: int|str):
 
 def user_is_premium(uid: int|str) -> bool:
     return bool(user_get(uid)["premium"])
+
+def ai_set_mode(uid: int|str, mode: str|None):
+    with _conn_lock:
+        _db().execute(
+            "INSERT INTO ai_state (user_id, mode, updated_at) VALUES (?, ?, strftime('%s','now')) "
+            "ON CONFLICT(user_id) DO UPDATE SET mode=excluded.mode, updated_at=strftime('%s','now')",
+            (str(uid), mode)
+        )
+        _db().commit()
+
+def ai_get_mode(uid: int|str) -> str|None:
+    with _conn_lock:
+        c = _db().cursor()
+        c.execute("SELECT mode FROM ai_state WHERE user_id=?", (str(uid),))
+        r = c.fetchone()
+        return r["mode"] if r else None
 
 # ========= ثوابت =========
 OWNER_ID = 6468743821                         # حسابك فقط
@@ -145,6 +169,15 @@ SECTIONS = {
         "photo": None,
         "is_free": False,
     },
+
+    # --- مركز الذكاء الاصطناعي (VIP) ---
+    "ai_hub": {
+        "title": "🧠 الذكاء الاصطناعي (VIP)",
+        "desc": "مركز أدوات الذكاء الاصطناعي: دردشة AI + تحويل نص إلى صورة.",
+        "link": "https://t.me/Ferp0ks",
+        "photo": None,
+        "is_free": False,
+    },
 }
 
 # ========= نصوص =========
@@ -197,6 +230,38 @@ async def safe_edit(q, text: str | None = None, kb: InlineKeyboardMarkup | None 
         else:
             raise
 
+# ========= AI Helpers =========
+def ai_chat_reply(prompt: str) -> str:
+    if not OPENAI_API_KEY:
+        return "🔧 ميزة الذكاء الاصطناعي غير مفعّلة (مفقود OPENAI_API_KEY)."
+    try:
+        url = "https://api.openai.com/v1/chat/completions"
+        headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
+        payload = {
+            "model": "gpt-3.5-turbo",
+            "messages": [{"role":"system","content":"أجب بالعربية بإيجاز ووضوح."},
+                         {"role":"user","content": prompt}],
+            "temperature": 0.7
+        }
+        r = requests.post(url, headers=headers, data=json.dumps(payload), timeout=60)
+        j = r.json()
+        return j["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        return f"⚠️ تعذّر الحصول على رد: {e}"
+
+def ai_image_url(prompt: str) -> str:
+    if not OPENAI_API_KEY:
+        return "🔧 ميزة الصور غير مفعّلة (مفقود OPENAI_API_KEY)."
+    try:
+        url = "https://api.openai.com/v1/images/generations"
+        headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
+        payload = {"model":"gpt-image-1", "prompt": prompt, "size":"512x512"}
+        r = requests.post(url, headers=headers, data=json.dumps(payload), timeout=90)
+        j = r.json()
+        return j["data"][0]["url"]
+    except Exception as e:
+        return f"⚠️ تعذّر إنشاء الصورة: {e}"
+
 # ========= لوحات الأزرار =========
 def gate_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
@@ -230,6 +295,19 @@ def vip_prompt_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(tr("back"), callback_data="back_sections")]
     ])
 
+def ai_hub_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🤖 دردشة AI", callback_data="ai_chat")],
+        [InlineKeyboardButton("🖼️ تحويل نص إلى صورة", callback_data="ai_image")],
+        [InlineKeyboardButton("↩️ رجوع للأقسام", callback_data="back_sections")]
+    ])
+
+def ai_stop_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔚 إنهاء وضع الذكاء الاصطناعي", callback_data="ai_stop")],
+        [InlineKeyboardButton("↩️ رجوع للأقسام", callback_data="back_sections")]
+    ])
+
 # ========= أوامر / =========
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📜 الأوامر:\n/start – بدء\n/help – مساعدة")
@@ -249,20 +327,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     user_get(uid)
 
-    # ترحيب
     if Path(WELCOME_PHOTO).exists():
         with open(WELCOME_PHOTO, "rb") as f:
             await context.bot.send_photo(update.effective_chat.id, InputFile(f), caption=WELCOME_TEXT_AR)
     else:
         await update.message.reply_text(WELCOME_TEXT_AR)
 
-    # تحقق العضوية
     if not await is_member(context, uid):
         await update.message.reply_text("🔐 انضم للقناة لاستخدام البوت:", reply_markup=gate_kb())
         await update.message.reply_text(tr("need_admin"))
         return
 
-    # قائمة + الأقسام
     await update.message.reply_text("👇 القائمة:", reply_markup=bottom_menu_kb(uid))
     await update.message.reply_text("📂 الأقسام:", reply_markup=sections_list_kb())
 
@@ -273,7 +348,6 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = q.from_user.id
     await q.answer()
 
-    # تحقّق فوري (force=True) لتجاوز الكاش
     if q.data == "verify":
         ok = await is_member(context, uid, force=True)
         if ok:
@@ -283,29 +357,40 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, "❗️ ما زلت غير مشترك أو تعذّر التحقق.\nانضم ثم اضغط تحقّق.\n\n" + tr("need_admin"), gate_kb())
         return
 
-    # باقي الأزرار تتطلب اشتراك قناة
     if not await is_member(context, uid):
-        await safe_edit(q, "🔐 انضم للقناة لاستخدام البوت:", gate_kb())
-        return
+        await safe_edit(q, "🔐 انضم للقناة لاستخدام البوت:", gate_kb()); return
 
     if q.data == "myinfo":
         name = q.from_user.full_name
         uid_txt = str(uid)
         txt = f"👤 اسمك: {name}\n🆔 معرفك: {uid_txt}\n\n— شارك المعرف مع الإدارة للترقية إلى VIP."
-        await safe_edit(q, txt, bottom_menu_kb(uid))
-        return
+        await safe_edit(q, txt, bottom_menu_kb(uid)); return
 
     if q.data == "upgrade":
-        await safe_edit(q, "💳 ترقية إلى VIP بـ 10$.\nتواصل مع الإدارة لإتمام الترقية:", vip_prompt_kb())
-        return
+        await safe_edit(q, "💳 ترقية إلى VIP بـ 10$.\nتواصل مع الإدارة لإتمام الترقية:", vip_prompt_kb()); return
 
     if q.data == "back_home":
-        await safe_edit(q, "👇 القائمة:", bottom_menu_kb(uid))
-        return
+        await safe_edit(q, "👇 القائمة:", bottom_menu_kb(uid)); return
 
     if q.data == "back_sections":
-        await safe_edit(q, "📂 الأقسام:", sections_list_kb())
-        return
+        await safe_edit(q, "📂 الأقسام:", reply_markup=sections_list_kb()); return
+
+    # أزرار AI الفرعية
+    if q.data == "ai_chat":
+        if not (user_is_premium(uid) or uid == OWNER_ID):
+            await safe_edit(q, f"🔒 {SECTIONS['ai_hub']['title']}\n\n{tr('access_denied')}\n\n💳 السعر: 10$ — راسل الإدارة للترقية.", vip_prompt_kb()); return
+        ai_set_mode(uid, "ai_chat")
+        await safe_edit(q, "🤖 وضع الدردشة مفعّل.\nأرسل سؤالك الآن.", ai_stop_kb()); return
+
+    if q.data == "ai_image":
+        if not (user_is_premium(uid) or uid == OWNER_ID):
+            await safe_edit(q, f"🔒 {SECTIONS['ai_hub']['title']}\n\n{tr('access_denied')}\n\n💳 السعر: 10$ — راسل الإدارة للترقية.", vip_prompt_kb()); return
+        ai_set_mode(uid, "ai_image")
+        await safe_edit(q, "🖼️ وضع توليد الصور مفعّل.\nأرسل وصف الصورة بالعربية (مثال: \"قطة تقرأ كتابًا على الشاطئ\").", ai_stop_kb()); return
+
+    if q.data == "ai_stop":
+        ai_set_mode(uid, None)
+        await safe_edit(q, "🔚 تم إنهاء وضع الذكاء الاصطناعي.", sections_list_kb()); return
 
     # الأقسام
     if q.data.startswith("sec_"):
@@ -313,6 +398,12 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sec = SECTIONS.get(key)
         if not sec:
             await safe_edit(q, "قريباً…", sections_list_kb()); return
+
+        # مركز الذكاء الاصطناعي (VIP) → يفتح قائمة فرعية
+        if key == "ai_hub":
+            if not (sec.get("is_free") or user_is_premium(uid) or uid == OWNER_ID):
+                await safe_edit(q, f"🔒 {sec['title']}\n\n{tr('access_denied')}\n\n💳 السعر: 10$ — راسل الإدارة للترقية.", vip_prompt_kb()); return
+            await safe_edit(q, f"{sec['title']}\n\n{sec['desc']}\n\nاختر أداة:", ai_hub_kb()); return
 
         is_free = bool(sec.get("is_free"))
         is_allowed = is_free or (user_is_premium(uid) or uid == OWNER_ID)
@@ -322,8 +413,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photo = sec.get("photo")
 
         if not is_allowed:
-            await safe_edit(q, f"🔒 {title}\n\n{tr('access_denied')}\n\n💳 السعر: 10$ — راسل الإدارة للترقية.", vip_prompt_kb())
-            return
+            await safe_edit(q, f"🔒 {title}\n\n{tr('access_denied')}\n\n💳 السعر: 10$ — راسل الإدارة للترقية.", vip_prompt_kb()); return
 
         text = f"{title}\n\n{desc}\n\n🔗 الرابط المباشر:\n{link}"
         if local and Path(local).exists():
@@ -355,11 +445,41 @@ async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_revoke(context.args[0])
     await update.message.reply_text(f"❌ تم إلغاء {context.args[0]}")
 
-# أي رسالة نصية من غير مشترك → بوابة الاشتراك
+# أي رسالة نصية
 async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
+
+    # لازم يكون مشترك بالقناة أولاً
     if not await is_member(context, uid):
         await update.message.reply_text("🔐 انضم للقناة لاستخدام البوت:", reply_markup=gate_kb())
+        return
+
+    # هل هو في وضع AI؟
+    mode = ai_get_mode(uid)
+    if mode == "ai_chat":
+        prompt = (update.message.text or "").strip()
+        if not prompt: return
+        await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
+        reply = ai_chat_reply(prompt)
+        await update.message.reply_text(reply, reply_markup=ai_stop_kb()); return
+
+    if mode == "ai_image":
+        prompt = (update.message.text or "").strip()
+        if not prompt: return
+        await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_PHOTO)
+        url = ai_image_url(prompt)
+        if isinstance(url, str) and url.startswith("http"):
+            try:
+                await update.message.reply_photo(photo=url, caption=f"✅ تم إنشاء الصورة بناءً على:\n{prompt}", reply_markup=ai_stop_kb())
+            except Exception:
+                await update.message.reply_text(f"{url}", reply_markup=ai_stop_kb())
+        else:
+            await update.message.reply_text(url, reply_markup=ai_stop_kb())
+        return
+
+    # ليس في وضع AI → أعرض القائمة والأقسام
+    await update.message.reply_text("👇 القائمة:", reply_markup=bottom_menu_kb(uid))
+    await update.message.reply_text("📂 الأقسام:", reply_markup=sections_list_kb())
 
 # تنظيف Webhook + ضبط أوامر /
 async def on_startup(app: Application):
@@ -404,4 +524,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
    
