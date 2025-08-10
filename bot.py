@@ -103,9 +103,15 @@ def ai_get_mode(uid: int|str) -> str|None:
         return r["mode"] if r else None
 
 # ============ ثوابت ============
-OWNER_ID = 6468743821                        # حسابك فقط
-MAIN_CHANNEL_USERNAME = "Ferp0ks"            # انتبه: رقم صفر 0
-MAIN_CHANNEL_LINK = "https://t.me/Ferp0ks"
+OWNER_ID = 6468743821
+
+# استخدم ID القناة (أدق من اليوزر). إن رغبت باليوزر فقط، اجعل MAIN_CHANNEL_ID=None
+MAIN_CHANNEL_ID = -1002840134926
+MAIN_CHANNEL_USERNAME = "Ferp0ks"  # احتياط لو MAIN_CHANNEL_ID=None
+
+# اختر الرابط المفضل لزر الانضمام (عام أو رابط دعوة)
+MAIN_CHANNEL_LINK = "https://t.me/Ferp0ks"  # أو: "https://t.me/+oIYmTi_gWuxiNmZk"
+
 OWNER_DEEP_LINK = "tg://user?id=6468743821"
 
 WELCOME_PHOTO = "assets/ferpoks.jpg"
@@ -204,7 +210,7 @@ def tr(k: str) -> str:
     }
     return M.get(k, k)
 
-# ============ كاش عضوية القناة ============
+# ============ كاش عضوية القناة (باستخدام ID) ============
 _member_cache = {}
 async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int, force: bool=False) -> bool:
     now = time.time()
@@ -212,12 +218,15 @@ async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int, force: boo
         cached = _member_cache.get(user_id)
         if cached and cached[1] > now:
             return cached[0]
+
     try:
-        chat_ref = f"@{MAIN_CHANNEL_USERNAME}"
+        chat_ref = MAIN_CHANNEL_ID if isinstance(MAIN_CHANNEL_ID, int) else f"@{MAIN_CHANNEL_USERNAME}"
         cm = await context.bot.get_chat_member(chat_ref, user_id)
         ok = cm.status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
-    except Exception:
+    except Exception as e:
+        print(f"[is_member] get_chat_member failed: {e}")
         ok = False
+
     _member_cache[user_id] = (ok, now + 60)
     return ok
 
@@ -352,6 +361,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
 
     if q.data == "verify":
+        print(f"[verify] user={uid} forcing check…")
         ok = await is_member(context, uid, force=True)
         if ok:
             await safe_edit(q, "👌 تم التحقق من اشتراكك بالقناة.\nاختر من القائمة بالأسفل:", kb=bottom_menu_kb(uid))
@@ -492,18 +502,15 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ============ مُعالج أخطاء عام ============
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
-    # تسجيل الخطأ في اللوق بدون إسقاط البوت
     print(f"⚠️ Error: {getattr(context, 'error', 'unknown')}")
 
 # ============ الإقلاع ============
 async def on_startup(app: Application):
     await app.bot.delete_webhook(drop_pending_updates=True)
-    # أوامر عامة للجميع
     await app.bot.set_my_commands(
         [BotCommand("start", "بدء"), BotCommand("help", "مساعدة")],
         scope=BotCommandScopeDefault()
     )
-    # أوامر خاصة للمالك
     try:
         await app.bot.set_my_commands(
             [
