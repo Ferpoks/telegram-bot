@@ -3,14 +3,18 @@ import os, sqlite3, threading, time
 from pathlib import Path
 
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, InputFile, BotCommand
+from telegram import (
+    Update, InlineKeyboardMarkup, InlineKeyboardButton,
+    InputFile, BotCommand
+)
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
     ContextTypes, MessageHandler, filters
 )
 from telegram.constants import ChatMemberStatus
+from telegram.error import BadRequest
 
-# ====== بيئة التشغيل ======
+# ========= بيئة التشغيل =========
 ENV_PATH = Path(".env")
 if ENV_PATH.exists():
     load_dotenv(ENV_PATH, override=True)
@@ -37,20 +41,21 @@ def init_db():
           id TEXT PRIMARY KEY,
           lang TEXT DEFAULT 'ar',
           premium INTEGER DEFAULT 0
-        );""")
+        );
+        """)
         _db().commit()
 
 def user_get(uid: int|str) -> dict:
     uid = str(uid)
     with _conn_lock:
         c = _db().cursor()
-        c.execute("SELECT id,lang,premium FROM users WHERE id=?", (uid,))
+        c.execute("SELECT id, lang, premium FROM users WHERE id=?", (uid,))
         r = c.fetchone()
         if not r:
             c.execute("INSERT INTO users (id) VALUES (?);", (uid,))
             _db().commit()
-            return {"id":uid,"lang":"ar","premium":0}
-        return {"id":r["id"],"lang":r["lang"],"premium":r["premium"]}
+            return {"id": uid, "lang": "ar", "premium": 0}
+        return {"id": r["id"], "lang": r["lang"], "premium": r["premium"]}
 
 def user_grant(uid: int|str):
     with _conn_lock:
@@ -65,19 +70,19 @@ def user_revoke(uid: int|str):
 def user_is_premium(uid: int|str) -> bool:
     return bool(user_get(uid)["premium"])
 
-# ====== ثوابت قابلة للتعديل ======
-OWNER_ID = 6468743821                      # أنت
+# ========= ثوابت =========
+OWNER_ID = 6468743821
 ADMIN_IDS = {OWNER_ID}
 
 # القناة:
-# لو عندك يوزر عام للقناة اكتبه هنا بدون @، مثلاً: MAIN_CHANNEL_USERNAME="ferpoks"
-MAIN_CHANNEL_USERNAME = os.getenv("MAIN_CHANNEL_USERNAME", "").strip()  # اتركه فارغ لو ما عندك
-# معرّف القناة (يعمل دائماً عام/خاص)
+# لو صار عندك @username عام للقناة، احطه هنا بدون @ (وإلا اتركه فاضي)
+MAIN_CHANNEL_USERNAME = os.getenv("MAIN_CHANNEL_USERNAME", "").strip()
+# معرّف القناة (يعمل دائماً سواء عامة/خاصة)
 MAIN_CHANNEL_ID = int(os.getenv("MAIN_CHANNEL_ID", "-1002840134926"))
-# رابط الانضمام/القناة لزر الاشتراك (أعطيتني هذا)
+# رابط الانضمام/القناة المستخدم في الأزرار (أعطيتني هذا)
 MAIN_CHANNEL_LINK = "https://t.me/+oIYmTi_gWuxiNmZk"
 
-# رابط تواصل/دفع (لو عندك رابط يوزرك/صفحة دفع، استبدله هنا)
+# رابط تواصل/دفع (استبدله برابطك لو تحب)
 OWNER_CONTACT_URL = MAIN_CHANNEL_LINK
 
 WELCOME_PHOTO = "assets/ferpoks.jpg"
@@ -87,7 +92,7 @@ WELCOME_TEXT_AR = (
     "🎯 افعل كل شيء بنفسك."
 )
 
-# روابط الأقسام
+# الروابط/الأقسام
 LINKS = {
     "suppliers_pack": {
         "title": "📦 بكج الموردين",
@@ -99,7 +104,7 @@ LINKS = {
     "kash_malik": {
         "title": "♟️ كش ملك",
         "desc": "مرجع كبير حول التجارة والتواصل الاجتماعي.",
-        # ضع الملف داخل المشروع بهذا الاسم لو تبي إرساله مباشرة:
+        # ضع الملف داخل المشروع بهذا الاسم لإرساله مباشرة:
         "local_file": "assets/kash-malik.docx",
     },
     "cyber_sec": {
@@ -141,7 +146,7 @@ LINKS = {
     },
 }
 
-# ====== نصوص قصيرة ======
+# ========= نصوص =========
 T = {
     "ar": {
         "follow_gate": "🔐 يجب الاشتراك بالقناة الأساسية أولاً.",
@@ -149,15 +154,14 @@ T = {
         "check_btn": "✅ تحقّق",
         "owner_channel": "قناة/التواصل",
         "subscribe_10": "💳 تفعيل بـ 10$",
-        "main_menu": "اختر من القائمة:",
         "access_denied": "⚠️ لا تملك اشتراكًا مُفعّلاً بعد.",
         "access_ok": "✅ تم تفعيل اشتراكك.",
         "back": "↩️ رجوع",
     }
 }
-def tr(key: str) -> str: return T["ar"].get(key, key)
+def tr(k: str) -> str: return T["ar"].get(k, k)
 
-# ====== عضوية القناة (مع كاش) ======
+# ========= عضوية القناة (مع كاش) =========
 _member_cache = {}
 async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
     now = time.time()
@@ -167,13 +171,36 @@ async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
     try:
         chat_ref = f"@{MAIN_CHANNEL_USERNAME}" if MAIN_CHANNEL_USERNAME else MAIN_CHANNEL_ID
         cm = await context.bot.get_chat_member(chat_ref, user_id)
-        ok = cm.status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER)
+        ok = cm.status in (
+            ChatMemberStatus.MEMBER,
+            ChatMemberStatus.ADMINISTRATOR,
+            ChatMemberStatus.OWNER
+        )
     except Exception:
         ok = False
     _member_cache[user_id] = (ok, now + 600)
     return ok
 
-# ====== لوحات الأزرار ======
+# ========= أدوات تعديل آمن =========
+async def safe_edit(q, text: str | None = None, kb: InlineKeyboardMarkup | None = None):
+    """يعدّل نص/أزرار الرسالة ويتجاهل خطأ message is not modified."""
+    try:
+        if text is not None:
+            await q.edit_message_text(text, reply_markup=kb)
+        else:
+            await q.edit_message_reply_markup(reply_markup=kb)
+    except BadRequest as e:
+        msg = str(e).lower()
+        if "message is not modified" in msg or "لم يتم تعديل" in msg:
+            if kb is not None and text is not None:
+                try:
+                    await q.edit_message_reply_markup(reply_markup=kb)
+                except BadRequest:
+                    pass
+        else:
+            raise
+
+# ========= لوحات الأزرار =========
 def gate_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(tr("follow_btn"), url=MAIN_CHANNEL_LINK)],
@@ -204,39 +231,41 @@ def sections_kb(uid: int) -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(rows)
 
-# ====== أوامر نصية ======
+# ========= أوامر نصية =========
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📜 الأوامر:\n/start – بدء\n/id – رقمك\n/grant <id> (مدير)\n/revoke <id> (مدير)")
+    await update.message.reply_text(
+        "📜 الأوامر:\n/start – بدء\n/id – رقمك\n/grant <id> (مدير)\n/revoke <id> (مدير)"
+    )
 
 async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(str(update.effective_user.id))
 
-# ====== /start ======
+# ========= /start =========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     init_db()
     uid = update.effective_user.id
     user_get(uid)
 
-    # الترحيب
+    # ترحيب بصورة أو نص
     if Path(WELCOME_PHOTO).exists():
         with open(WELCOME_PHOTO, "rb") as f:
             await context.bot.send_photo(update.effective_chat.id, InputFile(f), caption=WELCOME_TEXT_AR)
     else:
         await update.message.reply_text(WELCOME_TEXT_AR)
 
-    # لازم اشتراك قبل الاستخدام
+    # لازم يكون مشترك
     if not await is_member(context, uid):
         await update.message.reply_text(tr("follow_gate"), reply_markup=gate_kb())
         return
 
-    # قائمة أوامر كأزرار
+    # قائمة أوامر كأزرار مباشرة
     await update.message.reply_text("👇 القائمة:", reply_markup=commands_kb(uid))
 
     # لو بريميوم أو المالك → أظهر الأقسام فوراً
     if user_is_premium(uid) or uid == OWNER_ID:
         await update.message.reply_text("📂 الأقسام:", reply_markup=sections_kb(uid))
 
-# ====== الأزرار ======
+# ========= الأزرار =========
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     init_db()
     q = update.callback_query
@@ -245,51 +274,51 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # تحقق عضوية القناة قبل أي شيء (عدا verify)
     if q.data != "verify" and not await is_member(context, uid):
-        await q.edit_message_text(tr("follow_gate"), reply_markup=gate_kb())
+        await safe_edit(q, tr("follow_gate"), gate_kb())
         return
 
     if q.data == "verify":
         if await is_member(context, uid):
-            await q.edit_message_text("👌 تم التحقق. اختر من القائمة:", reply_markup=commands_kb(uid))
+            await safe_edit(q, "👌 تم التحقق. اختر من القائمة:", commands_kb(uid))
             if user_is_premium(uid) or uid == OWNER_ID:
                 await q.message.reply_text("📂 الأقسام:", reply_markup=sections_kb(uid))
         else:
-            await q.edit_message_text(tr("follow_gate"), reply_markup=gate_kb())
+            await safe_edit(q, tr("follow_gate"), gate_kb())
         return
 
     if q.data == "subscribe":
         if user_is_premium(uid) or uid == OWNER_ID:
-            await q.edit_message_text("✅ اشتراكك مفعّل. اختر قسماً:", reply_markup=sections_kb(uid))
+            await safe_edit(q, "✅ اشتراكك مفعّل. اختر قسماً:", sections_kb(uid))
         else:
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("⚡ ادفع/تواصل الآن", url=OWNER_CONTACT_URL)],
                 [InlineKeyboardButton(tr("back"), callback_data="back_home")]
             ])
-            await q.edit_message_text("💳 السعر: 10$ للوصول الكامل.\nبعد الدفع سيتم تفعيل حسابك.", reply_markup=kb)
+            await safe_edit(q, "💳 السعر: 10$ للوصول الكامل.\nبعد الدفع سيتم تفعيل حسابك.", kb)
         return
 
     if q.data == "back_home":
-        await q.edit_message_text("👇 القائمة:", reply_markup=commands_kb(uid))
+        await safe_edit(q, "👇 القائمة:", commands_kb(uid))
         return
 
     if q.data == "admin":
         if uid != OWNER_ID:
             return
-        await q.edit_message_text("🔧 لوحة المسؤول:\n"
-                                  "• /grant <id> — منح صلاحية\n"
-                                  "• /revoke <id> — سحب صلاحية\n"
-                                  "• /id — عرض معرفك")
+        await safe_edit(q, "🔧 لوحة المسؤول:\n"
+                           "• /grant <id> — منح صلاحية\n"
+                           "• /revoke <id> — سحب صلاحية\n"
+                           "• /id — عرض معرفك")
         return
 
     # الأقسام
     if q.data.startswith("sec_"):
         if not (user_is_premium(uid) or uid == OWNER_ID):
-            await q.edit_message_text(tr("access_denied"), reply_markup=commands_kb(uid))
+            await safe_edit(q, tr("access_denied"), commands_kb(uid))
             return
         key = q.data.replace("sec_", "")
         sec = LINKS.get(key)
         if not sec:
-            await q.edit_message_text("قريباً…", reply_markup=sections_kb(uid))
+            await safe_edit(q, "قريباً…", sections_kb(uid))
             return
         title, desc = sec["title"], sec["desc"]
         rows = []
@@ -299,14 +328,14 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         local = sec.get("local_file")
         if local and Path(local).exists():
-            await q.edit_message_text(f"{title}\n\n{desc}")
+            await safe_edit(q, f"{title}\n\n{desc}")
             with open(local, "rb") as f:
                 await q.message.reply_document(InputFile(f), caption=title, reply_markup=InlineKeyboardMarkup(rows))
         else:
-            await q.edit_message_text(f"{title}\n\n{desc}", reply_markup=InlineKeyboardMarkup(rows))
+            await safe_edit(q, f"{title}\n\n{desc}", InlineKeyboardMarkup(rows))
         return
 
-# ====== أوامر المدير ======
+# ========= أوامر المدير =========
 async def grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS: return
     if not context.args:
@@ -327,7 +356,7 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_member(context, uid):
         await update.message.reply_text(tr("follow_gate"), reply_markup=gate_kb())
 
-# تنظيف أي Webhook قديم + تعيين أوامر البوت الظاهرة عند كتابة /
+# تنظيف Webhook + ضبط أوامر /
 async def on_startup(app: Application):
     await app.bot.delete_webhook(drop_pending_updates=True)
     await app.bot.set_my_commands([
@@ -354,3 +383,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
