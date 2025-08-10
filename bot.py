@@ -88,7 +88,8 @@ def tr_for_user(uid: int, key: str) -> str:
 # ========= ثوابت قابلة للتعديل =========
 MAIN_CHANNEL = "@ferpoks"  # <-- عدّلها ليوزر قناتك العامة
 OWNER_CHANNEL = "https://t.me/ferpoks"  # قناة/وسيلة الدفع/التواصل
-ADMIN_IDS = {6468743821}  # ضع معرفك كمدير
+ADMIN_IDS = {6468743821}  # معرفك كمدير فقط (التعديل هنا)
+OWNER_ID = 6468743821  # معرف الحساب الذي يمتلك صلاحية الأدمن
 
 # هنا يتم تخزين الصورة المحلية في المشروع بدلاً من رابط غير صحيح
 WELCOME_PHOTO = "assets/ferpoks.jpg"  # مسار الصورة المحلي
@@ -173,7 +174,7 @@ T = {
 def main_menu_kb(uid: int) -> InlineKeyboardMarkup:
     lang = user_get(uid).get("lang", "ar")
     def L(ar, en): return ar if lang == "ar" else en
-    return InlineKeyboardMarkup([
+    keyboard = [
         [InlineKeyboardButton(L("📦 بكج الموردين", "📦 Suppliers Pack"), callback_data="sec_suppliers_pack")],
         [InlineKeyboardButton(L("♟️ كش ملك", "♟️ Kash Malik"), callback_data="sec_kash_malik")],
         [InlineKeyboardButton(L("🛡️ الأمن السيبراني", "🛡️ Cyber Security"), callback_data="sec_cyber_sec")],
@@ -187,7 +188,13 @@ def main_menu_kb(uid: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(tr_for_user(uid, "language"), callback_data="lang")
         ],
         [InlineKeyboardButton(tr_for_user(uid, "subscribe_10"), callback_data="subscribe")]
-    ])
+    ]
+    
+    # إضافة زر المسؤول فقط إذا كان هو نفسه
+    if uid == OWNER_ID:
+        keyboard.append([InlineKeyboardButton("🔧 خيارات المسؤول", callback_data="admin_options")])
+
+    return InlineKeyboardMarkup(keyboard)
 
 # === أوامر عامّة ===
 async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -239,7 +246,10 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = q.from_user.id
     await q.answer()
 
-    # ... (تابع الكود كما هو مع التعديلات الأخرى)
+    # التحقق من أن المستخدم هو المسؤول قبل عرض الخيارات
+    if q.data == "admin_options" and uid == OWNER_ID:
+        await q.edit_message_text("🔧 خيارات المسؤول:\n- إضافة/إلغاء الصلاحيات للمستخدمين\n- تعديل الأقسام")
+        return
 
 # === أوامر المدير ===
 async def grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
