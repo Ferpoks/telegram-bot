@@ -3,7 +3,10 @@ import os, sqlite3, threading, time, asyncio
 from pathlib import Path
 
 from dotenv import load_dotenv
-from openai import OpenAI
+try:
+    from openai import OpenAI
+except Exception:
+    OpenAI = None  # لا نوقف البوت إن ما توفّر الباكدج
 
 from telegram import (
     Update, InlineKeyboardMarkup, InlineKeyboardButton,
@@ -16,7 +19,7 @@ from telegram.ext import (
 from telegram.constants import ChatMemberStatus, ChatAction
 from telegram.error import BadRequest
 
-# ============ بيئة التشغيل ============
+# ========= الإعدادات العامة =========
 ENV_PATH = Path(".env")
 if ENV_PATH.exists():
     load_dotenv(ENV_PATH, override=True)
@@ -25,14 +28,27 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN غير موجود في Environment Variables")
 
-OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
-AI_ENABLED = bool(OPENAI_API_KEY)
 DB_PATH = os.getenv("DB_PATH", "/var/data/bot.db")
-
-# عميل OpenAI (يتفعّل فقط إذا فيه مفتاح)
+OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
+AI_ENABLED = bool(OPENAI_API_KEY) and (OpenAI is not None)
 client = OpenAI(api_key=OPENAI_API_KEY) if AI_ENABLED else None
 
-# ============ قاعدة البيانات ============
+OWNER_ID = 6468743821
+
+# قناة الاشتراك (يوزر عام بدون @)
+MAIN_CHANNEL_USERNAME = "Ferp0ks"
+MAIN_CHANNEL_LINK = "https://t.me/Ferp0ks"
+
+OWNER_DEEP_LINK = "tg://user?id=6468743821"
+
+WELCOME_PHOTO = "assets/ferpoks.jpg"
+WELCOME_TEXT_AR = (
+    "مرحباً بك في بوت فيربوكس 🔥\n"
+    "هنا تلاقي مصادر وأدوات للتجارة الإلكترونية، بايثون، الأمن السيبراني وغيرهم.\n"
+    "المحتوى المجاني متاح للجميع، ومحتوى VIP فيه ميزات أقوى. ✨"
+)
+
+# ========= قاعدة البيانات =========
 _conn_lock = threading.Lock()
 
 def _db():
@@ -82,10 +98,6 @@ def user_set_verify(uid: int|str, ok: bool):
         _db().execute("UPDATE users SET verified_ok=?, verified_at=? WHERE id=?", (1 if ok else 0, now, uid))
         _db().commit()
 
-def user_should_force_verify(u: dict, ttl_seconds: int = 86400) -> bool:
-    last = int(u.get("verified_at") or 0)
-    return (time.time() - last) > ttl_seconds
-
 def user_is_premium(uid: int|str) -> bool:
     return bool(user_get(uid)["premium"])
 
@@ -115,23 +127,19 @@ def ai_get_mode(uid: int|str) -> str|None:
         r = c.fetchone()
         return r["mode"] if r else None
 
-# ============ ثوابت ============
-OWNER_ID = 6468743821
+# ========= النصوص =========
+def tr(k: str) -> str:
+    M = {
+        "follow_btn": "📣 الانضمام للقناة",
+        "check_btn": "✅ تحقّق",
+        "need_admin": "⚠️ لو ما اشتغل التحقق: تأكّد أن البوت مشرف في @Ferp0ks.",
+        "access_denied": "⚠️ هذا القسم خاص بمشتركي VIP.",
+        "back": "↩️ رجوع",
+        "ai_disabled": "🧠 ميزة الذكاء الاصطناعي غير مفعّلة حالياً (مفقود OPENAI_API_KEY).",
+    }
+    return M.get(k, k)
 
-# قناة التحقق (يوزر عام بدون @)
-MAIN_CHANNEL_USERNAME = "Ferp0ks"
-MAIN_CHANNEL_LINK = "https://t.me/Ferp0ks"   # لزر الانضمام
-
-OWNER_DEEP_LINK = "tg://user?id=6468743821"
-
-WELCOME_PHOTO = "assets/ferpoks.jpg"
-WELCOME_TEXT_AR = (
-    "مرحباً بك في بوت فيربوكس 🔥\n"
-    "هنا تلاقي مصادر وأدوات للتجارة الإلكترونية، بايثون، الأمن السيبراني وغيرهم.\n"
-    "المحتوى المجاني متاح للجميع، ومحتوى VIP فيه ميزات أقوى. ✨"
-)
-
-# ============ الأقسام ============
+# ========= الأقسام =========
 SECTIONS = {
     # مجانية
     "suppliers_pack": {
@@ -204,121 +212,7 @@ SECTIONS = {
     },
 }
 
-# ============ نصوص ============
-def tr(k: str) -> str:
-    M = {
-        "follow_gate": "🔐 يجب الاشتراك بالقناة أولاً.",
-        "follow_btn": "📣 الانضمام للقناة",
-        "check_btn": "✅ تحقّق",
-        "owner_contact": "📨 تواصل مع الإدارة",
-        "subscribe_10": "💳 ترقية إلى VIP بـ 10$",
-        "access_denied": "⚠️ هذا القسم خاص بمشتركي VIP.",
-        "access_ok": "✅ تم تفعيل اشتراكك.",
-        "back": "↩️ رجوع",
-        "need_admin": "⚠️ لو ما اشتغل التحقق: تأكّد أن البوت مشرف في @Ferp0ks.",
-        "ai_disabled": "🧠 ميزة الذكاء الاصطناعي غير مفعّلة حالياً (مفقود OPENAI_API_KEY). تواصل مع الإدارة للتفعيل.",
-    }
-    return M.get(k, k)
-
-# ============ تحقّق فعلي + Retries + كاش يومي ============
-_member_cache = {}
-
-async def is_member(
-    context: ContextTypes.DEFAULT_TYPE,
-    user_id: int,
-    force: bool = False,
-    retries: int = 3,
-    backoff: float = 0.7
-) -> bool:
-    """
-    تحقّق فعلي من عضوية القناة عبر @MAIN_CHANNEL_USERNAME
-    مع إعادة محاولة تلقائية عند الفشل المؤقت + كاش 60 ثانية.
-    كما يخزّن النتيجة في جدول users (verified_ok/verified_at).
-    """
-    now = time.time()
-    if not force:
-        cached = _member_cache.get(user_id)
-        if cached and cached[1] > now:
-            return cached[0]
-
-    attempt = 0
-    last_ok = False
-    while attempt < retries:
-        attempt += 1
-        ok = False
-        errors = []
-        try:
-            cm = await context.bot.get_chat_member(f"@{MAIN_CHANNEL_USERNAME}", user_id)
-            status = getattr(cm, "status", None)
-            print(f"[is_member] try#{attempt} via @USERNAME status={status} user={user_id}")
-            ok = status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
-        except Exception as e:
-            errors.append(str(e))
-
-        if errors:
-            print(f"[is_member] try#{attempt} errors => {' | '.join(errors)}")
-
-        last_ok = ok
-        if ok:
-            break
-        if attempt < retries:
-            await asyncio.sleep(backoff * attempt)
-
-    _member_cache[user_id] = (last_ok, now + 60)
-    user_set_verify(user_id, last_ok)  # سجّل آخر نتيجة
-    return last_ok
-
-def passes_gate(u: dict) -> bool:
-    # يعتمد على آخر نتيجة تحقق محفوظة، ويجبر إعادة التحقق إذا مر > 24 ساعة
-    if user_should_force_verify(u, ttl_seconds=86400):
-        return False
-    return bool(u.get("verified_ok"))
-
-# ============ تعديل آمن ============
-async def safe_edit(q, text: str | None = None, kb: InlineKeyboardMarkup | None = None):
-    try:
-        if text is not None:
-            await q.edit_message_text(text, reply_markup=kb)
-        else:
-            await q.edit_message_reply_markup(reply_markup=kb)
-    except BadRequest as e:
-        msg = str(e).lower()
-        if "message is not modified" in msg or "لم يتم تعديل" in msg:
-            if kb is not None and text is not None:
-                try:
-                    await q.edit_message_reply_markup(reply_markup=kb)
-                except BadRequest:
-                    pass
-        else:
-            raise
-
-# ============ AI ============
-def ai_chat_reply(prompt: str) -> str:
-    if not AI_ENABLED or client is None:
-        return tr("ai_disabled")
-    try:
-        resp = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "أجب بالعربية بإيجاز ووضوح."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7
-        )
-        return (resp.choices[0].message.content or "").strip()
-    except Exception as e:
-        return f"⚠️ تعذّر الحصول على رد: {e}"
-
-def ai_image_url(prompt: str) -> str:
-    if not AI_ENABLED or client is None:
-        return tr("ai_disabled")
-    try:
-        img = client.images.generate(model="gpt-image-1", prompt=prompt, size="512x512")
-        return img.data[0].url
-    except Exception as e:
-        return f"⚠️ تعذّر إنشاء الصورة: {e}"
-
-# ============ لوحات الأزرار ============
+# ========= أدوات مساعدة للواجهات =========
 def gate_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(tr("follow_btn"), url=MAIN_CHANNEL_LINK)],
@@ -364,7 +258,81 @@ def ai_stop_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("↩️ رجوع للأقسام", callback_data="back_sections")]
     ])
 
-# ============ أوامر / ============
+# ========= تعديل آمن للرسائل =========
+async def safe_edit(q, text: str | None = None, kb: InlineKeyboardMarkup | None = None):
+    try:
+        if text is not None:
+            await q.edit_message_text(text, reply_markup=kb)
+        else:
+            await q.edit_message_reply_markup(reply_markup=kb)
+    except BadRequest as e:
+        # تجاهل خطأ "لم يتم تعديل الرسالة"
+        if "message is not modified" in str(e).lower():
+            try:
+                if kb is not None:
+                    await q.edit_message_reply_markup(reply_markup=kb)
+            except BadRequest:
+                pass
+        else:
+            raise
+
+# ========= التحقق من العضوية (فعلي + Retries + كاش 60ث) =========
+_member_cache = {}  # {user_id: (ok, expire_ts)}
+
+async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int,
+                    force: bool = False, retries: int = 3, backoff: float = 0.7) -> bool:
+    now = time.time()
+    if not force:
+        c = _member_cache.get(user_id)
+        if c and c[1] > now:
+            return c[0]
+
+    last_ok = False
+    for attempt in range(1, retries + 1):
+        try:
+            cm = await context.bot.get_chat_member(f"@{MAIN_CHANNEL_USERNAME}", user_id)
+            status = getattr(cm, "status", None)
+            print(f"[is_member] try#{attempt} status={status} user={user_id}")
+            ok = status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
+            last_ok = ok
+            if ok:
+                break
+        except Exception as e:
+            print(f"[is_member] try#{attempt} ERROR: {e}")
+        if attempt < retries:
+            await asyncio.sleep(backoff * attempt)
+
+    _member_cache[user_id] = (last_ok, now + 60)
+    user_set_verify(user_id, last_ok)  # نخزن آخر نتيجة في DB
+    return last_ok
+
+# ========= ذكاء اصطناعي (يتعطل تلقائياً إن لم يوجد مفتاح) =========
+def ai_chat_reply(prompt: str) -> str:
+    if not AI_ENABLED or client is None:
+        return tr("ai_disabled")
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "أجب بالعربية بإيجاز ووضوح."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7
+        )
+        return (resp.choices[0].message.content or "").strip()
+    except Exception as e:
+        return f"⚠️ تعذّر الحصول على رد: {e}"
+
+def ai_image_url(prompt: str) -> str:
+    if not AI_ENABLED or client is None:
+        return tr("ai_disabled")
+    try:
+        img = client.images.generate(model="gpt-image-1", prompt=prompt, size="512x512")
+        return img.data[0].url
+    except Exception as e:
+        return f"⚠️ تعذّر إنشاء الصورة: {e}"
+
+# ========= الأوامر =========
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📜 الأوامر:\n/start – بدء\n/help – مساعدة\n/debugverify – تشخيص التحقق\n/dv – تشخيص سريع")
 
@@ -377,53 +345,47 @@ async def refresh_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await on_startup(context.application)
     await update.message.reply_text("✅ تم تحديث قائمة الأوامر.")
 
-# تشخيص: /debugverify أو /dv
 async def debug_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     print(f"[debug_verify] received from user={uid}")
     ok = await is_member(context, uid, force=True, retries=3, backoff=0.7)
     await update.message.reply_text(f"member={ok} (check logs for details)")
 
-# ============ /start ============
+# ========= /start (واضح: يا انضم/تحقق، يا قائمة+أقسام) =========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     init_db()
     uid = update.effective_user.id
-    u = user_get(uid)
     chat_id = update.effective_chat.id
+    user_get(uid)  # ضمان سجل
 
-    # 1) رسالة الترحيب
+    # 1) الترحيب
     if Path(WELCOME_PHOTO).exists():
         with open(WELCOME_PHOTO, "rb") as f:
             await context.bot.send_photo(chat_id, InputFile(f), caption=WELCOME_TEXT_AR)
     else:
         await context.bot.send_message(chat_id, WELCOME_TEXT_AR)
 
-    # 2) هل نحتاج التحقق الآن؟ (أول مرة أو بعد 24 ساعة)
-    need_verify_now = (not bool(u.get("verified_ok"))) or user_should_force_verify(u)
+    # 2) تحقّق فوري الآن
+    ok = await is_member(context, uid, force=True, retries=3, backoff=0.7)
 
-    if need_verify_now:
-        ok = await is_member(context, uid, force=True, retries=3, backoff=0.7)
-        user_set_verify(uid, ok)
-        if not ok:
-            await context.bot.send_message(chat_id, "🔐 انضم للقناة لاستخدام البوت:", reply_markup=gate_kb())
-            await context.bot.send_message(chat_id, tr("need_admin"))
-            return
+    if not ok:
+        await context.bot.send_message(chat_id, "🔐 انضم للقناة لاستخدام البوت:", reply_markup=gate_kb())
+        await context.bot.send_message(chat_id, tr("need_admin"))
+        return
 
-    # 3) عرض القوائم
+    # 3) عرض القائمة والأقسام مباشرة
     await context.bot.send_message(chat_id, "👇 القائمة:", reply_markup=bottom_menu_kb(uid))
     await context.bot.send_message(chat_id, "📂 الأقسام:", reply_markup=sections_list_kb())
 
-# ============ الأزرار ============
+# ========= الأزرار =========
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     init_db()
     q = update.callback_query
     uid = q.from_user.id
-    u = user_get(uid)
     await q.answer()
 
     # زر التحقق
     if q.data == "verify":
-        print(f"[verify] user={uid} forcing check …")
         ok = await is_member(context, uid, force=True, retries=3, backoff=0.7)
         if ok:
             await safe_edit(q, "👌 تم التحقق من اشتراكك بالقناة.\nاختر من القائمة بالأسفل:", kb=bottom_menu_kb(uid))
@@ -432,19 +394,13 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, "❗️ ما زلت غير مشترك أو تعذّر التحقق.\nانضم ثم اضغط تحقّق.\n\n" + tr("need_admin"), kb=gate_kb())
         return
 
-    # حارس: لو مر > 24 ساعة، أعد التحقق الآن
-    if user_should_force_verify(u):
-        is_ok = await is_member(context, uid, force=True, retries=3, backoff=0.7)
-    else:
-        is_ok = bool(u.get("verified_ok"))
-
-    if not is_ok:
+    # حارس عام: لازم يكون مشترك
+    if not await is_member(context, uid, retries=3, backoff=0.7):
         await safe_edit(q, "🔐 انضم للقناة لاستخدام البوت:", kb=gate_kb()); return
 
     if q.data == "myinfo":
         name = q.from_user.full_name
-        uid_txt = str(uid)
-        txt = f"👤 اسمك: {name}\n🆔 معرفك: {uid_txt}\n\n— شارك المعرف مع الإدارة للترقية إلى VIP."
+        txt = f"👤 اسمك: {name}\n🆔 معرفك: {uid}\n\n— شارك المعرف مع الإدارة للترقية إلى VIP."
         await safe_edit(q, txt, kb=bottom_menu_kb(uid)); return
 
     if q.data == "upgrade":
@@ -456,7 +412,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "back_sections":
         await safe_edit(q, "📂 الأقسام:", kb=sections_list_kb()); return
 
-    # أدوات الذكاء الاصطناعي
+    # الذكاء الاصطناعي
     if q.data == "ai_chat":
         if not AI_ENABLED:
             await safe_edit(q, tr("ai_disabled"), kb=vip_prompt_kb()); return
@@ -471,7 +427,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not (user_is_premium(uid) or uid == OWNER_ID):
             await safe_edit(q, f"🔒 {SECTIONS['ai_hub']['title']}\n\n{tr('access_denied')}\n\n💳 السعر: 10$ — راسل الإدارة للترقية.", kb=vip_prompt_kb()); return
         ai_set_mode(uid, "ai_image")
-        await safe_edit(q, "🖼️ وضع توليد الصور مفعّل.\nأرسل وصف الصورة بالعربية (مثال: \"قطة تقرأ كتابًا على الشاطئ\").", kb=ai_stop_kb()); return
+        await safe_edit(q, "🖼️ وضع توليد الصور مفعّل.\nأرسل وصف الصورة بالعربية.", kb=ai_stop_kb()); return
 
     if q.data == "ai_stop":
         ai_set_mode(uid, None)
@@ -484,6 +440,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not sec:
             await safe_edit(q, "قريباً…", kb=sections_list_kb()); return
 
+        # مركز AI يفتح قائمة فرعية
         if key == "ai_hub":
             if not AI_ENABLED:
                 await safe_edit(q, tr("ai_disabled"), kb=vip_prompt_kb()); return
@@ -493,7 +450,6 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         is_free = bool(sec.get("is_free"))
         is_allowed = is_free or (user_is_premium(uid) or uid == OWNER_ID)
-
         title, desc, link = sec["title"], sec["desc"], sec["link"]
         local = sec.get("local_file")
         photo = sec.get("photo")
@@ -516,7 +472,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, text, kb=section_back_kb())
         return
 
-# ============ أوامر المدير ============
+# ========= أوامر المدير =========
 async def grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
     if not context.args:
@@ -531,18 +487,12 @@ async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_revoke(context.args[0])
     await update.message.reply_text(f"❌ تم إلغاء {context.args[0]}")
 
-# ============ الرسائل ============
+# ========= استقبال رسائل نصية عامة =========
 async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    u = user_get(uid)
 
-    # تحقّق يومي: لو مر > 24 ساعة، أعد التحقّق الآن
-    if user_should_force_verify(u):
-        ok = await is_member(context, uid, force=True, retries=3, backoff=0.7)
-    else:
-        ok = bool(u.get("verified_ok"))
-
-    if not ok:
+    # لازم يكون مشترك
+    if not await is_member(context, uid, retries=3, backoff=0.7):
         await update.message.reply_text("🔐 انضم للقناة لاستخدام البوت:", reply_markup=gate_kb())
         return
 
@@ -573,14 +523,14 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👇 القائمة:", reply_markup=bottom_menu_kb(uid))
     await update.message.reply_text("📂 الأقسام:", reply_markup=sections_list_kb())
 
-# ============ مُعالج أخطاء عام ============
+# ========= أخطاء عامة =========
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
     print(f"⚠️ Error: {getattr(context, 'error', 'unknown')}")
 
-# ============ الإقلاع ============
+# ========= الإقلاع =========
 async def on_startup(app: Application):
     await app.bot.delete_webhook(drop_pending_updates=True)
-    # أوامر عامة لكل المستخدمين
+    # أوامر عامة
     await app.bot.set_my_commands(
         [
             BotCommand("start", "بدء"),
@@ -590,7 +540,7 @@ async def on_startup(app: Application):
         ],
         scope=BotCommandScopeDefault()
     )
-    # أوامر خاصة للمالك (تظهر لك فقط)
+    # أوامر للمالك فقط
     try:
         await app.bot.set_my_commands(
             [
@@ -628,7 +578,7 @@ def main():
     # أزرار
     app.add_handler(CallbackQueryHandler(on_button))
 
-    # رسائل نصية عامة (بدون أوامر)
+    # رسائل نصيّة (بدون أوامر)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, guard_messages))
 
     # أخطاء
