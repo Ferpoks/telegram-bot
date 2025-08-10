@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-import os, sqlite3, threading, time, json, requests
+import os, sqlite3, threading, time, json
 from pathlib import Path
 
 from dotenv import load_dotenv
+from openai import OpenAI
+
 from telegram import (
     Update, InlineKeyboardMarkup, InlineKeyboardButton,
     InputFile, BotCommand, BotCommandScopeDefault, BotCommandScopeChat
@@ -26,6 +28,9 @@ if not BOT_TOKEN:
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 DB_PATH = os.getenv("DB_PATH", "/var/data/bot.db")
 _conn_lock = threading.Lock()
+
+# عميل OpenAI (SDK)
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 def _db():
     conn = getattr(_db, "_conn", None)
@@ -230,35 +235,33 @@ async def safe_edit(q, text: str | None = None, kb: InlineKeyboardMarkup | None 
         else:
             raise
 
-# ========= AI Helpers =========
+# ========= AI (SDK) =========
 def ai_chat_reply(prompt: str) -> str:
-    if not OPENAI_API_KEY:
+    if client is None:
         return "🔧 ميزة الذكاء الاصطناعي غير مفعّلة (مفقود OPENAI_API_KEY)."
     try:
-        url = "https://api.openai.com/v1/chat/completions"
-        headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
-        payload = {
-            "model": "gpt-3.5-turbo",
-            "messages": [{"role":"system","content":"أجب بالعربية بإيجاز ووضوح."},
-                         {"role":"user","content": prompt}],
-            "temperature": 0.7
-        }
-        r = requests.post(url, headers=headers, data=json.dumps(payload), timeout=60)
-        j = r.json()
-        return j["choices"][0]["message"]["content"].strip()
+        resp = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "أجب بالعربية بإيجاز ووضوح."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7
+        )
+        return (resp.choices[0].message.content or "").strip()
     except Exception as e:
         return f"⚠️ تعذّر الحصول على رد: {e}"
 
 def ai_image_url(prompt: str) -> str:
-    if not OPENAI_API_KEY:
+    if client is None:
         return "🔧 ميزة الصور غير مفعّلة (مفقود OPENAI_API_KEY)."
     try:
-        url = "https://api.openai.com/v1/images/generations"
-        headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
-        payload = {"model":"gpt-image-1", "prompt": prompt, "size":"512x512"}
-        r = requests.post(url, headers=headers, data=json.dumps(payload), timeout=90)
-        j = r.json()
-        return j["data"][0]["url"]
+        img = client.images.generate(
+            model="gpt-image-1",
+            prompt=prompt,
+            size="512x512"
+        )
+        return img.data[0].url
     except Exception as e:
         return f"⚠️ تعذّر إنشاء الصورة: {e}"
 
@@ -525,5 +528,3 @@ def main():
 if __name__ == "__main__":
     main()
 
-
-   
