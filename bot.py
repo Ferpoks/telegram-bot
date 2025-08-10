@@ -360,12 +360,25 @@ def ai_chat_reply(prompt: str) -> str:
         return f"⚠️ تعذّر الحصول على رد: {e}"
 
 def ai_image_url(prompt: str) -> str:
+    """توليد صورة وإرجاع رابط مباشر (حجم مدعوم)."""
     if not AI_ENABLED or client is None:
         return tr("ai_disabled")
     try:
-        img = client.images.generate(model="gpt-image-1", prompt=prompt, size="512x512")
+        img = client.images.generate(
+            model="gpt-image-1",
+            prompt=prompt,
+            size="1024x1024",       # ← تعديل مهم: 512x512 لم يعد مدعوم
+            response_format="url"   # ← نطلب URL ليتوافق مع كود الإرسال الحالي
+        )
         return img.data[0].url
     except Exception as e:
+        msg = str(e)
+        if ("invalid_value" in msg and "size" in msg) or "Supported values" in msg:
+            return "⚠️ حجم الصورة غير مدعوم. جرّب 1024x1024 أو 1024x1536 أو 1536x1024 أو auto."
+        if "insufficient_quota" in msg or "You exceeded your current quota" in msg:
+            return "⚠️ نفاد الرصيد في حساب OpenAI."
+        if "invalid_api_key" in msg or "Incorrect API key" in msg:
+            return "⚠️ مفتاح OpenAI غير صالح أو مفقود."
         return f"⚠️ تعذّر إنشاء الصورة: {e}"
 
 # ========= أوامر =========
@@ -544,12 +557,16 @@ async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
     print(f"⚠️ Error: {getattr(context, 'error', 'unknown')}")
 
+# ========= الإقلاع (حل chat_id + الأوامر) مكرر للاستخدام اليدوي =========
+async def on_startup_manual(app: Application):
+    await on_startup(app)
+
 # ========= نقطة التشغيل =========
 def main():
     init_db()
     app = (Application.builder()
            .token(BOT_TOKEN)
-           .post_init(on_startup)
+           .post_init(on_startup)   # on_startup معرّفة فوق، فيعمل على Render
            .concurrent_updates(True)
            .build())
     # أوامر
@@ -570,3 +587,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
