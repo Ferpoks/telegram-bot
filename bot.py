@@ -52,6 +52,9 @@ WELCOME_TEXT_AR = (
     "المحتوى المجاني متاح للجميع، ومحتوى VIP فيه ميزات أقوى. ✨"
 )
 
+# سنحل chat_id الحقيقي للقناة عند الإقلاع ونخزّنه هنا
+CHANNEL_ID = None  # مثال: -1001234567890
+
 # ========= قاعدة البيانات =========
 _conn_lock = threading.Lock()
 def _db():
@@ -245,7 +248,7 @@ async def safe_edit(q, text=None, kb=None):
         else:
             print("safe_edit error:", e)
 
-# ========= التحقق من العضوية (يدعم أكثر من @username) =========
+# ========= التحقق من العضوية (chat_id أولاً ثم @username) =========
 _member_cache = {}  # {uid: (ok, expire)}
 async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int,
                     force=False, retries=3, backoff=0.7) -> bool:
@@ -257,11 +260,13 @@ async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int,
 
     last_ok = False
     for attempt in range(1, retries + 1):
-        for username in MAIN_CHANNEL_USERNAMES:
+        # لو قدرنا نستخدم chat_id فهو الأدق
+        targets = [CHANNEL_ID] if CHANNEL_ID is not None else [f"@{u}" for u in MAIN_CHANNEL_USERNAMES]
+        for target in targets:
             try:
-                cm = await context.bot.get_chat_member(f"@{username}", user_id)
+                cm = await context.bot.get_chat_member(target, user_id)
                 status = getattr(cm, "status", None)
-                print(f"[is_member] try#{attempt} @{username} status={status} user={user_id}")
+                print(f"[is_member] try#{attempt} target={target} status={status} user={user_id}")
                 ok = status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
                 last_ok = ok
                 if ok:
@@ -269,7 +274,7 @@ async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int,
                     user_set_verify(user_id, True)
                     return True
             except Exception as e:
-                print(f"[is_member] try#{attempt} @{username} ERROR: {e}")
+                print(f"[is_member] try#{attempt} target={target} ERROR: {e}")
         if attempt < retries:
             await asyncio.sleep(backoff * attempt)
 
@@ -477,9 +482,25 @@ async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
     print(f"⚠️ Error: {getattr(context, 'error', 'unknown')}")
 
-# ========= الإقلاع =========
+# ========= الإقلاع (حل chat_id + الأوامر) =========
 async def on_startup(app: Application):
     await app.bot.delete_webhook(drop_pending_updates=True)
+
+    # 🔎 حل اسم القناة إلى chat_id مرة واحدة
+    global CHANNEL_ID
+    CHANNEL_ID = None
+    for u in MAIN_CHANNEL_USERNAMES:
+        try:
+            chat = await app.bot.get_chat(f"@{u}")
+            CHANNEL_ID = chat.id
+            print(f"[startup] resolved @{u} -> chat_id={CHANNEL_ID}")
+            break
+        except Exception as e:
+            print(f"[startup] get_chat @{u} failed: {e}")
+    if CHANNEL_ID is None:
+        print("[startup] ❌ could not resolve channel id; will fallback to @username")
+
+    # أوامر عامة
     await app.bot.set_my_commands(
         [
             BotCommand("start", "بدء"),
@@ -489,6 +510,7 @@ async def on_startup(app: Application):
         ],
         scope=BotCommandScopeDefault()
     )
+    # أوامر المالك
     try:
         await app.bot.set_my_commands(
             [
