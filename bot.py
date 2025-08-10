@@ -90,7 +90,8 @@ MAIN_CHANNEL = "@ferpoks"  # <-- عدّلها ليوزر قناتك العامة
 OWNER_CHANNEL = "https://t.me/ferpoks"  # قناة/وسيلة الدفع/التواصل
 ADMIN_IDS = {6468743821}  # ضع معرفك كمدير
 
-WELCOME_PHOTO_FILE_ID = "AAQ...your_file_id..."  # استبدل بـ file_id الخاص بالصورة
+# هنا يتم تخزين الصورة المحلية في المشروع بدلاً من رابط غير صحيح
+WELCOME_PHOTO = "assets/ferpoks.jpg"  # مسار الصورة المحلي
 WELCOME_TEXT_AR = (
     "مرحباً بك في بوت فيربوكس 🔥\n"
     "يمكنك معرفة كل ما تحتاجه لفتح متجر إلكتروني مثل أرخص المواقع وأرقام موردين الاشتراكات ومواقع زيادة المتابعين وكل ما يخص التاجر.\n"
@@ -207,13 +208,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     u = user_get(uid)  # ينشئ سجل للمستخدم لو غير موجود
 
-    # أرسل صورة الترحيب إن وجدت
-    if WELCOME_PHOTO_FILE_ID:
-        await context.bot.send_photo(
-            chat_id=update.effective_chat.id,
-            photo=WELCOME_PHOTO_FILE_ID,
-            caption=tr_for_user(uid, "hello_body")
-        )
+    # إرسال صورة الترحيب إذا كانت موجودة
+    if Path(WELCOME_PHOTO).exists():
+        with open(WELCOME_PHOTO, "rb") as f:
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=InputFile(f),
+                caption=tr_for_user(uid, "hello_body")
+            )
     else:
         await update.message.reply_text(tr_for_user(uid, "hello_body"))
 
