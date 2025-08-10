@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import os, sqlite3, threading, time
+import os, sqlite3, threading, time, asyncio
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -210,44 +210,67 @@ def tr(k: str) -> str:
     }
     return M.get(k, k)
 
-# ============ كاش عضوية القناة (ID ثم USERNAME) ============
+# ============ كاش + تحقّق فعلي مع Retries ============
 _member_cache = {}
-async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int, force: bool=False) -> bool:
+
+async def is_member(
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: int,
+    force: bool = False,
+    retries: int = 3,
+    backoff: float = 0.7
+) -> bool:
+    """
+    تحقّق فعلي من عضوية القناة:
+    - يجرّب ID ثم @username
+    - يعيد المحاولة تلقائياً عند الفشل المؤقت
+    - يخزّن النتيجة 60 ثانية في الكاش
+    """
     now = time.time()
     if not force:
         cached = _member_cache.get(user_id)
         if cached and cached[1] > now:
             return cached[0]
 
-    ok = False
-    errors = []
+    attempt = 0
+    last_ok = False
+    while attempt < retries:
+        attempt += 1
+        ok = False
+        errors = []
 
-    # 1) جرّب ID أولاً
-    try:
-        if isinstance(MAIN_CHANNEL_ID, int):
-            cm = await context.bot.get_chat_member(MAIN_CHANNEL_ID, user_id)
-            status = getattr(cm, "status", None)
-            print(f"[is_member] via ID status={status} for user={user_id}")
-            ok = status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
-    except Exception as e:
-        errors.append(f"ID:{e}")
-
-    # 2) لو فشل، جرّب USERNAME
-    if not ok:
+        # 1) جرّب ID القناة
         try:
-            chat_ref = f"@{MAIN_CHANNEL_USERNAME}"
-            cm = await context.bot.get_chat_member(chat_ref, user_id)
-            status = getattr(cm, "status", None)
-            print(f"[is_member] via USERNAME status={status} for user={user_id}")
-            ok = status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
+            if isinstance(MAIN_CHANNEL_ID, int):
+                cm = await context.bot.get_chat_member(MAIN_CHANNEL_ID, user_id)
+                status = getattr(cm, "status", None)
+                print(f"[is_member] try#{attempt} via ID status={status} user={user_id}")
+                ok = status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
         except Exception as e:
-            errors.append(f"USER:{e}")
+            errors.append(f"ID:{e}")
 
-    if errors:
-        print(f"[is_member] errors => {' | '.join(errors)}")
+        # 2) لو ما تأكد، جرّب @username
+        if not ok:
+            try:
+                chat_ref = f"@{MAIN_CHANNEL_USERNAME}"
+                cm = await context.bot.get_chat_member(chat_ref, user_id)
+                status = getattr(cm, "status", None)
+                print(f"[is_member] try#{attempt} via USERNAME status={status} user={user_id}")
+                ok = status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
+            except Exception as e:
+                errors.append(f"USER:{e}")
 
-    _member_cache[user_id] = (ok, now + 60)
-    return ok
+        if errors:
+            print(f"[is_member] try#{attempt} errors => {' | '.join(errors)}")
+
+        last_ok = ok
+        if ok:
+            break
+        if attempt < retries:
+            await asyncio.sleep(backoff * attempt)  # backoff تصاعدي
+
+    _member_cache[user_id] = (last_ok, now + 60)
+    return last_ok
 
 # ============ تعديل آمن ============
 async def safe_edit(q, text: str | None = None, kb: InlineKeyboardMarkup | None = None):
@@ -355,7 +378,7 @@ async def refresh_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # تشخيص سريع
 async def debug_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    ok = await is_member(context, uid, force=True)
+    ok = await is_member(context, uid, force=True, retries=3, backoff=0.7)
     await update.message.reply_text(f"member={ok} (check logs for status details)")
 
 # ============ /start ============
@@ -370,7 +393,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(WELCOME_TEXT_AR)
 
-    if not await is_member(context, uid):
+    if not await is_member(context, uid, retries=3, backoff=0.7):
         await update.message.reply_text("🔐 انضم للقناة لاستخدام البوت:", reply_markup=gate_kb())
         await update.message.reply_text(tr("need_admin"))
         return
@@ -386,8 +409,8 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
 
     if q.data == "verify":
-        print(f"[verify] user={uid} forcing check…")
-        ok = await is_member(context, uid, force=True)
+        print(f"[verify] user={uid} forcing check with retries…")
+        ok = await is_member(context, uid, force=True, retries=3, backoff=0.7)
         if ok:
             await safe_edit(q, "👌 تم التحقق من اشتراكك بالقناة.\nاختر من القائمة بالأسفل:", kb=bottom_menu_kb(uid))
             await q.message.reply_text("📂 الأقسام:", reply_markup=sections_list_kb())
@@ -395,7 +418,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, "❗️ ما زلت غير مشترك أو تعذّر التحقق.\nانضم ثم اضغط تحقّق.\n\n" + tr("need_admin"), kb=gate_kb())
         return
 
-    if not await is_member(context, uid):
+    if not await is_member(context, uid, retries=3, backoff=0.7):
         await safe_edit(q, "🔐 انضم للقناة لاستخدام البوت:", kb=gate_kb()); return
 
     if q.data == "myinfo":
@@ -494,7 +517,7 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
 
     # لازم يكون مشترك بالقناة أولاً
-    if not await is_member(context, uid):
+    if not await is_member(context, uid, retries=3, backoff=0.7):
         await update.message.reply_text("🔐 انضم للقناة لاستخدام البوت:", reply_markup=gate_kb())
         return
 
