@@ -2,6 +2,10 @@ python-telegram-bot==20.8
 httpx==0.26.0
 openai>=1.30,<2
 python-dotenv>=1.0.1
+# لو خدمتك Web Service أضف:
+# aiohttp>=3.9
+
+
 
 
 
