@@ -1,7 +1,9 @@
 python-telegram-bot==20.8
-httpx==0.26.1
+httpx==0.26.0
 openai>=1.30,<2
 python-dotenv>=1.0.1
+
+
 
 
 
