@@ -22,24 +22,22 @@ from telegram.error import BadRequest
 
 # ========= الإعدادات =========
 ENV_PATH = Path(".env")
-if ENV_PATH.exists():
-    load_dotenv(ENV_PATH, override=True)
+# حمّل .env محليًا فقط؛ في Render نستخدم متغيرات البيئة مباشرة
+if ENV_PATH.exists() and not os.getenv("RENDER"):
+    load_dotenv(ENV_PATH)  # لا نستخدم override لتفادي الكتابة على متغيرات البيئة في السيرفر
 
 BOT_TOKEN = os.getenv("BOT_TOKEN") or ""
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN مفقود")
 
 DB_PATH = os.getenv("DB_PATH", "/var/data/bot.db")
-# إنشاء مجلد قاعدة البيانات لو مش موجود
 try:
     Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 except Exception:
     pass
 
 OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
-
-# نموذج الدردشة قابل للتغيير من Environment
-OPENAI_CHAT_MODEL  = os.getenv("OPENAI_CHAT_MODEL", "gpt-4.1")   # ضع gpt-4.5 لو متاح عندك
+OPENAI_CHAT_MODEL  = os.getenv("OPENAI_CHAT_MODEL", "gpt-4.1")   # ضع gpt-4.5 لو متاح
 
 AI_ENABLED = bool(OPENAI_API_KEY) and (OpenAI is not None)
 client = OpenAI(api_key=OPENAI_API_KEY) if AI_ENABLED else None
@@ -67,7 +65,6 @@ CHANNEL_ID = None  # مثال: -1001234567890
 
 # ========= الإقلاع (حل chat_id + الأوامر) =========
 async def on_startup(app: Application):
-    # نزّل الويبهوك لو كان مفعّل + احذف الرسائل المعلقة
     await app.bot.delete_webhook(drop_pending_updates=True)
 
     global CHANNEL_ID
@@ -105,6 +102,7 @@ async def on_startup(app: Application):
                 BotCommand("refreshcmds", "تحديث قائمة الأوامر"),
                 BotCommand("debugverify", "تشخيص التحقق"),
                 BotCommand("dv", "تشخيص سريع"),
+                BotCommand("aidiag", "تشخيص مفتاح الذكاء الاصطناعي"),
             ],
             scope=BotCommandScopeChat(chat_id=OWNER_ID)
         )
@@ -122,10 +120,8 @@ def _db():
     return conn
 
 def migrate_db():
-    # تأكد من وجود الأعمدة حتى لو قاعدة البيانات قديمة
     with _conn_lock:
         c = _db().cursor()
-        # لو الجدول لسه ما انشأ، init_db بينشئه قبل ما نوصل هنا عادة
         c.execute("PRAGMA table_info(users)")
         cols = {row["name"] for row in c.fetchall()}
         if "verified_ok" not in cols:
@@ -139,7 +135,9 @@ def init_db():
         _db().execute("""
         CREATE TABLE IF NOT EXISTS users (
           id TEXT PRIMARY KEY,
-          premium INTEGER DEFAULT 0
+          premium INTEGER DEFAULT 0,
+          verified_ok INTEGER DEFAULT 0,
+          verified_at INTEGER DEFAULT 0
         );""")
         _db().execute("""
         CREATE TABLE IF NOT EXISTS ai_state (
@@ -160,7 +158,6 @@ def user_get(uid: int|str) -> dict:
             c.execute("INSERT INTO users (id) VALUES (?);", (uid,))
             _db().commit()
             return {"id": uid, "premium": 0, "verified_ok": 0, "verified_at": 0}
-        # لو ما كانت الأعمدة موجودة لأي سبب، نضمن وجودها
         out = dict(r)
         out.setdefault("verified_ok", 0)
         out.setdefault("verified_at", 0)
@@ -228,12 +225,12 @@ SECTIONS = {
         "photo": None, "is_free": True,
     },
 
-    # بدائل آمنة بدلاً من رشق المتابعين
+    # رشق — نسخة آمنة (بدون روابط مباشرة)
     "followers_safe": {
         "title": "🚀 نمو المتابعين (آمن)",
         "desc": (
-            "تنبيه: شراء/رشق متابعين قد يخالف سياسات المنصات ويعرّض الحسابات للإغلاق، "
-            "لذلك لا نوفر روابط له. بدائل آمنة:\n"
+            "تنبيه: شراء/رشق متابعين قد يخالف سياسات المنصات ويعرّض الحسابات للإغلاق.\n"
+            "بدائل آمنة:\n"
             "• تحسين المحتوى + الهاشتاقات\n"
             "• تعاون/مسابقات مع حسابات قريبة من مجالك\n"
             "• إعلانات ممولة دقيقة الاستهداف\n"
@@ -294,20 +291,20 @@ SECTIONS = {
         )
     },
 
+    # فيزا وهمية — صياغة آمنة (بطاقات اختبار رسمية فقط)
     "dev_test_cards": {
-        "title": "💳 فيزا وهمية ",
+        "title": "💳 فيزا وهمية (بيئة اختبار)",
         "desc": (
-            "بدل \"فيزا وهمية\": استخدم بطاقات اختبار رسمية من منصات الدفع (مثل Stripe/PayPal Sandbox) "
-            "داخل بيئات تطوير/اختبار فقط. هذه البطاقات تعمل في الوضع التجريبي ولا تُستخدم لمدفوعات حقيقية."
+            "بدل \"فيزا وهمية\": استخدم بطاقات اختبار رسمية من منصات الدفع (Stripe / PayPal Sandbox) "
+            "داخل بيئات تطوير/اختبار فقط. لا تُستخدم لمدفوعات حقيقية."
         ),
         "is_free": True
     },
 
     "plus_apps": {
-        "title": "🆓  تطبيقات بلس وألعاب مهكرة (iOS) — على مسؤوليتك",
+        "title": "🆓 تطبيقات بلس وألعاب معدلة (iOS) — على مسؤوليتك",
         "desc": (
-            "تنبيه أمني/قانوني: تنزيل تطبيقات معدلة أو من خارج المتجر قد يخالف شروط Apple ويعرض جهازك للمخاطر. "
-            "افحص الروابط وتحمّل المسؤولية كاملة."
+            "تنبيه أمني/قانوني: تنزيل تطبيقات معدلة أو من خارج المتجر قد يخالف شروط Apple ويعرض جهازك للمخاطر."
         ),
         "is_free": True,
         "links": [
@@ -322,16 +319,10 @@ SECTIONS = {
 
     "geolocation": {
         "title": "📍 تحديد الموقع عبر IP (معلومة عامة)",
-        "desc": (
-            "استخدم فقط لأغراض مشروعة (اختبارات، أجهزتك/سيرفراتك وبموافقة). تجنّب أي اعتداء على خصوصية الآخرين."
-        ),
+        "desc": "استخدم فقط لأغراض مشروعة (اختبارات/أجهزتك وبموافقة).",
         "is_free": True,
-        "links": [
-            "https://www.geolocation.com/ar"
-        ],
-        "content": (
-            "افتح الموقع وأدخل IP تملكه أو لديك إذن بتحليله؛ ستظهر معلومات عامة مثل الدولة/المدينة ومزوّد الخدمة."
-        )
+        "links": ["https://www.geolocation.com/ar"],
+        "content": "أدخل IP تملكه أو لديك إذن بتحليله لعرض البلد/المدينة ومزوّد الخدمة."
     },
 
     # VIP
@@ -366,6 +357,24 @@ SECTIONS = {
         "photo": None, "is_free": False,
     },
 }
+
+# (اختياري) إظهار روابط الرشق الأصلية على مسؤوليتك عبر متغير بيئة
+ENABLE_FOLLOW_LINKS = os.getenv("ENABLE_FOLLOW_LINKS", "0") == "1"
+if ENABLE_FOLLOW_LINKS:
+    SECTIONS["followers_links"] = {
+        "title": "📈 مواقع رشق متابعين (مسؤوليتك)",
+        "desc": "قد تخالف سياسات المنصات. استخدم بحذر وعلى مسؤوليتك.",
+        "is_free": True,
+        "links": [
+            "https://zyadat.com/",
+            "https://followadd.com/",
+            "https://smmcpan.com/",
+            "https://seoclevers.com/",
+            "https://followergi.com/",
+            "https://seorrs.com/",
+            "https://drd3m.com/ref/ixeuw"
+        ]
+    }
 
 # ========= لوحات الأزرار =========
 def gate_kb():
@@ -475,10 +484,6 @@ async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int,
 
 # ========= AI =========
 def _chat_with_fallback(messages):
-    """
-    يحاول الموديل المحدد في OPENAI_CHAT_MODEL أولاً،
-    ثم يسقط تلقائياً على بدائل قوية لو الموديل غير متاح/موقوف.
-    """
     if not AI_ENABLED or client is None:
         return None, "ai_disabled"
 
@@ -545,13 +550,11 @@ def build_section_text(sec: dict) -> str:
     if content:
         parts.append("\n" + content)
 
-    # روابط متعددة
     if links:
         parts.append("\n🔗 روابط مفيدة:")
         for u in links:
             parts.append(u)
 
-    # رابط واحد افتراضي
     if link and link not in links:
         parts.append("\n🔗 الرابط:")
         parts.append(link)
@@ -570,6 +573,17 @@ async def refresh_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
     await on_startup(context.application)
     await update.message.reply_text("✅ تم تحديث قائمة الأوامر.")
+
+async def aidiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != OWNER_ID: return
+    k = (os.getenv("OPENAI_API_KEY") or "").strip()
+    await update.message.reply_text(
+        "AI_ENABLED=%s | key=%s | model=%s" % (
+            "ON" if (k and OpenAI is not None) else "OFF",
+            ("set(len=%d)" % len(k)) if k else "missing",
+            os.getenv("OPENAI_CHAT_MODEL","gpt-4.1")
+        )
+    )
 
 async def debug_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -643,8 +657,9 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # AI
     if q.data == "ai_chat":
-        if not AI_ENABLED: await safe_edit(q, tr("ai_disabled"), kb=vip_prompt_kb()); return
-        if not (user_is_premium(uid) or uid == OWNER_ID): 
+        if not AI_ENABLED:
+            await safe_edit(q, tr("ai_disabled"), kb=vip_prompt_kb()); return
+        if not (user_is_premium(uid) or uid == OWNER_ID):
             await safe_edit(q, f"🔒 {SECTIONS['ai_hub']['title']}\n\n{tr('access_denied')}\n\n💳 10$ — راسل الإدارة.", kb=vip_prompt_kb()); 
             return
         ai_set_mode(uid, "ai_chat")
@@ -670,9 +685,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not allowed:
             await safe_edit(q, f"🔒 {sec['title']}\n\n{tr('access_denied')}\n\n💳 10$ — راسل الإدارة.", kb=vip_prompt_kb()); return
 
-        # نص ديناميكي
         text = build_section_text(sec)
-
         local, photo = sec.get("local_file"), sec.get("photo")
         if local and Path(local).exists():
             await safe_edit(q, f"{sec['title']}\n\n{sec.get('desc','')}", kb=section_back_kb())
@@ -690,7 +703,6 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ========= رسائل عامة =========
 async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # init_db تم استدعاؤها في main() مسبقًا، لكن نضمن وجود المستخدم
     uid = update.effective_user.id
     user_get(uid)
 
@@ -736,6 +748,7 @@ def main():
     app.add_handler(CommandHandler("grant", grant))
     app.add_handler(CommandHandler("revoke", revoke))
     app.add_handler(CommandHandler("refreshcmds", refresh_cmds))
+    app.add_handler(CommandHandler("aidiag", aidiag))
     app.add_handler(CommandHandler(["debugverify","dv"], debug_verify))
     app.add_handler(CallbackQueryHandler(on_button))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, guard_messages))
@@ -744,5 +757,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
