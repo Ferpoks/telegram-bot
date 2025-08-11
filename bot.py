@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-Ferpoks Bot v5 — Auto-VIP via Webhook + Polling
+Ferpoks Bot v5.1 — Auto-VIP via Webhook + Polling (loop-safe)
 - تحقق عضوية القناة + كاش
-- Webhook/Polling للتليجرام (اختياري)
-- دفع VIP: زر شراء يولّد ref + أزرار الدفع
-- تفعيل VIP تلقائي عبر Webhook /payhook (أقوى) + Poller (fallback)
-- إدارة أقسام من داخل البوت
+- Telegram Webhook/Polling (اختياري)
+- دفع VIP: ref + أزرار دفع
+- تفعيل VIP تلقائي عبر Webhook /payhook + Poller احتياطي
+- إدارة أقسام (إضافة/تعديل/حذف/عرض) مخزنة بقاعدة البيانات
 - لوحة تحكم، بث، إحصائيات، أكواد Redeem
 - ذكاء اصطناعي (OpenAI Responses API + Fallback)
 - تتبّع تنزيلات
+- إصلاح تضارب event loop: نُشغّل خدماتنا ضمن نفس اللوب، ونجعل PTB لا يُغلق اللوب (close_loop=False)
 """
 
 import os, sqlite3, threading, time, asyncio, logging, json, random, string
@@ -43,7 +44,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN") or ""
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN مفقود")
 
-# تشغيل Webhook (اختياري) للتليجرام
+# Telegram Webhook (اختياري)
 USE_TELEGRAM_WEBHOOK = os.getenv("USE_WEBHOOK", "0").strip().lower() in ("1", "true", "yes")
 TELEGRAM_WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip()
 TELEGRAM_WEBHOOK_IP  = os.getenv("WEBHOOK_IP", "").strip()
@@ -54,18 +55,18 @@ DB_PATH = os.getenv("DB_PATH", "bot.db")
 
 # دفع VIP
 PRICE_USD = float(os.getenv("PRICE_USD", "10"))
-PAYLINK_CHECKOUT_BASE = os.getenv("PAYLINK_CHECKOUT_BASE", "").strip()  # https://pay.example/checkout?ref={ref}
+PAYLINK_CHECKOUT_BASE = os.getenv("PAYLINK_CHECKOUT_BASE", "").strip()  # مثال: https://pay.example/checkout?ref={ref}
 STRIPE_PAYMENT_LINK   = os.getenv("STRIPE_PAYMENT_LINK", "").strip()
 PAY_VERIFY_ENDPOINT   = os.getenv("PAY_VERIFY_ENDPOINT", "").strip()    # fallback checker
 PAY_VERIFY_AUTH       = os.getenv("PAY_VERIFY_AUTH", "").strip()
 PAY_POLL_SECONDS      = int(os.getenv("PAY_POLL_SECONDS", "45"))
 
-# Webhook داخلي للدفع (يستقبل إشعار بوابتك)
+# Webhook داخلي للدفع
 PAY_WEBHOOK_ENABLED = os.getenv("PAY_WEBHOOK_ENABLED", "1").strip().lower() in ("1","true","yes")
 PAY_WEBHOOK_HOST    = os.getenv("PAY_WEBHOOK_HOST", "0.0.0.0")
 PAY_WEBHOOK_PORT    = int(os.getenv("PAY_WEBHOOK_PORT", "8080"))
 PAY_WEBHOOK_PATH    = os.getenv("PAY_WEBHOOK_PATH", "/payhook")
-PAY_WEBHOOK_SECRET  = os.getenv("PAY_WEBHOOK_SECRET", "super-secret")  # تحطه نفسه في بوابة الدفع (الهيدر)
+PAY_WEBHOOK_SECRET  = os.getenv("PAY_WEBHOOK_SECRET", "super-secret")
 
 # OpenAI
 OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
@@ -647,13 +648,6 @@ async def payment_poller(app: Application):
 
 # —— Webhook داخلي يستقبل إشعار بوابة الدفع —— #
 def _extract_ref_from_payload(data: dict) -> str | None:
-    """
-    يحاول إيجاد مرجع الدفع ref في عدة مواقع شائعة داخل JSON الإشعار:
-    - data["ref"]
-    - data["reference"], data["order_id"], data["invoice_id"]
-    - data["metadata"]["ref"] أو data["metadata"]["client_reference_id"]
-    - data["data"]["ref"] / ["object"]["metadata"]["ref"] (Stripe-like)
-    """
     keys_direct = ["ref", "reference", "order_id", "invoice_id", "client_reference_id"]
     for k in keys_direct:
         if isinstance(data.get(k), str) and data[k]:
@@ -663,16 +657,13 @@ def _extract_ref_from_payload(data: dict) -> str | None:
         for k in ["ref", "client_reference_id", "reference"]:
             if isinstance(meta.get(k), str) and meta[k]:
                 return meta[k]
-    # deep nested
     deep = data.get("data") or data.get("object") or {}
     if isinstance(deep, dict):
-        # recurse one level shallow
         got = _extract_ref_from_payload(deep)
         if got: return got
     return None
 
 async def pay_webhook_handler(request: web.Request) -> web.Response:
-    # تحقق من السر
     secret = request.headers.get("X-Webhook-Secret") or request.headers.get("X-Secret")
     if secret != PAY_WEBHOOK_SECRET:
         return web.json_response({"ok": False, "error": "forbidden"}, status=403)
@@ -680,7 +671,7 @@ async def pay_webhook_handler(request: web.Request) -> web.Response:
         payload = await request.json()
     except Exception:
         payload = {}
-    # هل مدفوع؟
+
     paid_flags = ["paid", "is_paid", "success", "status"]
     is_paid = False
     status_val = payload.get("status")
@@ -690,11 +681,11 @@ async def pay_webhook_handler(request: web.Request) -> web.Response:
         for k in paid_flags:
             v = payload.get(k)
             if isinstance(v, bool) and v: is_paid = True
-    # استخرج المرجع
+
     ref = _extract_ref_from_payload(payload)
     if not ref:
         return web.json_response({"ok": False, "error": "no_ref"}, status=400)
-    # لو مدفوع، فعّل
+
     if is_paid:
         ok = mark_payment_paid(ref)
         return web.json_response({"ok": True, "activated": ok, "ref": ref})
@@ -1010,7 +1001,7 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
     log.error("⚠️ Error: %s", getattr(context, 'error', 'unknown'))
 
-# ========= نقطة التشغيل =========
+# ========= بناء التطبيق =========
 def build_app():
     init_db(); rebuild_sections_cache()
     app = (Application.builder()
@@ -1041,12 +1032,18 @@ def build_app():
     app.add_error_handler(on_error)
     return app
 
-async def run_all_services(app: Application):
-    # 1) مُحقّق الدفع الدوري (fallback)
-    asyncio.create_task(payment_poller(app))
-    # 2) Webhook الدفع (لحظي)
-    await run_pay_webhook_server()
-    # 3) تشغيل تليجرام
+# ========= التشغيل (Loop-safe) =========
+def main():
+    app = build_app()
+    loop = asyncio.get_event_loop()
+
+    # 1) Webhook الدفع (aiohttp) — يعمل كتاسك موازٍ
+    loop.create_task(run_pay_webhook_server())
+
+    # 2) Poller احتياطي للتحقق الدوري
+    loop.create_task(payment_poller(app))
+
+    # 3) شغّل تلجرام: polling أو webhook — مع منع إغلاق اللوب من PTB
     if USE_TELEGRAM_WEBHOOK and TELEGRAM_WEBHOOK_URL:
         log.info("Starting Telegram webhook on %s", TELEGRAM_WEBHOOK_URL + TELEGRAM_WEBHOOK_PATH)
         app.run_webhook(
@@ -1054,16 +1051,12 @@ async def run_all_services(app: Application):
             port=TELEGRAM_WEBHOOK_PORT,
             url_path=TELEGRAM_WEBHOOK_PATH,
             webhook_url=TELEGRAM_WEBHOOK_URL + TELEGRAM_WEBHOOK_PATH,
-            ip_address=TELEGRAM_WEBHOOK_IP or None
+            ip_address=TELEGRAM_WEBHOOK_IP or None,
+            close_loop=False  # <-- مهم
         )
     else:
         log.info("Starting Telegram polling...")
-        app.run_polling()
-
-def main():
-    application = build_app()
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(run_all_services(application))
+        app.run_polling(close_loop=False)  # <-- مهم
 
 if __name__ == "__main__":
     main()
