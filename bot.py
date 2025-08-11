@@ -32,9 +32,8 @@ if not BOT_TOKEN:
 DB_PATH = os.getenv("DB_PATH", "/var/data/bot.db")
 OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
 
-# نماذج قابلة للتغيير من Environment
+# نموذج الدردشة قابل للتغيير من Environment
 OPENAI_CHAT_MODEL  = os.getenv("OPENAI_CHAT_MODEL", "gpt-4.1")   # ضع gpt-4.5 لو متاح عندك
-OPENAI_IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-1")
 
 AI_ENABLED = bool(OPENAI_API_KEY) and (OpenAI is not None)
 client = OpenAI(api_key=OPENAI_API_KEY) if AI_ENABLED else None
@@ -191,15 +190,9 @@ def tr(k: str) -> str:
     }
     return M.get(k, k)
 
-# ========= الأقسام =========
+# ========= أقسام المحتوى =========
 SECTIONS = {
     # مجانية
-    "suppliers_pack": {
-        "title": "📦 بكج الموردين (مجاني)",
-        "desc": "ملف شامل لأرقام ومصادر الموردين.",
-        "link": "https://docs.google.com/document/d/1rR2nJMUNDoj0cogeenVh9fYVs_ZTM5W0bl0PBIOVwL0/edit?tab=t.0",
-        "photo": None, "is_free": True,
-    },
     "python_zero": {
         "title": "🐍 بايثون من الصفر (مجاني)",
         "desc": "دليلك الكامل لتعلّم البايثون من الصفر حتى الاحتراف مجانًا 🤩👑",
@@ -212,13 +205,114 @@ SECTIONS = {
         "link": "https://drive.google.com/drive/folders/1-UADEMHUswoCyo853FdTu4R4iuUx_f3I?usp=drive_link",
         "photo": None, "is_free": True,
     },
-    # VIP
-    "kash_malik": {
-        "title": "♟️ كش ملك (VIP)",
-        "desc": "قسم كش ملك – محتوى مميز.",
-        "link": "https://drd3m.com/ref/ixeuw",
-        "photo": None, "local_file": "assets/kash-malik.docx", "is_free": False,
+
+    # إضافاتك (مع ضوابط الأمان)
+    "followers_safe": {
+        "title": "🚀 نمو المتابعين (آمن)",
+        "desc": (
+            "تنبيه: شراء/رشق متابعين قد يخالف سياسات المنصات ويعرّض الحسابات للإغلاق، "
+            "لذلك لا نوفر روابط له. بدائل آمنة:\n"
+            "• تحسين المحتوى + الهاشتاقات\n"
+            "• تعاون/مسابقات مع حسابات قريبة من مجالك\n"
+            "• إعلانات ممولة دقيقة الاستهداف\n"
+            "• محتوى قصير متكرر (Reels/Shorts) مع CTA واضح"
+        ),
+        "is_free": True,
+        "links": []
     },
+
+    "epic_recovery": {
+        "title": "🎮 استرجاع حساب Epic (ربط PSN)",
+        "desc": "نموذج مراسلة شرعي لدعم Epic إذا تم اختراق الحساب وتم ربط PSN بغير علمك.",
+        "is_free": True,
+        "content": (
+            "استخدم النص التالي عند مراسلة دعم Epic (بالإنجليزية):\n\n"
+            "Hello Epic Games Support,\n\n"
+            "My Epic account appears to have been compromised via a phishing link. "
+            "I have already secured my account (changed password and enabled 2FA). "
+            "However, my PlayStation Network (PSN) is currently linked incorrectly and I cannot link my own PSN.\n\n"
+            "Could you please review my account and help with either unlinking the current PSN or allowing me to link my PSN again?\n\n"
+            "Account details:\n"
+            "- Email on Epic account: __________\n"
+            "- Display name: __________\n"
+            "- Country/Region: __________\n"
+            "- Any proof available (receipts/IPs) can be provided upon request.\n\n"
+            "Thank you for your help."
+        )
+    },
+
+    "virtual_numbers": {
+        "title": "📱 أرقام مؤقتة (للاختبار فقط)",
+        "desc": (
+            "تنبيه: استخدام الأرقام المؤقتة قد يخالف شروط بعض الخدمات. استخدمها فقط لأغراض اختبار/تطوير وبشكل قانوني."
+        ),
+        "is_free": True,
+        "links": [
+            "https://receive-smss.com",
+            "https://smsreceivefree.com",
+            "http://sms24.me"
+        ]
+    },
+
+    "tg_unlimit": {
+        "title": "✉️ فك حظر/تقييد تيليجرام",
+        "desc": "خطوات مراسلة دعم تيليجرام لمراجعة القيود على الحساب.",
+        "is_free": True,
+        "content": (
+            "1) افتح: https://telegram.org/support\n"
+            "2) اكتب رسالة واضحة (بالإنجليزية):\n"
+            "Hello Telegram Support,\n"
+            "I can’t start new chats or contact users unless I have their phone numbers. "
+            "It seems my account is limited. Could you please review my account and remove any limitation if possible?\n"
+            "My details:\n"
+            "- Phone number: +____________\n"
+            "- Email: ____________\n"
+            "- App version / Platform: ____________\n\n"
+            "ملاحظة: لا تكرر الطلب كثيرًا؛ انتظر رد الدعم."
+        )
+    },
+
+    "dev_test_cards": {
+        "title": "💳 فيزا وهمية ",
+        "desc": (
+            "بدل \"فيزا وهمية\": استخدم بطاقات اختبار رسمية من منصات الدفع (مثل Stripe/PayPal Sandbox) "
+            "داخل بيئات تطوير/اختبار فقط. هذه البطاقات تعمل في الوضع التجريبي ولا تُستخدم لمدفوعات حقيقية."
+        ),
+        "is_free": True
+    },
+
+    "plus_apps": {
+        "title": "🆓  تطبيقات بلس وألعاب مهكرة (iOS) — على مسؤوليتك",
+        "desc": (
+            "تنبيه أمني/قانوني: تنزيل تطبيقات معدلة أو من خارج المتجر قد يخالف شروط Apple ويعرض جهازك للمخاطر. "
+            "افحص الروابط وتحمّل المسؤولية كاملة."
+        ),
+        "is_free": True,
+        "links": [
+            "https://www.arabsiphone.com/category/iphone/",
+            "https://www.emad1saleh.com",
+            "https://a7.ae/Plus/",
+            "https://www.majed9.com/p/plus.html?m=1",
+            "http://www.adelrahmani.com/tweak/",
+            "https://www.alarabydownloads.com/plus-applications-programs-iphone/"
+        ]
+    },
+
+    "geolocation": {
+        "title": "📍 تحديد الموقع عبر IP (معلومة عامة)",
+        "desc": (
+            "استخدم فقط لأغراض مشروعة (اختبارات، أجهزتك/سيرفراتك وبموافقة). تجنّب أي اعتداء على خصوصية الآخرين."
+        ),
+        "is_free": True,
+        "links": [
+            "https://www.geolocation.com/ar"
+        ],
+        "content": (
+            "افتح الموقع وأدخل IP تملكه أو لديك إذن بتحليله؛ ستظهر معلومات عامة مثل الدولة/المدينة ومزوّد الخدمة."
+        )
+    },
+
+    # VIP
     "cyber_sec": {
         "title": "🛡️ الأمن السيبراني (VIP)",
         "desc": "الأمن السيبراني من الصفر \"Cyber security\" 🧑‍💻",
@@ -245,7 +339,7 @@ SECTIONS = {
     },
     "ai_hub": {
         "title": "🧠 الذكاء الاصطناعي (VIP)",
-        "desc": "مركز أدوات الذكاء الاصطناعي: دردشة AI + تحويل نص إلى صورة.",
+        "desc": "مركز أدوات الذكاء الاصطناعي: دردشة AI.",
         "link": "https://t.me/ferpokss",
         "photo": None, "is_free": False,
     },
@@ -266,6 +360,9 @@ def bottom_menu_kb(uid: int):
 def sections_list_kb():
     rows = []
     for k, sec in SECTIONS.items():
+        # لا نظهر أقسام بلا عنوان
+        if not sec.get("title"): 
+            continue
         lock = "🟢" if sec.get("is_free") else "🔒"
         rows.append([InlineKeyboardButton(f"{lock} {sec['title']}", callback_data=f"sec_{k}")])
     rows.append([InlineKeyboardButton(tr("back"), callback_data="back_home")])
@@ -278,9 +375,9 @@ def vip_prompt_kb():
         [InlineKeyboardButton(tr("back"), callback_data="back_sections")]
     ])
 def ai_hub_kb():
+    # بدون زر الصور
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🤖 دردشة AI", callback_data="ai_chat")],
-        [InlineKeyboardButton("🖼️ تحويل نص إلى صورة", callback_data="ai_image")],
         [InlineKeyboardButton("↩️ رجوع للأقسام", callback_data="back_sections")]
     ])
 def ai_stop_kb():
@@ -357,7 +454,6 @@ def _chat_with_fallback(messages):
     fallbacks = []
     if primary:
         fallbacks.append(primary)
-    # أقوى بدائل عامة:
     for m in ["gpt-4.1", "gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"]:
         if m not in fallbacks:
             fallbacks.append(m)
@@ -403,27 +499,32 @@ def ai_chat_reply(prompt: str) -> str:
     except Exception:
         return "⚠️ تعذّر التنفيذ حالياً. جرّب لاحقاً."
 
-def ai_image_url(prompt: str) -> str:
-    """توليد صورة وإرجاع رابط مباشر (حجم مدعوم)."""
-    if not AI_ENABLED or client is None:
-        return tr("ai_disabled")
-    try:
-        img = client.images.generate(
-            model=OPENAI_IMAGE_MODEL,   # gpt-image-1 غالباً
-            prompt=prompt,
-            size="1024x1024",
-            response_format="url"
-        )
-        return img.data[0].url
-    except Exception as e:
-        msg = str(e)
-        if ("invalid_value" in msg and "size" in msg) or "Supported values" in msg:
-            return "⚠️ حجم الصورة غير مدعوم. جرّب 1024x1024 أو 1024x1536 أو 1536x1024 أو auto."
-        if "insufficient_quota" in msg or "You exceeded your current quota" in msg:
-            return "⚠️ نفاد الرصيد في حساب OpenAI."
-        if "invalid_api_key" in msg or "Incorrect API key" in msg:
-            return "⚠️ مفتاح OpenAI غير صالح أو مفقود."
-        return "⚠️ تعذّر إنشاء الصورة حالياً. جرّب لاحقاً."
+# ========= أدوات مساعدة للعرض =========
+def build_section_text(sec: dict) -> str:
+    parts = []
+    title = sec.get("title", "")
+    desc  = sec.get("desc", "")
+    link  = sec.get("link")
+    links = sec.get("links", [])
+    content = sec.get("content")
+
+    if title: parts.append(title)
+    if desc:  parts.append("\n" + desc)
+    if content:
+        parts.append("\n" + content)
+
+    # روابط متعددة
+    if links:
+        parts.append("\n🔗 روابط مفيدة:")
+        for u in links:
+            parts.append(u)
+
+    # رابط واحد افتراضي
+    if link and link not in links:
+        parts.append("\n🔗 الرابط:")
+        parts.append(link)
+
+    return "\n".join(parts).strip()
 
 # ========= أوامر =========
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -513,11 +614,6 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not (user_is_premium(uid) or uid == OWNER_ID): await safe_edit(q, f"🔒 {SECTIONS['ai_hub']['title']}\n\n{tr('access_denied')}\n\n💳 10$ — راسل الإدارة.", kb=vip_prompt_kb()); return
         ai_set_mode(uid, "ai_chat"); await safe_edit(q, "🤖 وضع الدردشة مفعّل.\nأرسل سؤالك الآن.", kb=ai_stop_kb()); return
 
-    if q.data == "ai_image":
-        if not AI_ENABLED: await safe_edit(q, tr("ai_disabled"), kb=vip_prompt_kb()); return
-        if not (user_is_premium(uid) or uid == OWNER_ID): await safe_edit(q, f"🔒 {SECTIONS['ai_hub']['title']}\n\n{tr('access_denied')}\n\n💳 10$ — راسل الإدارة.", kb=vip_prompt_kb()); return
-        ai_set_mode(uid, "ai_image"); await safe_edit(q, "🖼️ وضع توليد الصور مفعّل.\nأرسل وصف الصورة.", kb=ai_stop_kb()); return
-
     if q.data == "ai_stop":
         ai_set_mode(uid, None); await safe_edit(q, "🔚 تم إنهاء وضع الذكاء الاصطناعي.", kb=sections_list_kb()); return
 
@@ -534,21 +630,21 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, f"{sec['title']}\n\n{sec['desc']}\n\nاختر أداة:", kb=ai_hub_kb()); return
 
         allowed = sec.get("is_free") or user_is_premium(uid) or uid == OWNER_ID
-        title, desc, link = sec["title"], sec["desc"], sec["link"]
-        local, photo = sec.get("local_file"), sec.get("photo")
-
         if not allowed:
-            await safe_edit(q, f"🔒 {title}\n\n{tr('access_denied')}\n\n💳 10$ — راسل الإدارة.", kb=vip_prompt_kb()); return
+            await safe_edit(q, f"🔒 {sec['title']}\n\n{tr('access_denied')}\n\n💳 10$ — راسل الإدارة.", kb=vip_prompt_kb()); return
 
-        text = f"{title}\n\n{desc}\n\n🔗 الرابط المباشر:\n{link}"
+        # نص ديناميكي
+        text = build_section_text(sec)
+
+        local, photo = sec.get("local_file"), sec.get("photo")
         if local and Path(local).exists():
-            await safe_edit(q, f"{title}\n\n{desc}", kb=section_back_kb())
+            await safe_edit(q, f"{sec['title']}\n\n{sec.get('desc','')}", kb=section_back_kb())
             with open(local, "rb") as f:
-                await q.message.reply_document(InputFile(f), caption=f"{title}\n\n🔗 {link}")
+                await q.message.reply_document(InputFile(f), caption=text)
         elif photo:
-            await safe_edit(q, f"{title}\n\n{desc}", kb=section_back_kb())
+            await safe_edit(q, f"{sec['title']}\n\n{sec.get('desc','')}", kb=section_back_kb())
             try:
-                await q.message.reply_photo(photo=photo, caption=f"{title}\n\n🔗 {link}")
+                await q.message.reply_photo(photo=photo, caption=text)
             except Exception:
                 await q.message.reply_text(text, reply_markup=section_back_kb())
         else:
@@ -567,19 +663,6 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not t: return
         await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
         await update.message.reply_text(ai_chat_reply(t), reply_markup=ai_stop_kb()); return
-    if mode == "ai_image":
-        t = (update.message.text or "").strip()
-        if not t: return
-        await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_PHOTO)
-        url = ai_image_url(t)
-        if isinstance(url, str) and url.startswith("http"):
-            try:
-                await update.message.reply_photo(photo=url, caption=f"✅ تم إنشاء الصورة بناءً على:\n{t}", reply_markup=ai_stop_kb())
-            except Exception:
-                await update.message.reply_text(url, reply_markup=ai_stop_kب())
-        else:
-            await update.message.reply_text(url, reply_markup=ai_stop_kb())
-        return
 
     await update.message.reply_text("👇 القائمة:", reply_markup=bottom_menu_kb(uid))
     await update.message.reply_text("📂 الأقسام:", reply_markup=sections_list_kb())
@@ -620,5 +703,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
