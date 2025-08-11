@@ -3,7 +3,7 @@ import os, sqlite3, threading, time, asyncio
 from pathlib import Path
 from dotenv import load_dotenv
 
-# OpenAI اختياري
+# ====== OpenAI (اختياري) ======
 try:
     from openai import OpenAI
 except Exception:
@@ -20,12 +20,13 @@ from telegram.ext import (
 from telegram.constants import ChatMemberStatus, ChatAction
 from telegram.error import BadRequest
 
-# ========= الإعدادات =========
+# ====== تحميل البيئة ======
 ENV_PATH = Path(".env")
-# حمّل .env محليًا فقط؛ في Render نستخدم متغيرات البيئة مباشرة
+# لا نحمّل .env على Render حتى لا نطغى على متغيراته
 if ENV_PATH.exists() and not os.getenv("RENDER"):
-    load_dotenv(ENV_PATH)  # لا نستخدم override لتفادي الكتابة على متغيرات البيئة في السيرفر
+    load_dotenv(ENV_PATH)
 
+# ====== إعدادات أساسية ======
 BOT_TOKEN = os.getenv("BOT_TOKEN") or ""
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN مفقود")
@@ -37,36 +38,83 @@ except Exception:
     pass
 
 OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
-OPENAI_CHAT_MODEL  = os.getenv("OPENAI_CHAT_MODEL", "gpt-4.1")   # ضع gpt-4.5 لو متاح
+OPENAI_CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-4.1")
 
-AI_ENABLED = bool(OPENAI_API_KEY) and (OpenAI is not None)
+# تحقق توافق httpx مع openai 1.x (يتعطل مع httpx>=0.28)
+def _httpx_is_compatible() -> bool:
+    try:
+        from importlib.metadata import version
+        v = version("httpx")
+        parts = v.split(".")
+        major = int(parts[0]); minor = int(parts[1]) if len(parts) > 1 else 0
+        # غير متوافق إذا 0.28+ أو 1.x
+        if major == 0 and minor >= 28: return False
+        if major >= 1: return False
+        return True
+    except Exception:
+        return True
+
+HTTPX_OK = _httpx_is_compatible()
+
+AI_ENABLED = bool(OPENAI_API_KEY) and (OpenAI is not None) and HTTPX_OK
 client = OpenAI(api_key=OPENAI_API_KEY) if AI_ENABLED else None
 
-OWNER_ID = 6468743821
+OWNER_ID = int(os.getenv("OWNER_ID", "6468743821"))
 
-# 🔁 دعم تغيير اسم القناة بسهولة (الأول هو الحالي)
-MAIN_CHANNEL_USERNAMES = ["ferpokss", "Ferp0ks"]   # بدون @
+# قناة الاشتراك
+MAIN_CHANNEL_USERNAMES = (os.getenv("MAIN_CHANNELS","ferpokss,Ferp0ks").split(","))
+MAIN_CHANNEL_USERNAMES = [u.strip().lstrip("@") for u in MAIN_CHANNEL_USERNAMES if u.strip()]
 MAIN_CHANNEL_LINK = f"https://t.me/{MAIN_CHANNEL_USERNAMES[0]}"
 
 def need_admin_text() -> str:
-    return f"⚠️ لو ما اشتغل التحقق: تأكّد أن البوت مشرف في @{MAIN_CHANNEL_USERNAMES[0]}."
+    return f"⚠️ لو ما اشتغل التحقق: تأكّد أن البوت **مشرف** في @{MAIN_CHANNEL_USERNAMES[0]}."
 
 OWNER_DEEP_LINK = f"tg://user?id={OWNER_ID}"
 
-WELCOME_PHOTO = "assets/ferpoks.jpg"
+WELCOME_PHOTO = os.getenv("WELCOME_PHOTO","assets/ferpoks.jpg")
 WELCOME_TEXT_AR = (
     "مرحباً بك في بوت فيربوكس 🔥\n"
     "هنا تلاقي مصادر وأدوات للتجارة الإلكترونية، بايثون، الأمن السيبراني وغيرهم.\n"
     "المحتوى المجاني متاح للجميع، ومحتوى VIP فيه ميزات أقوى. ✨"
 )
 
-# سنحل chat_id الحقيقي للقناة عند الإقلاع ونخزّنه هنا
-CHANNEL_ID = None  # مثال: -1001234567890
+CHANNEL_ID = None  # سيُحل عند الإقلاع
 
-# ========= الإقلاع (حل chat_id + الأوامر) =========
+# ====== خادِم صحي لــ Render (اختياري) ======
+# يعمل فقط إن كانت aiohttp متوفرة، ولا يعيق البوت إن لم تتوفر
+SERVE_HEALTH = os.getenv("SERVE_HEALTH", "1") == "1"
+try:
+    from aiohttp import web
+    AIOHTTP_AVAILABLE = True
+except Exception:
+    AIOHTTP_AVAILABLE = False
+
+def _run_health_server():
+    if not (SERVE_HEALTH and AIOHTTP_AVAILABLE):
+        print("[health] aiohttp غير متوفر أو SERVE_HEALTH=0 — تخطي الخادم الصحي")
+        return
+    async def _health(_): return web.Response(text="OK")
+    try:
+        app = web.Application()
+        app.router.add_get("/", _health)
+        port = int(os.getenv("PORT", "10000"))
+        print(f"[health] starting on 0.0.0.0:{port}")
+        web.run_app(app, port=port)
+    except Exception as e:
+        print("[health] failed:", e)
+
+# شغّل الخادم الصحي في ثريد جانبي (لا يمنع polling)
+threading.Thread(target=_run_health_server, daemon=True).start()
+
+# ====== عند الإقلاع ======
 async def on_startup(app: Application):
-    await app.bot.delete_webhook(drop_pending_updates=True)
+    # إسقاط webhook لو كان مفعّل
+    try:
+        await app.bot.delete_webhook(drop_pending_updates=True)
+    except Exception as e:
+        print("[startup] delete_webhook:", e)
 
+    # حل chat_id للقناة
     global CHANNEL_ID
     CHANNEL_ID = None
     for u in MAIN_CHANNEL_USERNAMES:
@@ -76,40 +124,45 @@ async def on_startup(app: Application):
             print(f"[startup] resolved @{u} -> chat_id={CHANNEL_ID}")
             break
         except Exception as e:
-            print(f"[startup] get_chat @{u} failed: {e}")
+            print(f"[startup] get_chat @{u} failed:", e)
     if CHANNEL_ID is None:
-        print("[startup] ❌ could not resolve channel id; will fallback to @username")
+        print("[startup] ❌ could not resolve channel id; fallback to @username checks")
 
     # أوامر عامة
-    await app.bot.set_my_commands(
-        [
-            BotCommand("start", "بدء"),
-            BotCommand("help", "مساعدة"),
-            BotCommand("debugverify", "تشخيص التحقق"),
-            BotCommand("dv", "تشخيص سريع"),
-        ],
-        scope=BotCommandScopeDefault()
-    )
-    # أوامر للمالك فقط
+    try:
+        await app.bot.set_my_commands(
+            [
+                BotCommand("start", "بدء"),
+                BotCommand("help", "مساعدة"),
+                BotCommand("debugverify", "تشخيص التحقق"),
+                BotCommand("dv", "تشخيص سريع"),
+            ],
+            scope=BotCommandScopeDefault()
+        )
+    except Exception as e:
+        print("[startup] set_my_commands default:", e)
+
+    # أوامر للمالك
     try:
         await app.bot.set_my_commands(
             [
                 BotCommand("start", "بدء"),
                 BotCommand("help", "مساعدة"),
                 BotCommand("id", "معرّفك"),
-                BotCommand("grant", "منح صلاحية VIP"),
-                BotCommand("revoke", "سحب صلاحية VIP"),
-                BotCommand("refreshcmds", "تحديث قائمة الأوامر"),
+                BotCommand("grant", "منح VIP"),
+                BotCommand("revoke", "سحب VIP"),
+                BotCommand("refreshcmds", "تحديث الأوامر"),
                 BotCommand("debugverify", "تشخيص التحقق"),
                 BotCommand("dv", "تشخيص سريع"),
-                BotCommand("aidiag", "تشخيص مفتاح الذكاء الاصطناعي"),
+                BotCommand("aidiag", "تشخيص AI"),
+                BotCommand("libdiag", "إصدارات المكتبات"),
             ],
             scope=BotCommandScopeChat(chat_id=OWNER_ID)
         )
-    except Exception:
-        pass
+    except Exception as e:
+        print("[startup] set_my_commands owner:", e)
 
-# ========= قاعدة البيانات =========
+# ====== قاعدة البيانات ======
 _conn_lock = threading.Lock()
 def _db():
     conn = getattr(_db, "_conn", None)
@@ -198,18 +251,18 @@ def ai_get_mode(uid: int|str):
         r = c.fetchone()
         return r["mode"] if r else None
 
-# ========= نصوص قصيرة =========
+# ====== نصوص قصيرة ======
 def tr(k: str) -> str:
     M = {
         "follow_btn": "📣 الانضمام للقناة",
         "check_btn": "✅ تحقّق",
         "access_denied": "⚠️ هذا القسم خاص بمشتركي VIP.",
         "back": "↩️ رجوع",
-        "ai_disabled": "🧠 ميزة الذكاء الاصطناعي غير مفعّلة حالياً (مفقود OPENAI_API_KEY).",
+        "ai_disabled": "🧠 ميزة الذكاء الاصطناعي غير مفعّلة حالياً.",
     }
     return M.get(k, k)
 
-# ========= أقسام المحتوى =========
+# ====== الأقسام ======
 SECTIONS = {
     # مجانية
     "python_zero": {
@@ -224,47 +277,36 @@ SECTIONS = {
         "link": "https://drive.google.com/drive/folders/1-UADEMHUswoCyo853FdTu4R4iuUx_f3I?usp=drive_link",
         "photo": None, "is_free": True,
     },
-
-    # رشق — نسخة آمنة (بدون روابط مباشرة)
     "followers_safe": {
         "title": "🚀 نمو المتابعين (آمن)",
         "desc": (
             "تنبيه: شراء/رشق متابعين قد يخالف سياسات المنصات ويعرّض الحسابات للإغلاق.\n"
             "بدائل آمنة:\n"
             "• تحسين المحتوى + الهاشتاقات\n"
-            "• تعاون/مسابقات مع حسابات قريبة من مجالك\n"
+            "• تعاون/مسابقات\n"
             "• إعلانات ممولة دقيقة الاستهداف\n"
-            "• محتوى قصير متكرر (Reels/Shorts) مع CTA واضح"
+            "• محتوى قصير متكرر مع CTA واضح"
         ),
         "is_free": True,
         "links": []
     },
-
     "epic_recovery": {
         "title": "🎮 استرجاع حساب Epic (ربط PSN)",
-        "desc": "نموذج مراسلة شرعي لدعم Epic إذا تم اختراق الحساب وتم ربط PSN بغير علمك.",
+        "desc": "نموذج مراسلة دعم Epic إذا تم اختراق الحساب وتم ربط PSN بغير علمك.",
         "is_free": True,
         "content": (
-            "استخدم النص التالي عند مراسلة دعم Epic (بالإنجليزية):\n\n"
             "Hello Epic Games Support,\n\n"
             "My Epic account appears to have been compromised via a phishing link. "
             "I have already secured my account (changed password and enabled 2FA). "
             "However, my PlayStation Network (PSN) is currently linked incorrectly and I cannot link my own PSN.\n\n"
             "Could you please review my account and help with either unlinking the current PSN or allowing me to link my PSN again?\n\n"
-            "Account details:\n"
-            "- Email on Epic account: __________\n"
-            "- Display name: __________\n"
-            "- Country/Region: __________\n"
-            "- Any proof available (receipts/IPs) can be provided upon request.\n\n"
+            "Account details:\n- Email: ____\n- Display name: ____\n- Country/Region: ____\n\n"
             "Thank you for your help."
         )
     },
-
     "virtual_numbers": {
-        "title": "📱 أرقام مؤقتة (للاختبار فقط)",
-        "desc": (
-            "تنبيه: استخدام الأرقام المؤقتة قد يخالف شروط بعض الخدمات. استخدمها فقط لأغراض اختبار/تطوير وبشكل قانوني."
-        ),
+        "title": "📱 أرقام مؤقتة (اختبار فقط)",
+        "desc": "استخدمها قانونياً وللاختبار فقط.",
         "is_free": True,
         "links": [
             "https://receive-smss.com",
@@ -272,40 +314,23 @@ SECTIONS = {
             "http://sms24.me"
         ]
     },
-
     "tg_unlimit": {
-        "title": "✉️ فك حظر/تقييد تيليجرام",
-        "desc": "خطوات مراسلة دعم تيليجرام لمراجعة القيود على الحساب.",
+        "title": "✉️ فك تقييد تيليجرام",
+        "desc": "خطوات مراسلة دعم تيليجرام لمراجعة القيود.",
         "is_free": True,
         "content": (
-            "1) افتح: https://telegram.org/support\n"
-            "2) اكتب رسالة واضحة (بالإنجليزية):\n"
-            "Hello Telegram Support,\n"
-            "I can’t start new chats or contact users unless I have their phone numbers. "
-            "It seems my account is limited. Could you please review my account and remove any limitation if possible?\n"
-            "My details:\n"
-            "- Phone number: +____________\n"
-            "- Email: ____________\n"
-            "- App version / Platform: ____________\n\n"
-            "ملاحظة: لا تكرر الطلب كثيرًا؛ انتظر رد الدعم."
+            "1) https://telegram.org/support\n"
+            "2) اكتب طلباً واضحاً لرفع التقييد مع رقمك وإصدار التطبيق."
         )
     },
-
-    # فيزا وهمية — صياغة آمنة (بطاقات اختبار رسمية فقط)
     "dev_test_cards": {
         "title": "💳 فيزا وهمية (بيئة اختبار)",
-        "desc": (
-            "بدل \"فيزا وهمية\": استخدم بطاقات اختبار رسمية من منصات الدفع (Stripe / PayPal Sandbox) "
-            "داخل بيئات تطوير/اختبار فقط. لا تُستخدم لمدفوعات حقيقية."
-        ),
+        "desc": "استخدم بطاقات الاختبار الرسمية (Stripe/PayPal Sandbox) داخل بيئات التطوير فقط.",
         "is_free": True
     },
-
     "plus_apps": {
-        "title": "🆓 تطبيقات بلس وألعاب معدلة (iOS) — على مسؤوليتك",
-        "desc": (
-            "تنبيه أمني/قانوني: تنزيل تطبيقات معدلة أو من خارج المتجر قد يخالف شروط Apple ويعرض جهازك للمخاطر."
-        ),
+        "title": "🆓 تطبيقات بلس وألعاب معدلة (iOS) — مسؤوليتك",
+        "desc": "قد يخالف شروط Apple — تحمّل المسؤولية وافحص الروابط.",
         "is_free": True,
         "links": [
             "https://www.arabsiphone.com/category/iphone/",
@@ -316,19 +341,18 @@ SECTIONS = {
             "https://www.alarabydownloads.com/plus-applications-programs-iphone/"
         ]
     },
-
     "geolocation": {
-        "title": "📍 تحديد الموقع عبر IP (معلومة عامة)",
-        "desc": "استخدم فقط لأغراض مشروعة (اختبارات/أجهزتك وبموافقة).",
+        "title": "📍 تحديد الموقع عبر IP (عام)",
+        "desc": "استخدم لأغراض مشروعة فقط.",
         "is_free": True,
         "links": ["https://www.geolocation.com/ar"],
-        "content": "أدخل IP تملكه أو لديك إذن بتحليله لعرض البلد/المدينة ومزوّد الخدمة."
+        "content": "أدخل IP تملكه/مأذون به لعرض البلد والمدينة ومزود الخدمة."
     },
 
     # VIP
     "cyber_sec": {
         "title": "🛡️ الأمن السيبراني (VIP)",
-        "desc": "الأمن السيبراني من الصفر \"Cyber security\" 🧑‍💻",
+        "desc": "الأمن السيبراني من الصفر.",
         "link": "https://www.mediafire.com/folder/r26pp5mpduvnx/%D8%AF%D9%88%D8%B1%D8%A9_%D8%A7%D9%84%D9%87%D8%A7%D9%83%D8%B1_%D8%A7%D9%84%D8%A7%D8%AE%D9%84%D8%A7%D9%82%D9%8A_%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D8%B1%D8%AD%D9%85%D9%86_%D9%88%D8%B5%D9%81%D9%8A",
         "photo": None, "is_free": False,
     },
@@ -358,12 +382,11 @@ SECTIONS = {
     },
 }
 
-# (اختياري) إظهار روابط الرشق الأصلية على مسؤوليتك عبر متغير بيئة
-ENABLE_FOLLOW_LINKS = os.getenv("ENABLE_FOLLOW_LINKS", "0") == "1"
-if ENABLE_FOLLOW_LINKS:
+# (اختياري) روابط الرشق الأصلية عبر متغير بيئة
+if os.getenv("ENABLE_FOLLOW_LINKS", "0") == "1":
     SECTIONS["followers_links"] = {
         "title": "📈 مواقع رشق متابعين (مسؤوليتك)",
-        "desc": "قد تخالف سياسات المنصات. استخدم بحذر وعلى مسؤوليتك.",
+        "desc": "قد تخالف سياسات المنصات.",
         "is_free": True,
         "links": [
             "https://zyadat.com/",
@@ -376,7 +399,7 @@ if ENABLE_FOLLOW_LINKS:
         ]
     }
 
-# ========= لوحات الأزرار =========
+# ====== لوحات الأزرار ======
 def gate_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(tr("follow_btn"), url=MAIN_CHANNEL_LINK)],
@@ -421,7 +444,7 @@ def ai_stop_kb():
         [InlineKeyboardButton("↩️ رجوع للأقسام", callback_data="back_sections")]
     ])
 
-# ========= تعديل آمن =========
+# ====== تعديل آمن ======
 async def safe_edit(q, text=None, kb=None):
     try:
         if text is not None:
@@ -438,20 +461,20 @@ async def safe_edit(q, text=None, kb=None):
         else:
             print("safe_edit error:", e)
 
-# ========= حالات العضوية المسموحة =========
+# ====== حالات العضوية ======
 ALLOWED_STATUSES = {ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR}
-# دعم OWNER (PTB الأحدث)
+# PTB الأحدث
 try:
     ALLOWED_STATUSES.add(ChatMemberStatus.OWNER)
 except AttributeError:
     pass
-# دعم CREATOR (PTB الأقدم)
+# PTB الأقدم
 try:
     ALLOWED_STATUSES.add(ChatMemberStatus.CREATOR)
 except AttributeError:
     pass
 
-# ========= التحقق من العضوية =========
+# ====== التحقق من العضوية ======
 _member_cache = {}  # {uid: (ok, expire)}
 async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int,
                     force=False, retries=3, backoff=0.7) -> bool:
@@ -474,7 +497,7 @@ async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int,
                     user_set_verify(user_id, True)
                     return True
             except Exception as e:
-                print(f"[is_member] try#{attempt} target={target} ERROR: {e}")
+                print(f"[is_member] try#{attempt} target={target} ERROR:", e)
         if attempt < retries:
             await asyncio.sleep(backoff * attempt)
 
@@ -482,15 +505,14 @@ async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int,
     user_set_verify(user_id, False)
     return False
 
-# ========= AI =========
+# ====== AI ======
 def _chat_with_fallback(messages):
     if not AI_ENABLED or client is None:
         return None, "ai_disabled"
 
     primary = (OPENAI_CHAT_MODEL or "").strip()
     fallbacks = []
-    if primary:
-        fallbacks.append(primary)
+    if primary: fallbacks.append(primary)
     for m in ["gpt-4.1", "gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"]:
         if m not in fallbacks:
             fallbacks.append(m)
@@ -505,8 +527,7 @@ def _chat_with_fallback(messages):
             )
             return r, None
         except Exception as e:
-            msg = str(e)
-            last_err = msg
+            msg = str(e); last_err = msg
             if ("model_not_found" in msg or "Not found" in msg or "deprecated" in msg):
                 continue
             if "insufficient_quota" in msg or "You exceeded your current quota" in msg:
@@ -518,6 +539,8 @@ def _chat_with_fallback(messages):
 
 def ai_chat_reply(prompt: str) -> str:
     if not AI_ENABLED or client is None:
+        if not HTTPX_OK:
+            return "⚠️ تعذّر تفعيل AI بسبب نسخة httpx غير متوافقة. ثبّت httpx<0.28."
         return tr("ai_disabled")
     try:
         r, err = _chat_with_fallback([
@@ -536,7 +559,7 @@ def ai_chat_reply(prompt: str) -> str:
     except Exception:
         return "⚠️ تعذّر التنفيذ حالياً. جرّب لاحقاً."
 
-# ========= أدوات مساعدة للعرض =========
+# ====== العرض ======
 def build_section_text(sec: dict) -> str:
     parts = []
     title = sec.get("title", "")
@@ -547,21 +570,18 @@ def build_section_text(sec: dict) -> str:
 
     if title: parts.append(title)
     if desc:  parts.append("\n" + desc)
-    if content:
-        parts.append("\n" + content)
+    if content: parts.append("\n" + content)
 
     if links:
         parts.append("\n🔗 روابط مفيدة:")
-        for u in links:
-            parts.append(u)
+        for u in links: parts.append(u)
 
     if link and link not in links:
-        parts.append("\n🔗 الرابط:")
-        parts.append(link)
+        parts.append("\n🔗 الرابط:"); parts.append(link)
 
     return "\n".join(parts).strip()
 
-# ========= أوامر =========
+# ====== أوامر ======
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📜 الأوامر:\n/start – بدء\n/help – مساعدة\n/debugverify – تشخيص التحقق\n/dv – تشخيص سريع")
 
@@ -576,22 +596,47 @@ async def refresh_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def aidiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
-    k = (os.getenv("OPENAI_API_KEY") or "").strip()
-    await update.message.reply_text(
-        "AI_ENABLED=%s | key=%s | model=%s" % (
-            "ON" if (k and OpenAI is not None) else "OFF",
-            ("set(len=%d)" % len(k)) if k else "missing",
-            os.getenv("OPENAI_CHAT_MODEL","gpt-4.1")
+    try:
+        from importlib.metadata import version, PackageNotFoundError
+        def v(pkg):
+            try: return version(pkg)
+            except PackageNotFoundError: return "not-installed"
+        k = (os.getenv("OPENAI_API_KEY") or "").strip()
+        msg = (
+            f"AI_ENABLED={'ON' if AI_ENABLED else 'OFF'}\n"
+            f"Key={'set(len=%d)'%len(k) if k else 'missing'}\n"
+            f"Model={OPENAI_CHAT_MODEL}\n"
+            f"httpx={v('httpx')} (ok={HTTPX_OK})\n"
+            f"openai={v('openai')}"
         )
-    )
+        await update.message.reply_text(msg)
+    except Exception as e:
+        await update.message.reply_text(f"aidiag error: {e}")
+
+async def libdiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != OWNER_ID: return
+    try:
+        from importlib.metadata import version, PackageNotFoundError
+        def v(pkg):
+            try: return version(pkg)
+            except PackageNotFoundError: return "not-installed"
+        msg = (
+            f"python-telegram-bot={v('python-telegram-bot')}\n"
+            f"httpx={v('httpx')}\n"
+            f"httpcore={v('httpcore')}\n"
+            f"openai={v('openai')}\n"
+            f"python={os.sys.version.split()[0]}"
+        )
+        await update.message.reply_text(msg)
+    except Exception as e:
+        await update.message.reply_text(f"libdiag error: {e}")
 
 async def debug_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    print(f"[debug_verify] from user={uid}")
     ok = await is_member(context, uid, force=True, retries=3, backoff=0.7)
     await update.message.reply_text(f"member={ok} (check logs for details)")
 
-# ========= /start =========
+# ====== /start ======
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     init_db()
     uid = update.effective_user.id
@@ -610,8 +655,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         ok = await is_member(context, uid, force=True, retries=3, backoff=0.7)
     except Exception as e:
-        print("[start] is_member ERROR:", e)
-        ok = False
+        print("[start] is_member ERROR:", e); ok = False
 
     if not ok:
         try:
@@ -627,7 +671,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print("[start] menu send ERROR:", e)
 
-# ========= الأزرار =========
+# ====== الأزرار ======
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     init_db()
     q = update.callback_query
@@ -653,7 +697,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "back_home":
         await safe_edit(q, "👇 القائمة:", kb=bottom_menu_kb(uid)); return
     if q.data == "back_sections":
-        await safe_edit(q, "📂 الأقسام:", kb=sections_list_kb()); return
+        await safe_edit(q, "📂 الأقسام:", reply_markup=sections_list_kb()); return
 
     # AI
     if q.data == "ai_chat":
@@ -701,7 +745,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, text, kb=section_back_kb())
         return
 
-# ========= رسائل عامة =========
+# ====== رسائل عامة ======
 async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     user_get(uid)
@@ -719,7 +763,7 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👇 القائمة:", reply_markup=bottom_menu_kb(uid))
     await update.message.reply_text("📂 الأقسام:", reply_markup=sections_list_kb())
 
-# ========= أوامر المدير =========
+# ====== أوامر المالك ======
 async def grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
     if not context.args: await update.message.reply_text("استخدم: /grant <user_id>"); return
@@ -730,11 +774,11 @@ async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args: await update.message.reply_text("استخدم: /revoke <user_id>"); return
     user_revoke(context.args[0]); await update.message.reply_text(f"❌ تم إلغاء {context.args[0]}")
 
-# ========= أخطاء عامة =========
+# ====== أخطاء عامة ======
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
     print(f"⚠️ Error: {getattr(context, 'error', 'unknown')}")
 
-# ========= نقطة التشغيل =========
+# ====== نقطة التشغيل ======
 def main():
     init_db()
     app = (Application.builder()
@@ -749,6 +793,7 @@ def main():
     app.add_handler(CommandHandler("revoke", revoke))
     app.add_handler(CommandHandler("refreshcmds", refresh_cmds))
     app.add_handler(CommandHandler("aidiag", aidiag))
+    app.add_handler(CommandHandler("libdiag", libdiag))
     app.add_handler(CommandHandler(["debugverify","dv"], debug_verify))
     app.add_handler(CallbackQueryHandler(on_button))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, guard_messages))
@@ -757,6 +802,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
