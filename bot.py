@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import os, sqlite3, threading, time, asyncio
+import os, sqlite3, threading, time, asyncio, re
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -57,17 +57,11 @@ AI_ENABLED = bool(OPENAI_API_KEY) and (OpenAI is not None) and HTTPX_OK
 client = OpenAI(api_key=OPENAI_API_KEY) if AI_ENABLED else None
 
 OWNER_ID = int(os.getenv("OWNER_ID", "6468743821"))
-OWNER_USERNAME = os.getenv("OWNER_USERNAME", "").strip().lstrip("@")
-
-# رابط زر التواصل—نُفضّل tg:// لفتح الدردشة مباشرة داخل تيليجرام
-ADMIN_CONTACT_URL = os.getenv("ADMIN_CONTACT_URL", "").strip()
+OWNER_USERNAME = os.getenv("OWNER_USERNAME", "ferpo_ksa").strip().lstrip("@")  # <-- يوزرك
+# نُفضّل tg:// لفتح الدردشة مباشرة داخل تيليجرام
+ADMIN_CONTACT_URL = os.getenv("ADMIN_CONTACT_URL", f"tg://resolve?domain={OWNER_USERNAME}").strip()
 def admin_button_url() -> str:
-    if ADMIN_CONTACT_URL:
-        # لو حطيت رابط مخصص في Environment نستخدمه كما هو
-        return ADMIN_CONTACT_URL
-    if OWNER_USERNAME:
-        return f"tg://resolve?domain={OWNER_USERNAME}"
-    return f"tg://user?id={OWNER_ID}"
+    return ADMIN_CONTACT_URL or (f"tg://resolve?domain={OWNER_USERNAME}" if OWNER_USERNAME else f"tg://user?id={OWNER_ID}")
 
 # قناة الاشتراك
 MAIN_CHANNEL_USERNAMES = (os.getenv("MAIN_CHANNELS","ferpokss,Ferp0ks").split(","))
@@ -398,10 +392,12 @@ def gate_kb():
     ])
 
 def bottom_menu_kb(uid: int):
-    rows = [[InlineKeyboardButton("👤 معلوماتي", callback_data="myinfo")],
-            [InlineKeyboardButton("⚡ ترقية إلى VIP", callback_data="upgrade")]]
-    rows.append([InlineKeyboardButton("📨 تواصل مع الإدارة", url=admin_button_url())])
-    return InlineKeyboardMarkup(rows)
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👤 معلوماتي", callback_data="myinfo")],
+        [InlineKeyboardButton("⚡ ترقية إلى VIP", callback_data="upgrade")],
+        [InlineKeyboardButton("📨 تواصل مع الإدارة", url=admin_button_url())],
+        [InlineKeyboardButton("✍️ راسل الإدارة هنا", callback_data="contact_start")]
+    ])
 
 def sections_list_kb():
     rows = []
@@ -419,6 +415,7 @@ def section_back_kb():
 def vip_prompt_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("⚡ اشترك الآن / تواصل", url=admin_button_url())],
+        [InlineKeyboardButton("✍️ راسل الإدارة هنا", callback_data="contact_start")],
         [InlineKeyboardButton(tr("back"), callback_data="back_sections")]
     ])
 
@@ -431,6 +428,12 @@ def ai_hub_kb():
 def ai_stop_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔚 إنهاء وضع الذكاء الاصطناعي", callback_data="ai_stop")],
+        [InlineKeyboardButton("↩️ رجوع للأقسام", callback_data="back_sections")]
+    ])
+
+def contact_stop_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ إنهاء محادثة الإدارة", callback_data="contact_stop")],
         [InlineKeyboardButton("↩️ رجوع للأقسام", callback_data="back_sections")]
     ])
 
@@ -650,6 +653,17 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "back_sections":
         await safe_edit(q, "📂 الأقسام:", kb=sections_list_kb()); return
 
+    # بدء محادثة الإدارة داخل البوت
+    if q.data == "contact_start":
+        ai_set_mode(uid, "contact")
+        txt = ("✍️ أرسل رسالتك الآن، وسيتم إيصالها للإدارة.\n"
+               "عند الانتهاء اضغط زر الإنهاء بالأسفل.")
+        await safe_edit(q, txt, kb=contact_stop_kb()); return
+
+    if q.data == "contact_stop":
+        ai_set_mode(uid, None)
+        await safe_edit(q, "✅ تم إنهاء محادثة الإدارة.", kb=sections_list_kb()); return
+
     # AI
     if q.data == "ai_chat":
         if not AI_ENABLED:
@@ -701,10 +715,53 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     user_get(uid)
 
+    # لو أنت المالك وترد على رسالة واردة من مستخدم، أرسل الرد له مباشرة
+    if update.effective_user.id == OWNER_ID and update.message and update.message.reply_to_message:
+        m = update.message.reply_to_message
+        target = None
+        if m.text:
+            m2 = re.search(r"ID:\s*(\d+)", m.text)
+            if m2: target = int(m2.group(1))
+        if target:
+            if update.message.text:
+                await context.bot.send_message(target, f"📩 رد الإدارة:\n{update.message.text}")
+            else:
+                # أي نوع رسالة آخر — ننسخها
+                try:
+                    await context.bot.copy_message(target, from_chat_id=update.effective_chat.id, message_id=update.message.message_id)
+                except Exception as e:
+                    print("[owner_reply copy] ERROR:", e)
+            await update.message.reply_text("✅ تم إرسال الرد.")
+            return
+
     if not await is_member(context, uid, retries=3, backoff=0.7):
         await update.message.reply_text("🔐 انضم للقناة لاستخدام البوت:", reply_markup=gate_kb()); return
 
     mode = ai_get_mode(uid)
+
+    # وضع مراسلة الإدارة
+    if mode == "contact":
+        t = (update.message.text or "").strip()
+        if not t and not update.message.caption and not update.message.photo and not update.message.document and not update.message.voice:
+            return
+        # ننسخ أي رسالة ترسلها إلى الإدارة
+        try:
+            await context.bot.send_message(
+                OWNER_ID,
+                f"🆕 رسالة من {update.effective_user.full_name} (ID: {uid}):"
+            )
+            await context.bot.copy_message(
+                chat_id=OWNER_ID,
+                from_chat_id=update.effective_chat.id,
+                message_id=update.message.message_id
+            )
+            await update.message.reply_text("✅ تم إرسال رسالتك للإدارة. للإنهاء اضغط الزر بالأسفل.", reply_markup=contact_stop_kb())
+        except Exception as e:
+            print("[contact forward] ERROR:", e)
+            await update.message.reply_text("⚠️ تعذّر الإرسال حالياً. حاول لاحقاً.", reply_markup=contact_stop_kb())
+        return
+
+    # وضع AI
     if mode == "ai_chat":
         t = (update.message.text or "").strip()
         if not t: return
@@ -747,7 +804,7 @@ def main():
     app.add_handler(CommandHandler("libdiag", libdiag))
     app.add_handler(CommandHandler(["debugverify","dv"], debug_verify))
     app.add_handler(CallbackQueryHandler(on_button))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, guard_messages))
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, guard_messages))
     app.add_error_handler(on_error)
     app.run_polling()
 
