@@ -22,7 +22,6 @@ from telegram.error import BadRequest
 
 # ====== تحميل البيئة ======
 ENV_PATH = Path(".env")
-# لا نحمّل .env على Render حتى لا نطغى على متغيراته
 if ENV_PATH.exists() and not os.getenv("RENDER"):
     load_dotenv(ENV_PATH)
 
@@ -47,7 +46,6 @@ def _httpx_is_compatible() -> bool:
         v = version("httpx")
         parts = v.split(".")
         major = int(parts[0]); minor = int(parts[1]) if len(parts) > 1 else 0
-        # غير متوافق إذا 0.28+ أو 1.x
         if major == 0 and minor >= 28: return False
         if major >= 1: return False
         return True
@@ -60,6 +58,12 @@ AI_ENABLED = bool(OPENAI_API_KEY) and (OpenAI is not None) and HTTPX_OK
 client = OpenAI(api_key=OPENAI_API_KEY) if AI_ENABLED else None
 
 OWNER_ID = int(os.getenv("OWNER_ID", "6468743821"))
+OWNER_USERNAME = os.getenv("OWNER_USERNAME", "").strip().lstrip("@")
+# رابط دردشتك الذي أعطيتني إياه (يُمكن تغييره من Environment عبر ADMIN_CONTACT_URL)
+ADMIN_CONTACT_URL = os.getenv(
+    "ADMIN_CONTACT_URL",
+    "https://web.telegram.org/k/?account=2#6468743821"
+).strip()
 
 # قناة الاشتراك
 MAIN_CHANNEL_USERNAMES = (os.getenv("MAIN_CHANNELS","ferpokss,Ferp0ks").split(","))
@@ -69,7 +73,12 @@ MAIN_CHANNEL_LINK = f"https://t.me/{MAIN_CHANNEL_USERNAMES[0]}"
 def need_admin_text() -> str:
     return f"⚠️ لو ما اشتغل التحقق: تأكّد أن البوت **مشرف** في @{MAIN_CHANNEL_USERNAMES[0]}."
 
-OWNER_DEEP_LINK = f"tg://user?id={OWNER_ID}"
+def admin_http_url() -> str | None:
+    if ADMIN_CONTACT_URL:
+        return ADMIN_CONTACT_URL
+    if OWNER_USERNAME:
+        return f"https://t.me/{OWNER_USERNAME}"
+    return None
 
 WELCOME_PHOTO = os.getenv("WELCOME_PHOTO","assets/ferpoks.jpg")
 WELCOME_TEXT_AR = (
@@ -81,8 +90,7 @@ WELCOME_TEXT_AR = (
 CHANNEL_ID = None  # سيُحل عند الإقلاع
 
 # ====== خادِم صحي لــ Render (اختياري) ======
-# يعمل فقط إن كانت aiohttp متوفرة، ولا يعيق البوت إن لم تتوفر
-SERVE_HEALTH = os.getenv("SERVE_HEALTH", "1") == "1"
+SERVE_HEALTH = os.getenv("SERVE_HEALTH", "0") == "1"  # افتراضيًا متوقف
 try:
     from aiohttp import web
     AIOHTTP_AVAILABLE = True
@@ -103,18 +111,16 @@ def _run_health_server():
     except Exception as e:
         print("[health] failed:", e)
 
-# شغّل الخادم الصحي في ثريد جانبي (لا يمنع polling)
+# شغّل الخادم الصحي في ثريد جانبي
 threading.Thread(target=_run_health_server, daemon=True).start()
 
 # ====== عند الإقلاع ======
 async def on_startup(app: Application):
-    # إسقاط webhook لو كان مفعّل
     try:
         await app.bot.delete_webhook(drop_pending_updates=True)
     except Exception as e:
         print("[startup] delete_webhook:", e)
 
-    # حل chat_id للقناة
     global CHANNEL_ID
     CHANNEL_ID = None
     for u in MAIN_CHANNEL_USERNAMES:
@@ -128,7 +134,6 @@ async def on_startup(app: Application):
     if CHANNEL_ID is None:
         print("[startup] ❌ could not resolve channel id; fallback to @username checks")
 
-    # أوامر عامة
     try:
         await app.bot.set_my_commands(
             [
@@ -142,7 +147,6 @@ async def on_startup(app: Application):
     except Exception as e:
         print("[startup] set_my_commands default:", e)
 
-    # أوامر للمالك
     try:
         await app.bot.set_my_commands(
             [
@@ -407,11 +411,13 @@ def gate_kb():
     ])
 
 def bottom_menu_kb(uid: int):
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("👤 معلوماتي", callback_data="myinfo")],
-        [InlineKeyboardButton("⚡ ترقية إلى VIP", callback_data="upgrade")],
-        [InlineKeyboardButton("📨 تواصل مع الإدارة", url=OWNER_DEEP_LINK)],
-    ])
+    rows = [[InlineKeyboardButton("👤 معلوماتي", callback_data="myinfo")],
+            [InlineKeyboardButton("⚡ ترقية إلى VIP", callback_data="upgrade")]]
+    if admin_http_url():
+        rows.append([InlineKeyboardButton("📨 تواصل مع الإدارة", url=admin_http_url())])
+    else:
+        rows.append([InlineKeyboardButton("📨 تواصل مع الإدارة", callback_data="contact_admin")])
+    return InlineKeyboardMarkup(rows)
 
 def sections_list_kb():
     rows = []
@@ -427,10 +433,16 @@ def section_back_kb():
     return InlineKeyboardMarkup([[InlineKeyboardButton("📂 رجوع للأقسام", callback_data="back_sections")]])
 
 def vip_prompt_kb():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⚡ اشترك الآن / تواصل", url=OWNER_DEEP_LINK)],
-        [InlineKeyboardButton(tr("back"), callback_data="back_sections")]
-    ])
+    if admin_http_url():
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("⚡ اشترك الآن / تواصل", url=admin_http_url())],
+            [InlineKeyboardButton(tr("back"), callback_data="back_sections")]
+        ])
+    else:
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("⚡ اشترك الآن / تواصل", callback_data="contact_admin")],
+            [InlineKeyboardButton(tr("back"), callback_data="back_sections")]
+        ])
 
 def ai_hub_kb():
     return InlineKeyboardMarkup([
@@ -463,12 +475,10 @@ async def safe_edit(q, text=None, kb=None):
 
 # ====== حالات العضوية ======
 ALLOWED_STATUSES = {ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR}
-# PTB الأحدث
 try:
     ALLOWED_STATUSES.add(ChatMemberStatus.OWNER)
 except AttributeError:
     pass
-# PTB الأقدم
 try:
     ALLOWED_STATUSES.add(ChatMemberStatus.CREATOR)
 except AttributeError:
@@ -697,7 +707,22 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "back_home":
         await safe_edit(q, "👇 القائمة:", kb=bottom_menu_kb(uid)); return
     if q.data == "back_sections":
-        await safe_edit(q, "📂 الأقسام:", reply_markup=sections_list_kb()); return
+        await safe_edit(q, "📂 الأقسام:", kb=sections_list_kb()); return
+
+    # تواصل مع الإدارة (Fallback)
+    if q.data == "contact_admin":
+        try:
+            link = admin_http_url()
+            msg = (
+                f'📨 للتواصل مع الإدارة:\n'
+                + (f'{link}\n' if link else '')
+                + f'<a href="tg://user?id={OWNER_ID}">اضغط هنا لفتح الدردشة</a>\n'
+                f'🆔 معرّفك: <code>{uid}</code>'
+            )
+            await q.message.reply_text(msg, parse_mode="HTML")
+        except Exception as e:
+            print("[contact_admin] ERROR:", e)
+        return
 
     # AI
     if q.data == "ai_chat":
@@ -802,7 +827,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
