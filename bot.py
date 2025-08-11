@@ -33,7 +33,7 @@ DB_PATH = os.getenv("DB_PATH", "/var/data/bot.db")
 OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
 
 # نماذج قابلة للتغيير من Environment
-OPENAI_CHAT_MODEL  = os.getenv("OPENAI_CHAT_MODEL", "gpt-4.1")   # اضبطها في Render إلى gpt-4.5 لو متاح
+OPENAI_CHAT_MODEL  = os.getenv("OPENAI_CHAT_MODEL", "gpt-4.1")   # ضع gpt-4.5 لو متاح عندك
 OPENAI_IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-1")
 
 AI_ENABLED = bool(OPENAI_API_KEY) and (OpenAI is not None)
@@ -193,6 +193,7 @@ def tr(k: str) -> str:
 
 # ========= الأقسام =========
 SECTIONS = {
+    # مجانية
     "suppliers_pack": {
         "title": "📦 بكج الموردين (مجاني)",
         "desc": "ملف شامل لأرقام ومصادر الموردين.",
@@ -211,6 +212,7 @@ SECTIONS = {
         "link": "https://drive.google.com/drive/folders/1-UADEMHUswoCyo853FdTu4R4iuUx_f3I?usp=drive_link",
         "photo": None, "is_free": True,
     },
+    # VIP
     "kash_malik": {
         "title": "♟️ كش ملك (VIP)",
         "desc": "قسم كش ملك – محتوى مميز.",
@@ -346,17 +348,19 @@ async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int,
 def _chat_with_fallback(messages):
     """
     يحاول الموديل المحدد في OPENAI_CHAT_MODEL أولاً،
-    ثم يسقط تلقائياً على بدائل آمنة لو الموديل غير متاح/موقوف.
+    ثم يسقط تلقائياً على بدائل قوية لو الموديل غير متاح/موقوف.
     """
     if not AI_ENABLED or client is None:
         return None, "ai_disabled"
 
-    primary = OPENAI_CHAT_MODEL.strip()
-    fallbacks = [m for m in [
-        primary,
-        "gpt-4.1",     # بديل موثوق
-        "gpt-4o"       # بديل آخر
-    ] if m]  # نحافظ على الترتيب ونتجنب التكرار
+    primary = (OPENAI_CHAT_MODEL or "").strip()
+    fallbacks = []
+    if primary:
+        fallbacks.append(primary)
+    # أقوى بدائل عامة:
+    for m in ["gpt-4.1", "gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"]:
+        if m not in fallbacks:
+            fallbacks.append(m)
 
     last_err = None
     for model in fallbacks:
@@ -370,17 +374,13 @@ def _chat_with_fallback(messages):
         except Exception as e:
             msg = str(e)
             last_err = msg
-            # مشاكل الموديل: جرّب التالي
             if ("model_not_found" in msg or "Not found" in msg or "deprecated" in msg):
                 continue
-            # مشاكل الرصيد أو المفتاح: أرجع فوراً برسالة واضحة
             if "insufficient_quota" in msg or "You exceeded your current quota" in msg:
                 return None, "quota"
             if "invalid_api_key" in msg or "Incorrect API key" in msg:
                 return None, "apikey"
-            # غير ذلك: جرّب التالي ثم نرجع آخر خطأ عام
             continue
-    # لو فشل كل شيء
     return None, (last_err or "unknown")
 
 def ai_chat_reply(prompt: str) -> str:
@@ -388,7 +388,7 @@ def ai_chat_reply(prompt: str) -> str:
         return tr("ai_disabled")
     try:
         r, err = _chat_with_fallback([
-            {"role":"system","content":"أجب بالعربية بإيجاز."},
+            {"role":"system","content":"أجب بالعربية بإيجاز ووضوح. إن احتجت خطوات، اذكرها بنقاط."},
             {"role":"user","content":prompt}
         ])
         if err == "ai_disabled":
@@ -411,7 +411,7 @@ def ai_image_url(prompt: str) -> str:
         img = client.images.generate(
             model=OPENAI_IMAGE_MODEL,   # gpt-image-1 غالباً
             prompt=prompt,
-            size="1024x1024",           # الأحجام المدعومة مذكورة في الدوك.
+            size="1024x1024",
             response_format="url"
         )
         return img.data[0].url
@@ -576,7 +576,7 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 await update.message.reply_photo(photo=url, caption=f"✅ تم إنشاء الصورة بناءً على:\n{t}", reply_markup=ai_stop_kb())
             except Exception:
-                await update.message.reply_text(url, reply_markup=ai_stop_kb())
+                await update.message.reply_text(url, reply_markup=ai_stop_kب())
         else:
             await update.message.reply_text(url, reply_markup=ai_stop_kb())
         return
@@ -620,4 +620,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
