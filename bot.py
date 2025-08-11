@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import os, sqlite3, threading, time, asyncio, re
+import os, sqlite3, threading, time, asyncio, re, json
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -57,11 +57,11 @@ AI_ENABLED = bool(OPENAI_API_KEY) and (OpenAI is not None) and HTTPX_OK
 client = OpenAI(api_key=OPENAI_API_KEY) if AI_ENABLED else None
 
 OWNER_ID = int(os.getenv("OWNER_ID", "6468743821"))
-OWNER_USERNAME = os.getenv("OWNER_USERNAME", "ferpo_ksa").strip().lstrip("@")  # <-- يوزرك
-# نُفضّل tg:// لفتح الدردشة مباشرة داخل تيليجرام
-ADMIN_CONTACT_URL = os.getenv("ADMIN_CONTACT_URL", f"tg://resolve?domain={OWNER_USERNAME}").strip()
+OWNER_USERNAME = os.getenv("OWNER_USERNAME", "ferpo_ksa").strip().lstrip("@")
+
+# زر التواصل يفتح الدردشة مباشرة داخل تيليجرام
 def admin_button_url() -> str:
-    return ADMIN_CONTACT_URL or (f"tg://resolve?domain={OWNER_USERNAME}" if OWNER_USERNAME else f"tg://user?id={OWNER_ID}")
+    return f"tg://resolve?domain={OWNER_USERNAME}" if OWNER_USERNAME else f"tg://user?id={OWNER_ID}"
 
 # قناة الاشتراك
 MAIN_CHANNEL_USERNAMES = (os.getenv("MAIN_CHANNELS","ferpokss,Ferp0ks").split(","))
@@ -80,28 +80,67 @@ WELCOME_TEXT_AR = (
 
 CHANNEL_ID = None  # سيُحل عند الإقلاع
 
-# ====== خادِم صحي لــ Render (اختياري) ======
-SERVE_HEALTH = os.getenv("SERVE_HEALTH", "0") == "1"  # افتراضًا متوقف
+# ====== إعدادات الدفع Paylink ======
+PRICE_USD = float(os.getenv("PRICE_USD", "10.0"))   # السعر المعروض
+PAYLINK_CHECKOUT_BASE = os.getenv("PAYLINK_CHECKOUT_BASE", "").strip()  # مثال: https://paylink.sa/pay/xxx?ref={ref}
+PAY_WEBHOOK_ENABLE = os.getenv("PAY_WEBHOOK_ENABLE", "1") == "1"
+PAY_WEBHOOK_SECRET = os.getenv("PAY_WEBHOOK_SECRET", "").strip()
+
+# ====== خادِم ويب (Webhook + Health) ======
+SERVE_HEALTH = os.getenv("SERVE_HEALTH", "0") == "1" or PAY_WEBHOOK_ENABLE
 try:
     from aiohttp import web
     AIOHTTP_AVAILABLE = True
 except Exception:
     AIOHTTP_AVAILABLE = False
 
-def _run_health_server():
-    if not (SERVE_HEALTH and AIOHTTP_AVAILABLE):
-        print("[health] aiohttp غير متوفر أو SERVE_HEALTH=0 — تخطي الخادم الصحي")
-        return
-    async def _health(_): return web.Response(text="OK")
+def _find_ref_in_obj(obj) -> str | None:
+    """يحاول إيجاد ref مثل <digits>-<digits> أو أي قيمة ref سبق أن خزّناها."""
     try:
-        app = web.Application(); app.router.add_get("/", _health)
-        port = int(os.getenv("PORT", "10000"))
-        print(f"[health] starting on 0.0.0.0:{port}")
-        web.run_app(app, port=port)
-    except Exception as e:
-        print("[health] failed:", e)
+        s = json.dumps(obj, ensure_ascii=False)
+    except Exception:
+        s = str(obj)
+    # refs التي ننشئها: uid-timestamp
+    m = re.search(r"\b(\d{6,}-\d{10,})\b", s)
+    if m:
+        return m.group(1)
+    # أو ref=xxxx في نص طويل
+    m = re.search(r"ref=([\w\-:]+)", s)
+    return m.group(1) if m else None
 
-threading.Thread(target=_run_health_server, daemon=True).start()
+async def _payhook(request):
+    # تحقق من السر (إن تم ضبطه)
+    if PAY_WEBHOOK_SECRET:
+        if request.headers.get("X-PL-Secret") != PAY_WEBHOOK_SECRET:
+            return web.Response(status=401, text="bad secret")
+    try:
+        data = await request.json()
+    except Exception:
+        data = {"raw": await request.text()}
+    ref = _find_ref_in_obj(data)
+    if not ref:
+        return web.Response(text="no-ref")
+    # فعّل العضوية لو ref معروف ومدفوع
+    activated = payments_mark_paid_by_ref(ref, raw=data)
+    return web.Response(text=("OK" if activated else "ref-not-found"))
+
+def _run_http_server():
+    if not (AIOHTTP_AVAILABLE and (SERVE_HEALTH or PAY_WEBHOOK_ENABLE)):
+        print("[http] aiohttp غير متوفر أو الإعدادات لا تتطلب خادم ويب")
+        return
+    app = web.Application()
+    if SERVE_HEALTH:
+        async def _health(_): return web.Response(text="OK")
+        app.router.add_get("/", _health)
+    if PAY_WEBHOOK_ENABLE:
+        app.router.add_post("/payhook", _payhook)
+        app.router.add_get("/payhook", lambda _: web.Response(text="OK"))
+    port = int(os.getenv("PORT", "10000"))
+    print(f"[http] starting on 0.0.0.0:{port} (webhook={'ON' if PAY_WEBHOOK_ENABLE else 'OFF'})")
+    web.run_app(app, port=port)
+
+# شغّل الخادم في ثريد جانبي
+threading.Thread(target=_run_http_server, daemon=True).start()
 
 # ====== عند الإقلاع ======
 async def on_startup(app: Application):
@@ -149,6 +188,7 @@ async def on_startup(app: Application):
                 BotCommand("dv", "تشخيص سريع"),
                 BotCommand("aidiag", "تشخيص AI"),
                 BotCommand("libdiag", "إصدارات المكتبات"),
+                BotCommand("paylist", "آخر المدفوعات")
             ],
             scope=BotCommandScopeChat(chat_id=OWNER_ID)
         )
@@ -174,6 +214,18 @@ def migrate_db():
             _db().execute("ALTER TABLE users ADD COLUMN verified_ok INTEGER DEFAULT 0;")
         if "verified_at" not in cols:
             _db().execute("ALTER TABLE users ADD COLUMN verified_at INTEGER DEFAULT 0;")
+        _db().execute("""
+        CREATE TABLE IF NOT EXISTS payments (
+            ref TEXT PRIMARY KEY,
+            user_id TEXT,
+            amount REAL,
+            provider TEXT,
+            status TEXT,        -- pending/paid
+            created_at INTEGER,
+            paid_at INTEGER,
+            raw TEXT
+        );
+        """)
         _db().commit()
 
 def init_db():
@@ -239,6 +291,52 @@ def ai_get_mode(uid: int|str):
         c = _db().cursor()
         c.execute("SELECT mode FROM ai_state WHERE user_id=?", (str(uid),))
         r = c.fetchone(); return r["mode"] if r else None
+
+# ====== دفعات ======
+def payments_new_ref(uid: int) -> str:
+    return f"{uid}-{int(time.time())}"
+
+def payments_create(uid: int, amount: float, provider="paylink") -> str:
+    ref = payments_new_ref(uid)
+    with _conn_lock:
+        _db().execute(
+            "INSERT OR REPLACE INTO payments (ref, user_id, amount, provider, status, created_at) VALUES (?,?,?,?,?,?)",
+            (ref, str(uid), amount, provider, "pending", int(time.time()))
+        ); _db().commit()
+    return ref
+
+def payments_status(ref: str) -> str | None:
+    with _conn_lock:
+        c = _db().cursor()
+        c.execute("SELECT status FROM payments WHERE ref=?", (ref,))
+        r = c.fetchone()
+        return r["status"] if r else None
+
+def payments_mark_paid_by_ref(ref: str, raw=None) -> bool:
+    with _conn_lock:
+        c = _db().cursor()
+        c.execute("SELECT user_id, status FROM payments WHERE ref=?", (ref,))
+        r = c.fetchone()
+        if not r:
+            return False
+        if r["status"] == "paid":
+            return True
+        _db().execute(
+            "UPDATE payments SET status='paid', paid_at=?, raw=? WHERE ref=?",
+            (int(time.time()), json.dumps(raw, ensure_ascii=False) if raw is not None else None, ref)
+        )
+        _db().commit()
+        try:
+            user_grant(r["user_id"])
+        except Exception as e:
+            print("[payments_mark_paid] grant error:", e)
+        return True
+
+def payments_last(limit=10):
+    with _conn_lock:
+        c = _db().cursor()
+        c.execute("SELECT * FROM payments ORDER BY created_at DESC LIMIT ?", (limit,))
+        return [dict(x) for x in c.fetchall()]
 
 # ====== نصوص قصيرة ======
 def tr(k: str) -> str:
@@ -371,19 +469,6 @@ SECTIONS = {
     },
 }
 
-# (اختياري) روابط الرشق الأصلية عبر متغير بيئة
-if os.getenv("ENABLE_FOLLOW_LINKS", "0") == "1":
-    SECTIONS["followers_links"] = {
-        "title": "📈 مواقع رشق متابعين (مسؤوليتك)",
-        "desc": "قد تخالف سياسات المنصات.",
-        "is_free": True,
-        "links": [
-            "https://zyadat.com/","https://followadd.com/","https://smmcpan.com/",
-            "https://seoclevers.com/","https://followergi.com/","https://seorrs.com/",
-            "https://drd3m.com/ref/ixeuw"
-        ]
-    }
-
 # ====== لوحات الأزرار ======
 def gate_kb():
     return InlineKeyboardMarkup([
@@ -395,8 +480,7 @@ def bottom_menu_kb(uid: int):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("👤 معلوماتي", callback_data="myinfo")],
         [InlineKeyboardButton("⚡ ترقية إلى VIP", callback_data="upgrade")],
-        [InlineKeyboardButton("📨 تواصل مع الإدارة", url=admin_button_url())],
-        [InlineKeyboardButton("✍️ راسل الإدارة هنا", callback_data="contact_start")]
+        [InlineKeyboardButton("📨 تواصل مع الإدارة", url=admin_button_url())]
     ])
 
 def sections_list_kb():
@@ -412,12 +496,18 @@ def sections_list_kb():
 def section_back_kb():
     return InlineKeyboardMarkup([[InlineKeyboardButton("📂 رجوع للأقسام", callback_data="back_sections")]])
 
-def vip_prompt_kb():
+def pay_buttons(ref: str):
+    link = PAYLINK_CHECKOUT_BASE.format(ref=ref) if "{ref}" in PAYLINK_CHECKOUT_BASE else (
+        PAYLINK_CHECKOUT_BASE + ("&" if "?" in PAYLINK_CHECKOUT_BASE else "?") + f"ref={ref}"
+    )
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⚡ اشترك الآن / تواصل", url=admin_button_url())],
-        [InlineKeyboardButton("✍️ راسل الإدارة هنا", callback_data="contact_start")],
+        [InlineKeyboardButton(f"💳 ادفع {PRICE_USD}$ عبر Paylink", url=link)],
+        [InlineKeyboardButton("✅ تحقّق الدفع", callback_data=f"paycheck:{ref}")],
         [InlineKeyboardButton(tr("back"), callback_data="back_sections")]
     ])
+
+def vip_prompt_kb_immediate(ref: str):
+    return pay_buttons(ref)
 
 def ai_hub_kb():
     return InlineKeyboardMarkup([
@@ -428,12 +518,6 @@ def ai_hub_kb():
 def ai_stop_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔚 إنهاء وضع الذكاء الاصطناعي", callback_data="ai_stop")],
-        [InlineKeyboardButton("↩️ رجوع للأقسام", callback_data="back_sections")]
-    ])
-
-def contact_stop_kb():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ إنهاء محادثة الإدارة", callback_data="contact_stop")],
         [InlineKeyboardButton("↩️ رجوع للأقسام", callback_data="back_sections")]
     ])
 
@@ -490,8 +574,7 @@ async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int,
 
 # ====== AI ======
 def _chat_with_fallback(messages):
-    if not AI_ENABLED or client is None:
-        return None, "ai_disabled"
+    if not AI_ENABLED or client is None: return None, "ai_disabled"
     primary = (OPENAI_CHAT_MODEL or "").strip()
     fallbacks = [primary] if primary else []
     for m in ["gpt-4.1", "gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"]:
@@ -587,6 +670,17 @@ async def libdiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"libdiag error: {e}")
 
+async def paylist(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != OWNER_ID: return
+    rows = payments_last(15)
+    if not rows:
+        await update.message.reply_text("لا توجد مدفوعات بعد.")
+        return
+    txt = []
+    for r in rows:
+        txt.append(f"ref={r['ref']}  user={r['user_id']}  {r['status']}  at={time.strftime('%Y-%m-%d %H:%M', time.gmtime(r['created_at']))}")
+    await update.message.reply_text("\n".join(txt))
+
 async def debug_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     ok = await is_member(context, uid, force=True, retries=3, backoff=0.7)
@@ -646,30 +740,37 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if q.data == "myinfo":
         await safe_edit(q, f"👤 اسمك: {q.from_user.full_name}\n🆔 معرفك: {uid}\n\n— شارك المعرف مع الإدارة للترقية إلى VIP.", kb=bottom_menu_kb(uid)); return
+
     if q.data == "upgrade":
-        await safe_edit(q, "💳 ترقية إلى VIP بـ 10$.\nتواصل مع الإدارة لإتمام الترقية:", kb=vip_prompt_kb()); return
+        ref = payments_create(uid, PRICE_USD, "paylink")
+        txt = (f"💳 ترقية إلى VIP ({PRICE_USD}$)\n"
+               f"سيتم التفعيل تلقائياً بعد الدفع.\n"
+               f"🔖 مرجعك: <code>{ref}</code>")
+        await safe_edit(q, txt, kb=vip_prompt_kb_immediate(ref))
+        return
+
+    if q.data.startswith("paycheck:"):
+        ref = q.data.split(":",1)[1]
+        st = payments_status(ref)
+        if st == "paid":
+            await safe_edit(q, "✅ تم استلام الدفع وتفعيل VIP.\nاستمتع 💜", kb=sections_list_kb())
+        else:
+            await safe_edit(q, "⌛ لم يصل إشعار الدفع بعد.\nإذا دفعت للتو فانتظر قليلاً ثم اضغط تحقّق مرة أخرى.\n"
+                               "لو استمر التأخير، احتفظ بمرجعك وأرسل لقطة للإدارة.", kb=vip_prompt_kb_immediate(ref))
+        return
+
     if q.data == "back_home":
         await safe_edit(q, "👇 القائمة:", kb=bottom_menu_kb(uid)); return
     if q.data == "back_sections":
         await safe_edit(q, "📂 الأقسام:", kb=sections_list_kb()); return
 
-    # بدء محادثة الإدارة داخل البوت
-    if q.data == "contact_start":
-        ai_set_mode(uid, "contact")
-        txt = ("✍️ أرسل رسالتك الآن، وسيتم إيصالها للإدارة.\n"
-               "عند الانتهاء اضغط زر الإنهاء بالأسفل.")
-        await safe_edit(q, txt, kb=contact_stop_kb()); return
-
-    if q.data == "contact_stop":
-        ai_set_mode(uid, None)
-        await safe_edit(q, "✅ تم إنهاء محادثة الإدارة.", kb=sections_list_kb()); return
-
     # AI
     if q.data == "ai_chat":
         if not AI_ENABLED:
-            await safe_edit(q, tr("ai_disabled"), kb=vip_prompt_kb()); return
-        if not (user_is_premium(uid) or uid == OWNER_ID):
-            await safe_edit(q, f"🔒 {SECTIONS['ai_hub']['title']}\n\n{tr('access_denied')}\n\n💳 10$ — راسل الإدارة.", kb=vip_prompt_kb()); 
+            await safe_edit(q, tr("ai_disabled"), kb=sections_list_kb()); return
+        if not (SECTIONS['ai_hub'].get("is_free") or user_is_premium(uid) or uid == OWNER_ID):
+            await safe_edit(q, f"🔒 {SECTIONS['ai_hub']['title']}\n\n{tr('access_denied')}\n\n"
+                               f"استخدم زر الترقية لتفعيل VIP.", kb=sections_list_kb()); 
             return
         ai_set_mode(uid, "ai_chat")
         await safe_edit(q, "🤖 وضع الدردشة مفعّل.\nأرسل سؤالك الآن.", kb=ai_stop_kb()); 
@@ -682,17 +783,17 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data.startswith("sec_"):
         key = q.data.replace("sec_", "")
         sec = SECTIONS.get(key)
-        if not sec: await safe_edit(q, "قريباً…", kb=sections_list_kb()); return
+        if not sec: await safe_edit(q, "قريباً…", kb=sections_list_kk()); return
 
         if key == "ai_hub":
-            if not AI_ENABLED: await safe_edit(q, tr("ai_disabled"), kb=vip_prompt_kb()); return
+            if not AI_ENABLED: await safe_edit(q, tr("ai_disabled"), kb=sections_list_kb()); return
             if not (sec.get("is_free") or user_is_premium(uid) or uid == OWNER_ID):
-                await safe_edit(q, f"🔒 {sec['title']}\n\n{tr('access_denied')}\n\n💳 10$ — راسل الإدارة.", kb=vip_prompt_kb()); return
+                await safe_edit(q, f"🔒 {sec['title']}\n\n{tr('access_denied')}\n\nاستخدم زر الترقية لتفعيل VIP.", kb=sections_list_kb()); return
             await safe_edit(q, f"{sec['title']}\n\n{sec['desc']}\n\nاختر أداة:", kb=ai_hub_kb()); return
 
         allowed = sec.get("is_free") or user_is_premium(uid) or uid == OWNER_ID
         if not allowed:
-            await safe_edit(q, f"🔒 {sec['title']}\n\n{tr('access_denied')}\n\n💳 10$ — راسل الإدارة.", kb=vip_prompt_kb()); return
+            await safe_edit(q, f"🔒 {sec['title']}\n\n{tr('access_denied')} — فعّل VIP من زر الترقية.", kb=sections_list_kb()); return
 
         text = build_section_text(sec)
         local, photo = sec.get("local_file"), sec.get("photo")
@@ -715,53 +816,10 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     user_get(uid)
 
-    # لو أنت المالك وترد على رسالة واردة من مستخدم، أرسل الرد له مباشرة
-    if update.effective_user.id == OWNER_ID and update.message and update.message.reply_to_message:
-        m = update.message.reply_to_message
-        target = None
-        if m.text:
-            m2 = re.search(r"ID:\s*(\d+)", m.text)
-            if m2: target = int(m2.group(1))
-        if target:
-            if update.message.text:
-                await context.bot.send_message(target, f"📩 رد الإدارة:\n{update.message.text}")
-            else:
-                # أي نوع رسالة آخر — ننسخها
-                try:
-                    await context.bot.copy_message(target, from_chat_id=update.effective_chat.id, message_id=update.message.message_id)
-                except Exception as e:
-                    print("[owner_reply copy] ERROR:", e)
-            await update.message.reply_text("✅ تم إرسال الرد.")
-            return
-
     if not await is_member(context, uid, retries=3, backoff=0.7):
         await update.message.reply_text("🔐 انضم للقناة لاستخدام البوت:", reply_markup=gate_kb()); return
 
     mode = ai_get_mode(uid)
-
-    # وضع مراسلة الإدارة
-    if mode == "contact":
-        t = (update.message.text or "").strip()
-        if not t and not update.message.caption and not update.message.photo and not update.message.document and not update.message.voice:
-            return
-        # ننسخ أي رسالة ترسلها إلى الإدارة
-        try:
-            await context.bot.send_message(
-                OWNER_ID,
-                f"🆕 رسالة من {update.effective_user.full_name} (ID: {uid}):"
-            )
-            await context.bot.copy_message(
-                chat_id=OWNER_ID,
-                from_chat_id=update.effective_chat.id,
-                message_id=update.message.message_id
-            )
-            await update.message.reply_text("✅ تم إرسال رسالتك للإدارة. للإنهاء اضغط الزر بالأسفل.", reply_markup=contact_stop_kb())
-        except Exception as e:
-            print("[contact forward] ERROR:", e)
-            await update.message.reply_text("⚠️ تعذّر الإرسال حالياً. حاول لاحقاً.", reply_markup=contact_stop_kb())
-        return
-
-    # وضع AI
     if mode == "ai_chat":
         t = (update.message.text or "").strip()
         if not t: return
@@ -782,7 +840,6 @@ async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args: await update.message.reply_text("استخدم: /revoke <user_id>"); return
     user_revoke(context.args[0]); await update.message.reply_text(f"❌ تم إلغاء {context.args[0]}")
 
-# ====== أخطاء عامة ======
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
     print(f"⚠️ Error: {getattr(context, 'error', 'unknown')}")
 
@@ -802,12 +859,14 @@ def main():
     app.add_handler(CommandHandler("refreshcmds", refresh_cmds))
     app.add_handler(CommandHandler("aidiag", aidiag))
     app.add_handler(CommandHandler("libdiag", libdiag))
+    app.add_handler(CommandHandler("paylist", paylist))
     app.add_handler(CommandHandler(["debugverify","dv"], debug_verify))
     app.add_handler(CallbackQueryHandler(on_button))
-    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, guard_messages))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, guard_messages))
     app.add_error_handler(on_error)
     app.run_polling()
 
 if __name__ == "__main__":
     main()
+
 
