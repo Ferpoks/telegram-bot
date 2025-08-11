@@ -44,8 +44,7 @@ def _httpx_is_compatible() -> bool:
     try:
         from importlib.metadata import version
         v = version("httpx")
-        parts = v.split(".")
-        major = int(parts[0]); minor = int(parts[1]) if len(parts) > 1 else 0
+        parts = v.split("."); major = int(parts[0]); minor = int(parts[1]) if len(parts)>1 else 0
         if major == 0 and minor >= 28: return False
         if major >= 1: return False
         return True
@@ -59,11 +58,16 @@ client = OpenAI(api_key=OPENAI_API_KEY) if AI_ENABLED else None
 
 OWNER_ID = int(os.getenv("OWNER_ID", "6468743821"))
 OWNER_USERNAME = os.getenv("OWNER_USERNAME", "").strip().lstrip("@")
-# رابط دردشتك الذي أعطيتني إياه (يُمكن تغييره من Environment عبر ADMIN_CONTACT_URL)
-ADMIN_CONTACT_URL = os.getenv(
-    "ADMIN_CONTACT_URL",
-    "https://web.telegram.org/k/?account=2#6468743821"
-).strip()
+
+# رابط زر التواصل—نُفضّل tg:// لفتح الدردشة مباشرة داخل تيليجرام
+ADMIN_CONTACT_URL = os.getenv("ADMIN_CONTACT_URL", "").strip()
+def admin_button_url() -> str:
+    if ADMIN_CONTACT_URL:
+        # لو حطيت رابط مخصص في Environment نستخدمه كما هو
+        return ADMIN_CONTACT_URL
+    if OWNER_USERNAME:
+        return f"tg://resolve?domain={OWNER_USERNAME}"
+    return f"tg://user?id={OWNER_ID}"
 
 # قناة الاشتراك
 MAIN_CHANNEL_USERNAMES = (os.getenv("MAIN_CHANNELS","ferpokss,Ferp0ks").split(","))
@@ -72,13 +76,6 @@ MAIN_CHANNEL_LINK = f"https://t.me/{MAIN_CHANNEL_USERNAMES[0]}"
 
 def need_admin_text() -> str:
     return f"⚠️ لو ما اشتغل التحقق: تأكّد أن البوت **مشرف** في @{MAIN_CHANNEL_USERNAMES[0]}."
-
-def admin_http_url() -> str | None:
-    if ADMIN_CONTACT_URL:
-        return ADMIN_CONTACT_URL
-    if OWNER_USERNAME:
-        return f"https://t.me/{OWNER_USERNAME}"
-    return None
 
 WELCOME_PHOTO = os.getenv("WELCOME_PHOTO","assets/ferpoks.jpg")
 WELCOME_TEXT_AR = (
@@ -90,7 +87,7 @@ WELCOME_TEXT_AR = (
 CHANNEL_ID = None  # سيُحل عند الإقلاع
 
 # ====== خادِم صحي لــ Render (اختياري) ======
-SERVE_HEALTH = os.getenv("SERVE_HEALTH", "0") == "1"  # افتراضيًا متوقف
+SERVE_HEALTH = os.getenv("SERVE_HEALTH", "0") == "1"  # افتراضًا متوقف
 try:
     from aiohttp import web
     AIOHTTP_AVAILABLE = True
@@ -103,15 +100,13 @@ def _run_health_server():
         return
     async def _health(_): return web.Response(text="OK")
     try:
-        app = web.Application()
-        app.router.add_get("/", _health)
+        app = web.Application(); app.router.add_get("/", _health)
         port = int(os.getenv("PORT", "10000"))
         print(f"[health] starting on 0.0.0.0:{port}")
         web.run_app(app, port=port)
     except Exception as e:
         print("[health] failed:", e)
 
-# شغّل الخادم الصحي في ثريد جانبي
 threading.Thread(target=_run_health_server, daemon=True).start()
 
 # ====== عند الإقلاع ======
@@ -215,9 +210,7 @@ def user_get(uid: int|str) -> dict:
             c.execute("INSERT INTO users (id) VALUES (?);", (uid,))
             _db().commit()
             return {"id": uid, "premium": 0, "verified_ok": 0, "verified_at": 0}
-        out = dict(r)
-        out.setdefault("verified_ok", 0)
-        out.setdefault("verified_at", 0)
+        out = dict(r); out.setdefault("verified_ok", 0); out.setdefault("verified_at", 0)
         return out
 
 def user_set_verify(uid: int|str, ok: bool):
@@ -245,15 +238,13 @@ def ai_set_mode(uid: int|str, mode: str|None):
             "INSERT INTO ai_state (user_id, mode, updated_at) VALUES (?, ?, strftime('%s','now')) "
             "ON CONFLICT(user_id) DO UPDATE SET mode=excluded.mode, updated_at=strftime('%s','now')",
             (str(uid), mode)
-        )
-        _db().commit()
+        ); _db().commit()
 
 def ai_get_mode(uid: int|str):
     with _conn_lock:
         c = _db().cursor()
         c.execute("SELECT mode FROM ai_state WHERE user_id=?", (str(uid),))
-        r = c.fetchone()
-        return r["mode"] if r else None
+        r = c.fetchone(); return r["mode"] if r else None
 
 # ====== نصوص قصيرة ======
 def tr(k: str) -> str:
@@ -393,12 +384,8 @@ if os.getenv("ENABLE_FOLLOW_LINKS", "0") == "1":
         "desc": "قد تخالف سياسات المنصات.",
         "is_free": True,
         "links": [
-            "https://zyadat.com/",
-            "https://followadd.com/",
-            "https://smmcpan.com/",
-            "https://seoclevers.com/",
-            "https://followergi.com/",
-            "https://seorrs.com/",
+            "https://zyadat.com/","https://followadd.com/","https://smmcpan.com/",
+            "https://seoclevers.com/","https://followergi.com/","https://seorrs.com/",
             "https://drd3m.com/ref/ixeuw"
         ]
     }
@@ -413,10 +400,7 @@ def gate_kb():
 def bottom_menu_kb(uid: int):
     rows = [[InlineKeyboardButton("👤 معلوماتي", callback_data="myinfo")],
             [InlineKeyboardButton("⚡ ترقية إلى VIP", callback_data="upgrade")]]
-    if admin_http_url():
-        rows.append([InlineKeyboardButton("📨 تواصل مع الإدارة", url=admin_http_url())])
-    else:
-        rows.append([InlineKeyboardButton("📨 تواصل مع الإدارة", callback_data="contact_admin")])
+    rows.append([InlineKeyboardButton("📨 تواصل مع الإدارة", url=admin_button_url())])
     return InlineKeyboardMarkup(rows)
 
 def sections_list_kb():
@@ -433,16 +417,10 @@ def section_back_kb():
     return InlineKeyboardMarkup([[InlineKeyboardButton("📂 رجوع للأقسام", callback_data="back_sections")]])
 
 def vip_prompt_kb():
-    if admin_http_url():
-        return InlineKeyboardMarkup([
-            [InlineKeyboardButton("⚡ اشترك الآن / تواصل", url=admin_http_url())],
-            [InlineKeyboardButton(tr("back"), callback_data="back_sections")]
-        ])
-    else:
-        return InlineKeyboardMarkup([
-            [InlineKeyboardButton("⚡ اشترك الآن / تواصل", callback_data="contact_admin")],
-            [InlineKeyboardButton(tr("back"), callback_data="back_sections")]
-        ])
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚡ اشترك الآن / تواصل", url=admin_button_url())],
+        [InlineKeyboardButton(tr("back"), callback_data="back_sections")]
+    ])
 
 def ai_hub_kb():
     return InlineKeyboardMarkup([
@@ -475,14 +453,10 @@ async def safe_edit(q, text=None, kb=None):
 
 # ====== حالات العضوية ======
 ALLOWED_STATUSES = {ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR}
-try:
-    ALLOWED_STATUSES.add(ChatMemberStatus.OWNER)
-except AttributeError:
-    pass
-try:
-    ALLOWED_STATUSES.add(ChatMemberStatus.CREATOR)
-except AttributeError:
-    pass
+try: ALLOWED_STATUSES.add(ChatMemberStatus.OWNER)
+except AttributeError: pass
+try: ALLOWED_STATUSES.add(ChatMemberStatus.CREATOR)
+except AttributeError: pass
 
 # ====== التحقق من العضوية ======
 _member_cache = {}  # {uid: (ok, expire)}
@@ -491,8 +465,7 @@ async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int,
     now = time.time()
     if not force:
         cached = _member_cache.get(user_id)
-        if cached and cached[1] > now:
-            return cached[0]
+        if cached and cached[1] > now: return cached[0]
 
     for attempt in range(1, retries + 1):
         targets = [CHANNEL_ID] if CHANNEL_ID is not None else [f"@{u}" for u in MAIN_CHANNEL_USERNAMES]
@@ -504,67 +477,49 @@ async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int,
                 ok = status in ALLOWED_STATUSES
                 if ok:
                     _member_cache[user_id] = (True, now + 60)
-                    user_set_verify(user_id, True)
-                    return True
+                    user_set_verify(user_id, True); return True
             except Exception as e:
                 print(f"[is_member] try#{attempt} target={target} ERROR:", e)
-        if attempt < retries:
-            await asyncio.sleep(backoff * attempt)
+        if attempt < retries: await asyncio.sleep(backoff * attempt)
 
     _member_cache[user_id] = (False, now + 60)
-    user_set_verify(user_id, False)
-    return False
+    user_set_verify(user_id, False); return False
 
 # ====== AI ======
 def _chat_with_fallback(messages):
     if not AI_ENABLED or client is None:
         return None, "ai_disabled"
-
     primary = (OPENAI_CHAT_MODEL or "").strip()
-    fallbacks = []
-    if primary: fallbacks.append(primary)
+    fallbacks = [primary] if primary else []
     for m in ["gpt-4.1", "gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"]:
-        if m not in fallbacks:
-            fallbacks.append(m)
+        if m not in fallbacks: fallbacks.append(m)
 
     last_err = None
     for model in fallbacks:
         try:
-            r = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=0.7
-            )
+            r = client.chat.completions.create(model=model, messages=messages, temperature=0.7)
             return r, None
         except Exception as e:
             msg = str(e); last_err = msg
-            if ("model_not_found" in msg or "Not found" in msg or "deprecated" in msg):
-                continue
-            if "insufficient_quota" in msg or "You exceeded your current quota" in msg:
-                return None, "quota"
-            if "invalid_api_key" in msg or "Incorrect API key" in msg:
-                return None, "apikey"
+            if ("model_not_found" in msg or "Not found" in msg or "deprecated" in msg): continue
+            if "insufficient_quota" in msg or "You exceeded your current quota" in msg: return None, "quota"
+            if "invalid_api_key" in msg or "Incorrect API key" in msg: return None, "apikey"
             continue
     return None, (last_err or "unknown")
 
 def ai_chat_reply(prompt: str) -> str:
     if not AI_ENABLED or client is None:
-        if not HTTPX_OK:
-            return "⚠️ تعذّر تفعيل AI بسبب نسخة httpx غير متوافقة. ثبّت httpx<0.28."
+        if not HTTPX_OK: return "⚠️ تعذّر تفعيل AI بسبب نسخة httpx غير متوافقة. ثبّت httpx<0.28."
         return tr("ai_disabled")
     try:
         r, err = _chat_with_fallback([
             {"role":"system","content":"أجب بالعربية بإيجاز ووضوح. إن احتجت خطوات، اذكرها بنقاط."},
             {"role":"user","content":prompt}
         ])
-        if err == "ai_disabled":
-            return tr("ai_disabled")
-        if err == "quota":
-            return "⚠️ نفاد الرصيد في حساب OpenAI."
-        if err == "apikey":
-            return "⚠️ مفتاح OpenAI غير صالح أو مفقود."
-        if r is None:
-            return "⚠️ تعذّر التنفيذ حالياً. جرّب لاحقاً."
+        if err == "ai_disabled": return tr("ai_disabled")
+        if err == "quota": return "⚠️ نفاد الرصيد في حساب OpenAI."
+        if err == "apikey": return "⚠️ مفتاح OpenAI غير صالح أو مفقود."
+        if r is None: return "⚠️ تعذّر التنفيذ حالياً. جرّب لاحقاً."
         return (r.choices[0].message.content or "").strip()
     except Exception:
         return "⚠️ تعذّر التنفيذ حالياً. جرّب لاحقاً."
@@ -572,23 +527,16 @@ def ai_chat_reply(prompt: str) -> str:
 # ====== العرض ======
 def build_section_text(sec: dict) -> str:
     parts = []
-    title = sec.get("title", "")
-    desc  = sec.get("desc", "")
-    link  = sec.get("link")
-    links = sec.get("links", [])
+    title = sec.get("title",""); desc = sec.get("desc","")
+    link = sec.get("link"); links = sec.get("links",[])
     content = sec.get("content")
-
     if title: parts.append(title)
-    if desc:  parts.append("\n" + desc)
-    if content: parts.append("\n" + content)
-
+    if desc: parts.append("\n"+desc)
+    if content: parts.append("\n"+content)
     if links:
-        parts.append("\n🔗 روابط مفيدة:")
-        for u in links: parts.append(u)
-
+        parts.append("\n🔗 روابط مفيدة:"); [parts.append(u) for u in links]
     if link and link not in links:
         parts.append("\n🔗 الرابط:"); parts.append(link)
-
     return "\n".join(parts).strip()
 
 # ====== أوامر ======
@@ -601,8 +549,7 @@ async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def refresh_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
-    await on_startup(context.application)
-    await update.message.reply_text("✅ تم تحديث قائمة الأوامر.")
+    await on_startup(context.application); await update.message.reply_text("✅ تم تحديث قائمة الأوامر.")
 
 async def aidiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
@@ -612,13 +559,11 @@ async def aidiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try: return version(pkg)
             except PackageNotFoundError: return "not-installed"
         k = (os.getenv("OPENAI_API_KEY") or "").strip()
-        msg = (
-            f"AI_ENABLED={'ON' if AI_ENABLED else 'OFF'}\n"
-            f"Key={'set(len=%d)'%len(k) if k else 'missing'}\n"
-            f"Model={OPENAI_CHAT_MODEL}\n"
-            f"httpx={v('httpx')} (ok={HTTPX_OK})\n"
-            f"openai={v('openai')}"
-        )
+        msg = (f"AI_ENABLED={'ON' if AI_ENABLED else 'OFF'}\n"
+               f"Key={'set(len=%d)'%len(k) if k else 'missing'}\n"
+               f"Model={OPENAI_CHAT_MODEL}\n"
+               f"httpx={v('httpx')} (ok={HTTPX_OK})\n"
+               f"openai={v('openai')}")
         await update.message.reply_text(msg)
     except Exception as e:
         await update.message.reply_text(f"aidiag error: {e}")
@@ -630,13 +575,11 @@ async def libdiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
         def v(pkg):
             try: return version(pkg)
             except PackageNotFoundError: return "not-installed"
-        msg = (
-            f"python-telegram-bot={v('python-telegram-bot')}\n"
-            f"httpx={v('httpx')}\n"
-            f"httpcore={v('httpcore')}\n"
-            f"openai={v('openai')}\n"
-            f"python={os.sys.version.split()[0]}"
-        )
+        msg = (f"python-telegram-bot={v('python-telegram-bot')}\n"
+               f"httpx={v('httpx')}\n"
+               f"httpcore={v('httpcore')}\n"
+               f"openai={v('openai')}\n"
+               f"python={os.sys.version.split()[0]}")
         await update.message.reply_text(msg)
     except Exception as e:
         await update.message.reply_text(f"libdiag error: {e}")
@@ -649,8 +592,7 @@ async def debug_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ====== /start ======
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     init_db()
-    uid = update.effective_user.id
-    chat_id = update.effective_chat.id
+    uid = update.effective_user.id; chat_id = update.effective_chat.id
     user_get(uid)
 
     try:
@@ -684,8 +626,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ====== الأزرار ======
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     init_db()
-    q = update.callback_query
-    uid = q.from_user.id
+    q = update.callback_query; uid = q.from_user.id
     await q.answer()
 
     if q.data == "verify":
@@ -708,21 +649,6 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit(q, "👇 القائمة:", kb=bottom_menu_kb(uid)); return
     if q.data == "back_sections":
         await safe_edit(q, "📂 الأقسام:", kb=sections_list_kb()); return
-
-    # تواصل مع الإدارة (Fallback)
-    if q.data == "contact_admin":
-        try:
-            link = admin_http_url()
-            msg = (
-                f'📨 للتواصل مع الإدارة:\n'
-                + (f'{link}\n' if link else '')
-                + f'<a href="tg://user?id={OWNER_ID}">اضغط هنا لفتح الدردشة</a>\n'
-                f'🆔 معرّفك: <code>{uid}</code>'
-            )
-            await q.message.reply_text(msg, parse_mode="HTML")
-        except Exception as e:
-            print("[contact_admin] ERROR:", e)
-        return
 
     # AI
     if q.data == "ai_chat":
@@ -827,3 +753,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
