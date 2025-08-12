@@ -40,7 +40,7 @@ def _ensure_parent(pth: str) -> bool:
         print("[db] cannot create parent dir for", pth, "->", e)
         return False
 
-# تحقق توافق httpx مع openai 1.x (بعض نسخ httpx تسبب مشاكل)
+# فحص توافق httpx لبعض نسخ openai 1.x
 def _httpx_is_compatible() -> bool:
     try:
         from importlib.metadata import version
@@ -62,7 +62,6 @@ client = OpenAI(api_key=OPENAI_API_KEY) if AI_ENABLED else None
 OWNER_ID = int(os.getenv("OWNER_ID", "6468743821"))
 OWNER_USERNAME = os.getenv("OWNER_USERNAME", "ferpo_ksa").strip().lstrip("@")
 
-# زر التواصل يفتح الدردشة مباشرة داخل تيليجرام
 def admin_button_url() -> str:
     return f"tg://resolve?domain={OWNER_USERNAME}" if OWNER_USERNAME else f"tg://user?id={OWNER_ID}"
 
@@ -83,16 +82,33 @@ WELCOME_TEXT_AR = (
 
 CHANNEL_ID = None  # سيُحل عند الإقلاع
 
-# ====== إعدادات الدفع Paylink (API) ======
+# ====== إعدادات الدفع Paylink ======
 PAY_WEBHOOK_ENABLE = os.getenv("PAY_WEBHOOK_ENABLE", "1") == "1"
 PAY_WEBHOOK_SECRET = os.getenv("PAY_WEBHOOK_SECRET", "").strip()
 
 # API
-PAYLINK_API_BASE   = os.getenv("PAYLINK_API_BASE", "https://rest.paylink.sa/api").rstrip("/")
+PAYLINK_API_BASE   = os.getenv("PAYLINK_API_BASE", "https://restapi.paylink.sa/api").rstrip("/")
 PAYLINK_API_ID     = (os.getenv("PAYLINK_API_ID") or "").strip()
 PAYLINK_API_SECRET = (os.getenv("PAYLINK_API_SECRET") or "").strip()
 PUBLIC_BASE_URL    = (os.getenv("PUBLIC_BASE_URL") or "").rstrip("/")
-VIP_PRICE_SAR      = float(os.getenv("VIP_PRICE_SAR", "10"))  # غيّرها لو تحب
+VIP_PRICE_SAR      = float(os.getenv("VIP_PRICE_SAR", "10"))
+
+# fallback يدوي (اختياري)
+USE_PAYLINK_API        = os.getenv("USE_PAYLINK_API", "1") == "1"
+PAYLINK_CHECKOUT_BASE  = (os.getenv("PAYLINK_CHECKOUT_BASE") or "").strip()
+
+def _clean_base(url: str) -> str:
+    u = (url or "").strip().strip('"').strip("'")
+    if u.startswith("="):
+        u = u.lstrip("=")
+    return u
+
+def _build_pay_link(ref: str) -> str:
+    base = _clean_base(PAYLINK_CHECKOUT_BASE)
+    if "{ref}" in base:
+        return base.format(ref=ref)
+    sep = "&" if "?" in base else "?"
+    return f"{base}{sep}ref={ref}"
 
 # ====== خادِم ويب (Webhook + Health) ======
 SERVE_HEALTH = os.getenv("SERVE_HEALTH", "0") == "1" or PAY_WEBHOOK_ENABLE
@@ -108,21 +124,28 @@ def _public_url(path: str) -> str:
         base = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME','').strip()}" if os.getenv("RENDER_EXTERNAL_HOSTNAME") else ""
     return (base or "").rstrip("/") + path
 
+def _looks_like_ref(s: str) -> bool:
+    # ref شكلنا الشائع: userId-timestamp (أرقام و - )
+    return bool(re.fullmatch(r"\d{6,}-\d{9,}", s or ""))
+
 def _find_ref_in_obj(obj):
-    """يحاول إيجاد مرجع الطلب داخل JSON (orderNumber/merchantOrderNumber/ref)."""
+    """يحاول إيجاد مرجع الطلب داخل JSON (orderNumber/merchantOrderNumber/ref...)"""
     if not obj:
         return None
     if isinstance(obj, (str, bytes)):
         s = obj.decode() if isinstance(obj, bytes) else obj
-        m = re.search(r"(?:orderNumber|merchantOrderNumber)\s*[:=]\s*['\"]?([\w\-:]+)", s)
-        if m: return m.group(1)
+        m = re.search(r"(?:orderNumber|merchantOrderNumber|merchantOrderNo)\s*[:=]\s*['\"]?([\w\-:]+)", s)
+        if m and _looks_like_ref(m.group(1)): return m.group(1)
         m = re.search(r"[?&]ref=([\w\-:]+)", s)
+        if m and _looks_like_ref(m.group(1)): return m.group(1)
+        # التقط أي uid-timestamp ظاهر في النص احتياطًا
+        m = re.search(r"(\d{6,}-\d{9,})", s)
         if m: return m.group(1)
         return None
     if isinstance(obj, dict):
-        for k in ("orderNumber","merchantOrderNumber","ref","reference","merchantOrderNo"):
+        for k in ("orderNumber","merchantOrderNumber","merchantOrderNo","ref","reference","customerRef","customerReference"):
             v = obj.get(k)
-            if isinstance(v, str) and v.strip():
+            if isinstance(v, str) and _looks_like_ref(v.strip()):
                 return v.strip()
         for v in obj.values():
             got = _find_ref_in_obj(v)
@@ -134,20 +157,23 @@ def _find_ref_in_obj(obj):
             if got: return got
     return None
 
+# ====== WEBHOOK ======
 async def _payhook(request):
-    # تحقق من السر (إن تم ضبطه)
     if PAY_WEBHOOK_SECRET:
         if request.headers.get("X-PL-Secret") != PAY_WEBHOOK_SECRET:
             return web.json_response({"ok": False, "error": "bad secret"}, status=401)
-    # حمّل البودي
     try:
         data = await request.json()
     except Exception:
         data = {"raw": await request.text()}
+    # طبِّق الاستخراج
     ref = _find_ref_in_obj(data)
     if not ref:
+        # لو ما وجدنا ref اطبع جزء للتشخيص (بدون تسريب)
+        print("[payhook] no-ref; sample keys:", list(data.keys())[:6])
         return web.json_response({"ok": False, "error": "no-ref"}, status=200)
     activated = payments_mark_paid_by_ref(ref, raw=data)
+    print(f"[payhook] ref={ref} -> activated={activated}")
     return web.json_response({"ok": True, "ref": ref, "activated": bool(activated)}, status=200)
 
 def _run_http_server():
@@ -170,11 +196,8 @@ def _run_http_server():
 
     port = int(os.getenv("PORT", "10000"))
     print(f"[http] starting on 0.0.0.0:{port} (webhook={'ON' if PAY_WEBHOOK_ENABLE else 'OFF'})")
-
-    # مهم: لا نركّب signal handlers لأننا داخل Thread (fix set_wakeup_fd)
     web.run_app(app, host="0.0.0.0", port=port, handle_signals=False)
 
-# شغّل الخادم في ثريد جانبي
 threading.Thread(target=_run_http_server, daemon=True).start()
 
 # ====== عند الإقلاع ======
@@ -245,7 +268,6 @@ def _db():
         print(f"[db] using {path}")
         return conn
     except sqlite3.OperationalError as e:
-        # Fallback إلى /tmp عند عدم وجود قرص /var/data
         alt = "/tmp/bot.db"
         _ensure_parent(alt)
         print(f"[db] fallback to {alt} because: {e}")
@@ -387,29 +409,41 @@ def payments_last(limit=10):
         c.execute("SELECT * FROM payments ORDER BY created_at DESC LIMIT ?", (limit,))
         return [dict(x) for x in c.fetchall()]
 
-# ====== اتصال Paylink API ======
+# ====== اتصال Paylink API (مع كاش للتوكن لتسريع الاشتراك) ======
+_paylink_token = None
+_paylink_token_exp = 0
+
 async def paylink_auth_token():
-    """يحصل توكن باي لينك. نستدعيه وقت الإنشاء."""
+    """يحصل توكن باي لينك (مع كاش 9 دقائق)."""
+    global _paylink_token, _paylink_token_exp
+    now = time.time()
+    if _paylink_token and _paylink_token_exp > now + 10:
+        return _paylink_token
     url = f"{PAYLINK_API_BASE}/auth"
     payload = {
-        "apiId": PAYLINK_API_ID,
+        "appId": PAYLINK_API_ID,      # مهم: appId (مو apiId)
         "secretKey": PAYLINK_API_SECRET,
-        "persistToken": "false"
+        "persistToken": False         # Boolean
     }
     async with ClientSession() as s:
         async with s.post(url, json=payload, timeout=20) as r:
             data = await r.json(content_type=None)
+            token = None
             for k in ("token","access_token","id_token","jwt"):
                 if k in data and data[k]:
-                    return data[k]
-            raise RuntimeError(f"auth failed: {data}")
+                    token = data[k]; break
+            if not token:
+                raise RuntimeError(f"auth failed: {data}")
+            _paylink_token = token
+            _paylink_token_exp = now + 9*60  # 9 دقائق
+            return token
 
 async def paylink_create_invoice(order_number: str, amount: float, client_name: str):
     """ينشئ فاتورة ويعيد رابط الدفع من باي لينك."""
     token = await paylink_auth_token()
     url = f"{PAYLINK_API_BASE}/addInvoice"
     body = {
-        "orderNumber": order_number,           # مهم: نطابق به في الويبهوك
+        "orderNumber": order_number,           # سنطابقها في الويبهوك
         "amount": amount,
         "clientName": client_name or "Telegram User",
         "clientMobile": "0500000000",         # مطلوب من باي لينك؛ رقم افتراضي
@@ -604,7 +638,7 @@ def ai_stop_kb():
 async def safe_edit(q, text=None, kb=None):
     try:
         if text is not None:
-            await q.edit_message_text(text, reply_markup=kb)
+            await q.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
         else:
             await q.edit_message_reply_markup(reply_markup=kb)
     except BadRequest as e:
@@ -821,10 +855,17 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit(q, f"👤 اسمك: {q.from_user.full_name}\n🆔 معرفك: {uid}\n\n— شارك المعرف مع الإدارة للترقية إلى VIP.", kb=bottom_menu_kb(uid)); return
 
     if q.data == "upgrade":
-        # أنشئ مرجع + سجل الدفع كـ pending + أنشئ فاتورة من Paylink API
-        ref = payments_create(uid, VIP_PRICE_SAR, "paylink")  # ref = uid-timestamp
+        ref = payments_create(uid, VIP_PRICE_SAR, "paylink")  # pending
+        # عرض فوري لتقليل التأخير
+        await safe_edit(q, f"⏳ جاري إنشاء رابط الدفع…\n🔖 مرجعك: <code>{ref}</code>", kb=InlineKeyboardMarkup([
+            [InlineKeyboardButton(tr("back"), callback_data="back_sections")]
+        ]))
         try:
-            pay_url, invoice = await paylink_create_invoice(ref, VIP_PRICE_SAR, q.from_user.full_name or "Telegram User")
+            if USE_PAYLINK_API:
+                pay_url, invoice = await paylink_create_invoice(ref, VIP_PRICE_SAR, q.from_user.full_name or "Telegram User")
+            else:
+                pay_url = _build_pay_link(ref)
+
             txt = (f"💳 ترقية إلى VIP ({VIP_PRICE_SAR:.2f} SAR)\n"
                    f"سيتم التفعيل تلقائيًا بعد الدفع.\n"
                    f"🔖 مرجعك: <code>{ref}</code>")
@@ -835,7 +876,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]))
         except Exception as e:
             print("[upgrade] create invoice ERROR:", e)
-            await safe_edit(q, "تعذّر إنشاء فاتورة الدفع حالياً. جرّب لاحقاً.", kb=sections_list_kb())
+            await safe_edit(q, "تعذّر إنشاء/فتح رابط الدفع حالياً. جرّب لاحقاً.", kb=sections_list_kb())
         return
 
     if q.data.startswith("verify_pay_"):
