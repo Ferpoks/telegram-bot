@@ -40,7 +40,7 @@ def _ensure_parent(pth: str) -> bool:
         print("[db] cannot create parent dir for", pth, "->", e)
         return False
 
-# فحص توافق httpx لبعض نسخ openai 1.x
+# توافق httpx لبعض نسخ openai
 def _httpx_is_compatible() -> bool:
     try:
         from importlib.metadata import version
@@ -93,7 +93,7 @@ PAYLINK_API_SECRET = (os.getenv("PAYLINK_API_SECRET") or "").strip()
 PUBLIC_BASE_URL    = (os.getenv("PUBLIC_BASE_URL") or "").rstrip("/")
 VIP_PRICE_SAR      = float(os.getenv("VIP_PRICE_SAR", "10"))
 
-# fallback يدوي (اختياري)
+# fallback اختياري (رابط منتج ثابت)
 USE_PAYLINK_API        = os.getenv("USE_PAYLINK_API", "1") == "1"
 PAYLINK_CHECKOUT_BASE  = (os.getenv("PAYLINK_CHECKOUT_BASE") or "").strip()
 
@@ -125,20 +125,20 @@ def _public_url(path: str) -> str:
     return (base or "").rstrip("/") + path
 
 def _looks_like_ref(s: str) -> bool:
-    # ref شكلنا الشائع: userId-timestamp (أرقام و - )
+    # ref شكل: userId-timestamp
     return bool(re.fullmatch(r"\d{6,}-\d{9,}", s or ""))
 
 def _find_ref_in_obj(obj):
-    """يحاول إيجاد مرجع الطلب داخل JSON (orderNumber/merchantOrderNumber/ref...)"""
+    """يحاول إيجاد مرجع الطلب داخل JSON (orderNumber/merchantOrderNumber/ref/...)"""
     if not obj:
         return None
     if isinstance(obj, (str, bytes)):
         s = obj.decode() if isinstance(obj, bytes) else obj
-        m = re.search(r"(?:orderNumber|merchantOrderNumber|merchantOrderNo)\s*[:=]\s*['\"]?([\w\-:]+)", s)
+        m = re.search(r"(?:orderNumber|merchantOrderNumber|merchantOrderNo|reference|customerRef|customerReference)\s*[:=]\s*['\"]?([\w\-:]+)", s)
         if m and _looks_like_ref(m.group(1)): return m.group(1)
         m = re.search(r"[?&]ref=([\w\-:]+)", s)
         if m and _looks_like_ref(m.group(1)): return m.group(1)
-        # التقط أي uid-timestamp ظاهر في النص احتياطًا
+        # التقط uid-timestamp إن وُجد
         m = re.search(r"(\d{6,}-\d{9,})", s)
         if m: return m.group(1)
         return None
@@ -166,12 +166,12 @@ async def _payhook(request):
         data = await request.json()
     except Exception:
         data = {"raw": await request.text()}
-    # طبِّق الاستخراج
+
     ref = _find_ref_in_obj(data)
     if not ref:
-        # لو ما وجدنا ref اطبع جزء للتشخيص (بدون تسريب)
-        print("[payhook] no-ref; sample keys:", list(data.keys())[:6])
+        print("[payhook] no-ref; sample keys:", list(data.keys())[:8])
         return web.json_response({"ok": False, "error": "no-ref"}, status=200)
+
     activated = payments_mark_paid_by_ref(ref, raw=data)
     print(f"[payhook] ref={ref} -> activated={activated}")
     return web.json_response({"ok": True, "ref": ref, "activated": bool(activated)}, status=200)
@@ -196,7 +196,7 @@ def _run_http_server():
 
     port = int(os.getenv("PORT", "10000"))
     print(f"[http] starting on 0.0.0.0:{port} (webhook={'ON' if PAY_WEBHOOK_ENABLE else 'OFF'})")
-    web.run_app(app, host="0.0.0.0", port=port, handle_signals=False)
+    web.run_app(app, host="0.0.0.0", port=port, handle_signals=False)  # fix set_wakeup_fd
 
 threading.Thread(target=_run_http_server, daemon=True).start()
 
@@ -409,33 +409,33 @@ def payments_last(limit=10):
         c.execute("SELECT * FROM payments ORDER BY created_at DESC LIMIT ?", (limit,))
         return [dict(x) for x in c.fetchall()]
 
-# ====== اتصال Paylink API (مع كاش للتوكن لتسريع الاشتراك) ======
+# ====== Paylink API (توكن مع كاش لتقليل التأخير) ======
 _paylink_token = None
 _paylink_token_exp = 0
 
 async def paylink_auth_token():
-    """يحصل توكن باي لينك (مع كاش 9 دقائق)."""
+    """يحصل توكن باي لينك (كاش 9 دقائق) — يستخدم apiId."""
     global _paylink_token, _paylink_token_exp
     now = time.time()
     if _paylink_token and _paylink_token_exp > now + 10:
         return _paylink_token
+
     url = f"{PAYLINK_API_BASE}/auth"
     payload = {
-        "appId": PAYLINK_API_ID,      # مهم: appId (مو apiId)
+        "apiId": PAYLINK_API_ID,        # ← مهم: apiId
         "secretKey": PAYLINK_API_SECRET,
-        "persistToken": False         # Boolean
+        "persistToken": False           # Boolean
     }
     async with ClientSession() as s:
         async with s.post(url, json=payload, timeout=20) as r:
             data = await r.json(content_type=None)
-            token = None
-            for k in ("token","access_token","id_token","jwt"):
-                if k in data and data[k]:
-                    token = data[k]; break
+            if r.status >= 400:
+                raise RuntimeError(f"auth failed: {data}")
+            token = data.get("token") or data.get("access_token") or data.get("id_token") or data.get("jwt")
             if not token:
                 raise RuntimeError(f"auth failed: {data}")
             _paylink_token = token
-            _paylink_token_exp = now + 9*60  # 9 دقائق
+            _paylink_token_exp = now + 9*60
             return token
 
 async def paylink_create_invoice(order_number: str, amount: float, client_name: str):
@@ -459,6 +459,8 @@ async def paylink_create_invoice(order_number: str, amount: float, client_name: 
     async with ClientSession() as s:
         async with s.post(url, json=body, headers=headers, timeout=30) as r:
             data = await r.json(content_type=None)
+            if r.status >= 400:
+                raise RuntimeError(f"addInvoice failed: {data}")
             pay_url = data.get("url") or data.get("mobileUrl") or data.get("qrUrl")
             if not pay_url:
                 raise RuntimeError(f"addInvoice failed: {data}")
@@ -1003,7 +1005,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
 
 
