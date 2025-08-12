@@ -85,7 +85,7 @@ CHANNEL_ID = None  # سيُحل عند الإقلاع
 
 # ====== إعدادات الدفع Paylink ======
 PRICE_USD = float(os.getenv("PRICE_USD", "10.0"))   # السعر المعروض
-PAYLINK_CHECKOUT_BASE = os.getenv("PAYLINK_CHECKOUT_BASE", "").strip()  # مثال: https://paylink.sa/pay/xxx?ref={ref}
+PAYLINK_CHECKOUT_BASE = os.getenv("PAYLINK_CHECKOUT_BASE", "").strip()  # مثال: https://paylink.sa/pay/<ID>?ref={ref}
 PAY_WEBHOOK_ENABLE = os.getenv("PAY_WEBHOOK_ENABLE", "1") == "1"
 PAY_WEBHOOK_SECRET = os.getenv("PAY_WEBHOOK_SECRET", "").strip()
 
@@ -113,16 +113,17 @@ async def _payhook(request):
     # تحقق من السر (إن تم ضبطه)
     if PAY_WEBHOOK_SECRET:
         if request.headers.get("X-PL-Secret") != PAY_WEBHOOK_SECRET:
-            return web.Response(status=401, text="bad secret")
+            return web.json_response({"ok": False, "error": "bad secret"}, status=401)
+    # حمّل البودي
     try:
         data = await request.json()
     except Exception:
         data = {"raw": await request.text()}
     ref = _find_ref_in_obj(data)
     if not ref:
-        return web.Response(text="no-ref")
+        return web.json_response({"ok": False, "error": "no-ref"}, status=200)
     activated = payments_mark_paid_by_ref(ref, raw=data)
-    return web.Response(text=("OK" if activated else "ref-not-found"))
+    return web.json_response({"ok": True, "ref": ref, "activated": bool(activated)}, status=200)
 
 def _run_http_server():
     if not (AIOHTTP_AVAILABLE and (SERVE_HEALTH or PAY_WEBHOOK_ENABLE)):
@@ -130,10 +131,10 @@ def _run_http_server():
         return
 
     async def _health(_):
-        return web.Response(text="OK")
+        return web.json_response({"ok": True})
 
     async def _payhook_get(_):
-        return web.Response(text="OK")
+        return web.json_response({"ok": True})
 
     app = web.Application()
     if SERVE_HEALTH:
@@ -145,7 +146,7 @@ def _run_http_server():
     port = int(os.getenv("PORT", "10000"))
     print(f"[http] starting on 0.0.0.0:{port} (webhook={'ON' if PAY_WEBHOOK_ENABLE else 'OFF'})")
 
-    # المهم: لا نركّب signal handlers لأننا داخل Thread (fix set_wakeup_fd)
+    # مهم: لا نركّب signal handlers لأننا داخل Thread (fix set_wakeup_fd)
     web.run_app(app, host="0.0.0.0", port=port, handle_signals=False)
 
 # شغّل الخادم في ثريد جانبي
@@ -897,6 +898,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
