@@ -23,7 +23,7 @@ from telegram.error import BadRequest
 # ====== تحميل البيئة ======
 ENV_PATH = Path(".env")
 if ENV_PATH.exists() and not os.getenv("RENDER"):
-    load_dotenv(ENV_PATH)
+    load_dotenv(ENV_PATH, override=True)
 
 # ====== إعدادات أساسية ======
 BOT_TOKEN = os.getenv("BOT_TOKEN") or ""
@@ -40,7 +40,7 @@ def _ensure_parent(pth: str) -> bool:
         print("[db] cannot create parent dir for", pth, "->", e)
         return False
 
-# تحقق توافق httpx مع openai 1.x (يتعطل مع httpx>=0.28)
+# تحقق توافق httpx مع openai 1.x (بعض نسخ httpx تسبب مشاكل)
 def _httpx_is_compatible() -> bool:
     try:
         from importlib.metadata import version
@@ -83,30 +83,55 @@ WELCOME_TEXT_AR = (
 
 CHANNEL_ID = None  # سيُحل عند الإقلاع
 
-# ====== إعدادات الدفع Paylink ======
-PRICE_USD = float(os.getenv("PRICE_USD", "10.0"))   # السعر المعروض
-PAYLINK_CHECKOUT_BASE = os.getenv("PAYLINK_CHECKOUT_BASE", "").strip()  # مثال: https://paylink.sa/pay/<ID>?ref={ref}
+# ====== إعدادات الدفع Paylink (API) ======
 PAY_WEBHOOK_ENABLE = os.getenv("PAY_WEBHOOK_ENABLE", "1") == "1"
 PAY_WEBHOOK_SECRET = os.getenv("PAY_WEBHOOK_SECRET", "").strip()
+
+# API
+PAYLINK_API_BASE   = os.getenv("PAYLINK_API_BASE", "https://rest.paylink.sa/api").rstrip("/")
+PAYLINK_API_ID     = (os.getenv("PAYLINK_API_ID") or "").strip()
+PAYLINK_API_SECRET = (os.getenv("PAYLINK_API_SECRET") or "").strip()
+PUBLIC_BASE_URL    = (os.getenv("PUBLIC_BASE_URL") or "").rstrip("/")
+VIP_PRICE_SAR      = float(os.getenv("VIP_PRICE_SAR", "10"))  # غيّرها لو تحب
 
 # ====== خادِم ويب (Webhook + Health) ======
 SERVE_HEALTH = os.getenv("SERVE_HEALTH", "0") == "1" or PAY_WEBHOOK_ENABLE
 try:
-    from aiohttp import web
+    from aiohttp import web, ClientSession
     AIOHTTP_AVAILABLE = True
 except Exception:
     AIOHTTP_AVAILABLE = False
 
-def _find_ref_in_obj(obj) -> str | None:
-    """يحاول إيجاد ref مثل <digits>-<digits> أو من سلسلة ref=..."""
-    try:
-        s = json.dumps(obj, ensure_ascii=False)
-    except Exception:
-        s = str(obj)
-    m = re.search(r"\b(\d{6,}-\d{10,})\b", s)
-    if m: return m.group(1)
-    m = re.search(r"[?&]ref=([\w\-:]+)", s)
-    if m: return m.group(1)
+def _public_url(path: str) -> str:
+    base = PUBLIC_BASE_URL or ""
+    if not base:
+        base = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME','').strip()}" if os.getenv("RENDER_EXTERNAL_HOSTNAME") else ""
+    return (base or "").rstrip("/") + path
+
+def _find_ref_in_obj(obj):
+    """يحاول إيجاد مرجع الطلب داخل JSON (orderNumber/merchantOrderNumber/ref)."""
+    if not obj:
+        return None
+    if isinstance(obj, (str, bytes)):
+        s = obj.decode() if isinstance(obj, bytes) else obj
+        m = re.search(r"(?:orderNumber|merchantOrderNumber)\s*[:=]\s*['\"]?([\w\-:]+)", s)
+        if m: return m.group(1)
+        m = re.search(r"[?&]ref=([\w\-:]+)", s)
+        if m: return m.group(1)
+        return None
+    if isinstance(obj, dict):
+        for k in ("orderNumber","merchantOrderNumber","ref","reference","merchantOrderNo"):
+            v = obj.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        for v in obj.values():
+            got = _find_ref_in_obj(v)
+            if got: return got
+        return None
+    if isinstance(obj, (list, tuple)):
+        for v in obj:
+            got = _find_ref_in_obj(v)
+            if got: return got
     return None
 
 async def _payhook(request):
@@ -320,8 +345,8 @@ def ai_get_mode(uid: int|str):
 def payments_new_ref(uid: int) -> str:
     return f"{uid}-{int(time.time())}"
 
-def payments_create(uid: int, amount: float, provider="paylink") -> str:
-    ref = payments_new_ref(uid)
+def payments_create(uid: int, amount: float, provider="paylink", ref: str|None=None) -> str:
+    ref = ref or payments_new_ref(uid)
     with _conn_lock:
         _db().execute(
             "INSERT OR REPLACE INTO payments (ref, user_id, amount, provider, status, created_at) VALUES (?,?,?,?,?,?)",
@@ -361,6 +386,49 @@ def payments_last(limit=10):
         c = _db().cursor()
         c.execute("SELECT * FROM payments ORDER BY created_at DESC LIMIT ?", (limit,))
         return [dict(x) for x in c.fetchall()]
+
+# ====== اتصال Paylink API ======
+async def paylink_auth_token():
+    """يحصل توكن باي لينك. نستدعيه وقت الإنشاء."""
+    url = f"{PAYLINK_API_BASE}/auth"
+    payload = {
+        "apiId": PAYLINK_API_ID,
+        "secretKey": PAYLINK_API_SECRET,
+        "persistToken": "false"
+    }
+    async with ClientSession() as s:
+        async with s.post(url, json=payload, timeout=20) as r:
+            data = await r.json(content_type=None)
+            for k in ("token","access_token","id_token","jwt"):
+                if k in data and data[k]:
+                    return data[k]
+            raise RuntimeError(f"auth failed: {data}")
+
+async def paylink_create_invoice(order_number: str, amount: float, client_name: str):
+    """ينشئ فاتورة ويعيد رابط الدفع من باي لينك."""
+    token = await paylink_auth_token()
+    url = f"{PAYLINK_API_BASE}/addInvoice"
+    body = {
+        "orderNumber": order_number,           # مهم: نطابق به في الويبهوك
+        "amount": amount,
+        "clientName": client_name or "Telegram User",
+        "clientMobile": "0500000000",         # مطلوب من باي لينك؛ رقم افتراضي
+        "currency": "SAR",
+        "callBackUrl": _public_url("/payhook"),
+        "displayPending": False,
+        "note": f"VIP via Telegram #{order_number}",
+        "products": [
+            {"title": "VIP Access", "price": amount, "qty": 1, "isDigital": True}
+        ]
+    }
+    headers = {"Authorization": f"Bearer {token}"}
+    async with ClientSession() as s:
+        async with s.post(url, json=body, headers=headers, timeout=30) as r:
+            data = await r.json(content_type=None)
+            pay_url = data.get("url") or data.get("mobileUrl") or data.get("qrUrl")
+            if not pay_url:
+                raise RuntimeError(f"addInvoice failed: {data}")
+            return pay_url, data
 
 # ====== نصوص قصيرة ======
 def tr(k: str) -> str:
@@ -519,23 +587,6 @@ def sections_list_kb():
 
 def section_back_kb():
     return InlineKeyboardMarkup([[InlineKeyboardButton("📂 رجوع للأقسام", callback_data="back_sections")]])
-
-def _build_pay_link(ref: str) -> str:
-    if "{ref}" in PAYLINK_CHECKOUT_BASE:
-        return PAYLINK_CHECKOUT_BASE.format(ref=ref)
-    sep = "&" if "?" in PAYLINK_CHECKOUT_BASE else "?"
-    return PAYLINK_CHECKOUT_BASE + f"{sep}ref={ref}"
-
-def pay_buttons(ref: str):
-    link = _build_pay_link(ref)
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(f"💳 ادفع {PRICE_USD}$ عبر Paylink", url=link)],
-        [InlineKeyboardButton("✅ تحقّق الدفع", callback_data=f"paycheck:{ref}")],
-        [InlineKeyboardButton(tr("back"), callback_data="back_sections")]
-    ])
-
-def vip_prompt_kb_immediate(ref: str):
-    return pay_buttons(ref)
 
 def ai_hub_kb():
     return InlineKeyboardMarkup([
@@ -770,21 +821,34 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit(q, f"👤 اسمك: {q.from_user.full_name}\n🆔 معرفك: {uid}\n\n— شارك المعرف مع الإدارة للترقية إلى VIP.", kb=bottom_menu_kb(uid)); return
 
     if q.data == "upgrade":
-        ref = payments_create(uid, PRICE_USD, "paylink")
-        txt = (f"💳 ترقية إلى VIP ({PRICE_USD}$)\n"
-               f"سيتم التفعيل تلقائياً بعد الدفع.\n"
-               f"🔖 مرجعك: <code>{ref}</code>")
-        await safe_edit(q, txt, kb=vip_prompt_kb_immediate(ref))
+        # أنشئ مرجع + سجل الدفع كـ pending + أنشئ فاتورة من Paylink API
+        ref = payments_create(uid, VIP_PRICE_SAR, "paylink")  # ref = uid-timestamp
+        try:
+            pay_url, invoice = await paylink_create_invoice(ref, VIP_PRICE_SAR, q.from_user.full_name or "Telegram User")
+            txt = (f"💳 ترقية إلى VIP ({VIP_PRICE_SAR:.2f} SAR)\n"
+                   f"سيتم التفعيل تلقائيًا بعد الدفع.\n"
+                   f"🔖 مرجعك: <code>{ref}</code>")
+            await safe_edit(q, txt, kb=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🚀 الذهاب للدفع", url=pay_url)],
+                [InlineKeyboardButton("✅ تحقّق الدفع", callback_data=f"verify_pay_{ref}")],
+                [InlineKeyboardButton(tr("back"), callback_data="back_sections")]
+            ]))
+        except Exception as e:
+            print("[upgrade] create invoice ERROR:", e)
+            await safe_edit(q, "تعذّر إنشاء فاتورة الدفع حالياً. جرّب لاحقاً.", kb=sections_list_kb())
         return
 
-    if q.data.startswith("paycheck:"):
-        ref = q.data.split(":",1)[1]
+    if q.data.startswith("verify_pay_"):
+        ref = q.data.replace("verify_pay_", "")
         st = payments_status(ref)
-        if st == "paid":
-            await safe_edit(q, "✅ تم استلام الدفع وتفعيل VIP.\nاستمتع 💜", kb=sections_list_kb())
+        if st == "paid" or user_is_premium(uid):
+            await safe_edit(q, "🎉 تم تفعيل VIP بالفعل على حسابك. استمتع!", kb=bottom_menu_kb(uid))
         else:
             await safe_edit(q, "⌛ لم يصل إشعار الدفع بعد.\nإذا دفعت للتو فانتظر قليلاً ثم اضغط تحقّق مرة أخرى.\n"
-                               "لو استمر التأخير، احتفظ بمرجعك وأرسل لقطة للإدارة.", kb=vip_prompt_kb_immediate(ref))
+                               "لو استمر التأخير، احتفظ بمرجعك وأرسل لقطة للإدارة.", kb=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ تحقّق مرة أخرى", callback_data=f"verify_pay_{ref}")],
+                [InlineKeyboardButton(tr("back"), callback_data="back_sections")]
+            ]))
         return
 
     if q.data == "back_home":
