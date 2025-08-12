@@ -1,7 +1,14 @@
 # -*- coding: utf-8 -*-
-import os, sqlite3, threading, time, asyncio, re, json, sys
+import os, sqlite3, threading, time, asyncio, re, json, sys, logging
 from pathlib import Path
 from dotenv import load_dotenv
+
+# ====== ضبط اللوج ======
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
+log = logging.getLogger("bot")
 
 # ====== OpenAI (اختياري) ======
 try:
@@ -22,6 +29,7 @@ from telegram.error import BadRequest
 
 # ====== تحميل البيئة ======
 ENV_PATH = Path(".env")
+# ملاحظة: على Render أنت تستخدم Env Vars مباشرة، فما يحتاج .env هناك.
 if ENV_PATH.exists() and not os.getenv("RENDER"):
     load_dotenv(ENV_PATH, override=True)
 
@@ -40,23 +48,10 @@ def _ensure_parent(pth: str) -> bool:
         print("[db] cannot create parent dir for", pth, "->", e)
         return False
 
-# توافق httpx لبعض نسخ openai
-def _httpx_is_compatible() -> bool:
-    try:
-        from importlib.metadata import version
-        v = version("httpx")
-        parts = v.split("."); major = int(parts[0]); minor = int(parts[1]) if len(parts)>1 else 0
-        if major == 0 and minor >= 28: return False
-        if major >= 1: return False
-        return True
-    except Exception:
-        return True
-
-HTTPX_OK = _httpx_is_compatible()
-
+# === أزلنا فحص httpx نهائياً لضمان عدم تعطيل AI ===
 OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
-OPENAI_CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-4.1")
-AI_ENABLED = bool(OPENAI_API_KEY) and (OpenAI is not None) and HTTPX_OK
+OPENAI_CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
+AI_ENABLED = bool(OPENAI_API_KEY) and (OpenAI is not None)
 client = OpenAI(api_key=OPENAI_API_KEY) if AI_ENABLED else None
 
 OWNER_ID = int(os.getenv("OWNER_ID", "6468743821"))
@@ -166,16 +161,16 @@ async def _payhook(request):
 
     ref = _find_ref_in_obj(data)
     if not ref:
-        print("[payhook] no-ref; sample keys:", list(data.keys())[:8])
+        log.warning("[payhook] no-ref; sample keys: %s", list(data.keys())[:8])
         return web.json_response({"ok": False, "error": "no-ref"}, status=200)
 
     activated = payments_mark_paid_by_ref(ref, raw=data)
-    print(f"[payhook] ref={ref} -> activated={activated}")
+    log.info("[payhook] ref=%s -> activated=%s", ref, activated)
     return web.json_response({"ok": True, "ref": ref, "activated": bool(activated)}, status=200)
 
 def _run_http_server():
     if not (AIOHTTP_AVAILABLE and (SERVE_HEALTH or PAY_WEBHOOK_ENABLE)):
-        print("[http] aiohttp غير متوفر أو الإعدادات لا تتطلب خادم ويب")
+        log.info("[http] aiohttp غير متوفر أو الإعدادات لا تتطلب خادم ويب")
         return
 
     async def _make_app():
@@ -207,7 +202,7 @@ def _run_http_server():
             port = int(os.getenv("PORT", "10000"))
             site = web.TCPSite(runner, "0.0.0.0", port)
             await site.start()
-            print(f"[http] serving on 0.0.0.0:{port} (webhook={'ON' if PAY_WEBHOOK_ENABLE else 'OFF'})")
+            log.info("[http] serving on 0.0.0.0:%d (webhook=%s)", port, "ON" if PAY_WEBHOOK_ENABLE else "OFF")
 
         loop.run_until_complete(_start())
         try:
@@ -225,7 +220,7 @@ async def on_startup(app: Application):
     try:
         await app.bot.delete_webhook(drop_pending_updates=True)
     except Exception as e:
-        print("[startup] delete_webhook:", e)
+        log.warning("[startup] delete_webhook: %s", e)
 
     global CHANNEL_ID
     CHANNEL_ID = None
@@ -233,12 +228,12 @@ async def on_startup(app: Application):
         try:
             chat = await app.bot.get_chat(f"@{u}")
             CHANNEL_ID = chat.id
-            print(f"[startup] resolved @{u} -> chat_id={CHANNEL_ID}")
+            log.info("[startup] resolved @%s -> chat_id=%s", u, CHANNEL_ID)
             break
         except Exception as e:
-            print(f"[startup] get_chat @{u} failed:", e)
+            log.warning("[startup] get_chat @%s failed: %s", u, e)
     if CHANNEL_ID is None:
-        print("[startup] ❌ could not resolve channel id; fallback to @username checks")
+        log.error("[startup] ❌ could not resolve channel id; fallback to @username checks")
 
     # أوامر عامة للمستخدمين: فقط start/help
     try:
@@ -250,7 +245,7 @@ async def on_startup(app: Application):
             scope=BotCommandScopeDefault()
         )
     except Exception as e:
-        print("[startup] set_my_commands default:", e)
+        log.warning("[startup] set_my_commands default: %s", e)
 
     # أوامر المالك فقط
     try:
@@ -272,7 +267,7 @@ async def on_startup(app: Application):
             scope=BotCommandScopeChat(chat_id=OWNER_ID)
         )
     except Exception as e:
-        print("[startup] set_my_commands owner:", e)
+        log.warning("[startup] set_my_commands owner: %s", e)
 
 # ====== قاعدة البيانات ======
 # RLock لتفادي Deadlock
@@ -288,12 +283,12 @@ def _db():
         conn = sqlite3.connect(path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         _db._conn = conn
-        print(f"[db] using {path}")
+        log.info("[db] using %s", path)
         return conn
     except sqlite3.OperationalError as e:
         alt = "/tmp/bot.db"
         _ensure_parent(alt)
-        print(f"[db] fallback to {alt} because: {e}")
+        log.warning("[db] fallback to %s because: %s", alt, e)
         conn = sqlite3.connect(alt, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         _db._conn = conn
@@ -425,7 +420,7 @@ def payments_mark_paid_by_ref(ref: str, raw=None) -> bool:
     try:
         user_grant(user_id)
     except Exception as e:
-        print("[payments_mark_paid] grant error:", e)
+        log.error("[payments_mark_paid] grant error: %s", e)
     return True
 
 def payments_last(limit=10):
@@ -674,7 +669,7 @@ async def safe_edit(q, text=None, kb=None):
             except BadRequest:
                 pass
         else:
-            print("safe_edit error:", e)
+            log.warning("safe_edit error: %s", e)
 
 # ====== حالات العضوية ======
 ALLOWED_STATUSES = {ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR}
@@ -703,13 +698,13 @@ async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int,
             try:
                 cm = await context.bot.get_chat_member(target, user_id)
                 status = getattr(cm, "status", None)
-                print(f"[is_member] try#{attempt} target={target} status={status} user={user_id}")
+                log.info("[is_member] try#%d target=%s status=%s user=%s", attempt, target, status, user_id)
                 ok = status in ALLOWED_STATUSES
                 if ok:
                     _member_cache[user_id] = (True, now + 60)
                     user_set_verify(user_id, True); return True
             except Exception as e:
-                print(f"[is_member] try#{attempt} target={target} ERROR:", e)
+                log.warning("[is_member] try#%d target=%s ERROR: %s", attempt, target, e)
         if attempt < retries: await asyncio.sleep(backoff * attempt)
 
     _member_cache[user_id] = (False, now + 60)
@@ -717,28 +712,42 @@ async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int,
 
 # ====== AI ======
 def _chat_with_fallback(messages):
-    if not AI_ENABLED or client is None: return None, "ai_disabled"
+    """يحاول بعدة نماذج حديثة بترتيب مفضل، ويعيد (response, err_code_or_None)."""
+    if not AI_ENABLED or client is None:
+        return None, "ai_disabled"
+
+    # ترتيب نماذج معقولة السعر/الأداء
     primary = (OPENAI_CHAT_MODEL or "").strip()
-    fallbacks = [primary] if primary else []
-    for m in ["gpt-4.1", "gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"]:
-        if m not in fallbacks: fallbacks.append(m)
+    fallbacks = [m for m in [primary, "gpt-4o-mini", "gpt-4.1-mini", "gpt-4o", "gpt-4.1", "gpt-3.5-turbo"] if m]
+    seen = set(); ordered = []
+    for m in fallbacks:
+        if m not in seen:
+            ordered.append(m); seen.add(m)
 
     last_err = None
-    for model in fallbacks:
+    for model in ordered:
         try:
-            r = client.chat.completions.create(model=model, messages=messages, temperature=0.7)
+            r = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=0.7,
+                timeout=30  # يحتاج openai>=1.30 تقريباً
+            )
             return r, None
         except Exception as e:
             msg = str(e); last_err = msg
-            if ("model_not_found" in msg or "Not found" in msg or "deprecated" in msg): continue
-            if "insufficient_quota" in msg or "You exceeded your current quota" in msg: return None, "quota"
-            if "invalid_api_key" in msg or "Incorrect API key" in msg: return None, "apikey"
+            # خرائط أخطاء مفيدة للمستخدم
+            if "insufficient_quota" in msg or "You exceeded your current quota" in msg:
+                return None, "quota"
+            if "invalid_api_key" in msg or "Incorrect API key" in msg or "No API key provided" in msg:
+                return None, "apikey"
+            # جرّب نموذج آخر
             continue
     return None, (last_err or "unknown")
 
 def ai_chat_reply(prompt: str) -> str:
+    """واجهة سهلة لاستدعاء الشات وإرجاع نص عربي + رسائل أخطاء واضحة."""
     if not AI_ENABLED or client is None:
-        if not HTTPX_OK: return "⚠️ تعذّر تفعيل AI بسبب نسخة httpx غير متوافقة. ثبّت httpx<0.28."
         return tr("ai_disabled")
     try:
         r, err = _chat_with_fallback([
@@ -750,8 +759,9 @@ def ai_chat_reply(prompt: str) -> str:
         if err == "apikey": return "⚠️ مفتاح OpenAI غير صالح أو مفقود."
         if r is None: return "⚠️ تعذّر التنفيذ حالياً. جرّب لاحقاً."
         return (r.choices[0].message.content or "").strip()
-    except Exception:
-        return "⚠️ تعذّر التنفيذ حالياً. جرّب لاحقاً."
+    except Exception as e:
+        log.error("[ai] unexpected: %s", e)
+        return "⚠️ حدث خطأ غير متوقع أثناء الرد من AI."
 
 # ====== العرض ======
 def build_section_text(sec: dict) -> str:
@@ -791,7 +801,6 @@ async def aidiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = (f"AI_ENABLED={'ON' if AI_ENABLED else 'OFF'}\n"
                f"Key={'set(len=%d)'%len(k) if k else 'missing'}\n"
                f"Model={OPENAI_CHAT_MODEL}\n"
-               f"httpx={v('httpx')} (ok={HTTPX_OK})\n"
                f"openai={v('openai')}")
         await update.message.reply_text(msg)
     except Exception as e:
@@ -805,8 +814,7 @@ async def libdiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try: return version(pkg)
             except PackageNotFoundError: return "not-installed"
         msg = (f"python-telegram-bot={v('python-telegram-bot')}\n"
-               f"httpx={v('httpx')}\n"
-               f"httpcore={v('httpcore')}\n"
+               f"aiohttp={v('aiohttp')}\n"
                f"openai={v('openai')}\n"
                f"python={os.sys.version.split()[0]}")
         await update.message.reply_text(msg)
@@ -848,7 +856,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await context.bot.send_message(chat_id, WELCOME_TEXT_AR)
     except Exception as e:
-        print("[welcome] ERROR:", e)
+        log.warning("[welcome] ERROR: %s", e)
 
     ok = await must_be_member_or_vip(context, uid)
     if not ok:
@@ -856,14 +864,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id, "🔐 انضم للقناة لاستخدام البوت:", reply_markup=gate_kb())
             await context.bot.send_message(chat_id, need_admin_text())
         except Exception as e:
-            print("[start] gate send ERROR:", e)
+            log.warning("[start] gate send ERROR: %s", e)
         return
 
     try:
         await context.bot.send_message(chat_id, "👇 القائمة:", reply_markup=bottom_menu_kb(uid))
         await context.bot.send_message(chat_id, "📂 الأقسام:", reply_markup=sections_list_kb())
     except Exception as e:
-        print("[start] menu send ERROR:", e)
+        log.warning("[start] menu send ERROR: %s", e)
 
 # ====== الأزرار ======
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -914,7 +922,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton(tr("back"), callback_data="back_sections")]
             ]))
         except Exception as e:
-            print("[upgrade] create invoice ERROR:", e)
+            log.error("[upgrade] create invoice ERROR: %s", e)
             await safe_edit(q, "تعذّر إنشاء/فتح رابط الدفع حالياً. جرّب لاحقاً.", kb=sections_list_kb())
         return
 
@@ -986,7 +994,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await q.message.reply_text("🤖 أكتب سؤالك هنا…", reply_markup=ai_stop_kb())
         except Exception as e:
-            print("[ai_chat] reply error:", e)
+            log.warning("[ai_chat] reply error: %s", e)
         return
 
     if q.data == "ai_stop":
@@ -1009,9 +1017,12 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mode = ai_get_mode(uid)
     if mode == "ai_chat":
         t = (update.message.text or "").strip()
-        if not t: return
+        if not t: 
+            return
         await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
-        await update.message.reply_text(ai_chat_reply(t), reply_markup=ai_stop_kb()); return
+        reply = ai_chat_reply(t)
+        await update.message.reply_text(reply, reply_markup=ai_stop_kb()); 
+        return
 
     await update.message.reply_text("👇 القائمة:", reply_markup=bottom_menu_kb(uid))
     await update.message.reply_text("📂 الأقسام:", reply_markup=sections_list_kb())
@@ -1028,7 +1039,7 @@ async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_revoke(context.args[0]); await update.message.reply_text(f"❌ تم إلغاء {context.args[0]}")
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
-    print(f"⚠️ Error: {getattr(context, 'error', 'unknown')}")
+    log.error("⚠️ Error: %s", getattr(context, 'error', 'unknown'))
 
 # ====== نقطة التشغيل ======
 def main():
@@ -1060,8 +1071,5 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
 
 
