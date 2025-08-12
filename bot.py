@@ -29,7 +29,6 @@ from telegram.error import BadRequest
 
 # ====== تحميل البيئة ======
 ENV_PATH = Path(".env")
-# ملاحظة: على Render أنت تستخدم Env Vars مباشرة، فما يحتاج .env هناك.
 if ENV_PATH.exists() and not os.getenv("RENDER"):
     load_dotenv(ENV_PATH, override=True)
 
@@ -38,6 +37,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN") or ""
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN مفقود")
 
+# مهم: تأكد أن هذا المسار على قرص دائم (Render: Persistent Disk)
 DB_PATH = os.getenv("DB_PATH", "/var/data/bot.db")
 
 def _ensure_parent(pth: str) -> bool:
@@ -48,7 +48,7 @@ def _ensure_parent(pth: str) -> bool:
         print("[db] cannot create parent dir for", pth, "->", e)
         return False
 
-# === أزلنا فحص httpx نهائياً لضمان عدم تعطيل AI ===
+# === OpenAI ===
 OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
 OPENAI_CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
 AI_ENABLED = bool(OPENAI_API_KEY) and (OpenAI is not None)
@@ -77,7 +77,7 @@ WELCOME_TEXT_AR = (
 
 CHANNEL_ID = None  # سيُحل عند الإقلاع
 
-# ====== إعدادات الدفع Paylink ======
+# ====== إعدادات الدفع ======
 PAY_WEBHOOK_ENABLE = os.getenv("PAY_WEBHOOK_ENABLE", "1") == "1"
 PAY_WEBHOOK_SECRET = os.getenv("PAY_WEBHOOK_SECRET", "").strip()
 
@@ -175,19 +175,15 @@ def _run_http_server():
 
     async def _make_app():
         app = web.Application()
-        # favicon لإسكات 404
-        async def _favicon(_):
-            return web.Response(status=204)
+        async def _favicon(_): return web.Response(status=204)
         app.router.add_get("/favicon.ico", _favicon)
 
         if SERVE_HEALTH:
-            async def _health(_):
-                return web.json_response({"ok": True})
+            async def _health(_): return web.json_response({"ok": True})
             app.router.add_get("/", _health)
         if PAY_WEBHOOK_ENABLE:
             app.router.add_post("/payhook", _payhook)
-            async def _payhook_get(_):
-                return web.json_response({"ok": True})
+            async def _payhook_get(_): return web.json_response({"ok": True})
             app.router.add_get("/payhook", _payhook_get)
         return app
 
@@ -235,34 +231,31 @@ async def on_startup(app: Application):
     if CHANNEL_ID is None:
         log.error("[startup] ❌ could not resolve channel id; fallback to @username checks")
 
-    # أوامر عامة للمستخدمين: فقط start/help
+    # أوامر عامة للمستخدمين
     try:
         await app.bot.set_my_commands(
-            [
-                BotCommand("start", "بدء"),
-                BotCommand("help", "مساعدة"),
-            ],
+            [BotCommand("start", "بدء"), BotCommand("help", "مساعدة")],
             scope=BotCommandScopeDefault()
         )
     except Exception as e:
         log.warning("[startup] set_my_commands default: %s", e)
 
-    # أوامر المالك فقط
+    # أوامر المالك
     try:
         await app.bot.set_my_commands(
             [
-                BotCommand("start", "بدء"),
-                BotCommand("help", "مساعدة"),
-                BotCommand("id", "معرّفك"),
-                BotCommand("grant", "منح VIP"),
-                BotCommand("revoke", "سحب VIP"),
-                BotCommand("refreshcmds", "تحديث الأوامر"),
-                BotCommand("debugverify", "تشخيص التحقق"),
-                BotCommand("dv", "تشخيص سريع"),
-                BotCommand("aidiag", "تشخيص AI"),
-                BotCommand("libdiag", "إصدارات المكتبات"),
-                BotCommand("paylist", "آخر المدفوعات"),
-                BotCommand("restart", "إعادة تشغيل الخدمة"),
+                BotCommand("start","بدء"), BotCommand("help","مساعدة"),
+                BotCommand("id","معرّفك"),
+                BotCommand("grant","منح VIP"),
+                BotCommand("revoke","سحب VIP"),
+                BotCommand("vipinfo","معلومات VIP"),
+                BotCommand("refreshcmds","تحديث الأوامر"),
+                BotCommand("debugverify","تشخيص التحقق"),
+                BotCommand("dv","تشخيص سريع"),
+                BotCommand("aidiag","تشخيص AI"),
+                BotCommand("libdiag","إصدارات المكتبات"),
+                BotCommand("paylist","آخر المدفوعات"),
+                BotCommand("restart","إعادة تشغيل")
             ],
             scope=BotCommandScopeChat(chat_id=OWNER_ID)
         )
@@ -270,7 +263,6 @@ async def on_startup(app: Application):
         log.warning("[startup] set_my_commands owner: %s", e)
 
 # ====== قاعدة البيانات ======
-# RLock لتفادي Deadlock
 _conn_lock = threading.RLock()
 
 def _db():
@@ -297,12 +289,29 @@ def _db():
 def migrate_db():
     with _conn_lock:
         c = _db().cursor()
+        # users
+        _db().execute("""
+        CREATE TABLE IF NOT EXISTS users (
+          id TEXT PRIMARY KEY,
+          premium INTEGER DEFAULT 0,
+          verified_ok INTEGER DEFAULT 0,
+          verified_at INTEGER DEFAULT 0,
+          vip_forever INTEGER DEFAULT 0,
+          vip_since INTEGER DEFAULT 0
+        );""")
+        # ترحيل أعمدة إن كانت ناقصة
         c.execute("PRAGMA table_info(users)")
         cols = {row["name"] for row in c.fetchall()}
         if "verified_ok" not in cols:
             _db().execute("ALTER TABLE users ADD COLUMN verified_ok INTEGER DEFAULT 0;")
         if "verified_at" not in cols:
             _db().execute("ALTER TABLE users ADD COLUMN verified_at INTEGER DEFAULT 0;")
+        if "vip_forever" not in cols:
+            _db().execute("ALTER TABLE users ADD COLUMN vip_forever INTEGER DEFAULT 0;")
+        if "vip_since" not in cols:
+            _db().execute("ALTER TABLE users ADD COLUMN vip_since INTEGER DEFAULT 0;")
+
+        # payments
         _db().execute("""
         CREATE TABLE IF NOT EXISTS payments (
             ref TEXT PRIMARY KEY,
@@ -313,26 +322,10 @@ def migrate_db():
             created_at INTEGER,
             paid_at INTEGER,
             raw TEXT
-        );
-        """)
+        );""")
         _db().commit()
 
 def init_db():
-    with _conn_lock:
-        _db().execute("""
-        CREATE TABLE IF NOT EXISTS users (
-          id TEXT PRIMARY KEY,
-          premium INTEGER DEFAULT 0,
-          verified_ok INTEGER DEFAULT 0,
-          verified_at INTEGER DEFAULT 0
-        );""")
-        _db().execute("""
-        CREATE TABLE IF NOT EXISTS ai_state (
-          user_id TEXT PRIMARY KEY,
-          mode TEXT DEFAULT NULL,
-          updated_at INTEGER
-        );""")
-        _db().commit()
     migrate_db()
 
 def user_get(uid: int|str) -> dict:
@@ -342,10 +335,12 @@ def user_get(uid: int|str) -> dict:
         c.execute("SELECT * FROM users WHERE id=?", (uid,))
         r = c.fetchone()
         if not r:
-            c.execute("INSERT INTO users (id) VALUES (?);", (uid,))
+            _db().execute("INSERT INTO users (id) VALUES (?);", (uid,))
             _db().commit()
-            return {"id": uid, "premium": 0, "verified_ok": 0, "verified_at": 0}
-        out = dict(r); out.setdefault("verified_ok", 0); out.setdefault("verified_at", 0)
+            return {"id": uid, "premium": 0, "verified_ok": 0, "verified_at": 0, "vip_forever": 0, "vip_since": 0}
+        out = dict(r)
+        for k in ("verified_ok","verified_at","vip_forever","vip_since"):
+            out.setdefault(k, 0)
         return out
 
 def user_set_verify(uid: int|str, ok: bool):
@@ -355,20 +350,33 @@ def user_set_verify(uid: int|str, ok: bool):
         _db().commit()
 
 def user_is_premium(uid: int|str) -> bool:
-    return bool(user_get(uid)["premium"])
+    u = user_get(uid)
+    return bool(u.get("premium")) or bool(u.get("vip_forever"))
 
 def user_grant(uid: int|str):
+    """منح VIP مدى الحياة (دائم)."""
+    now = int(time.time())
     with _conn_lock:
-        _db().execute("UPDATE users SET premium=1 WHERE id=?", (str(uid),))
+        _db().execute(
+            "UPDATE users SET premium=1, vip_forever=1, vip_since=COALESCE(NULLIF(vip_since,0), ?) WHERE id=?",
+            (now, str(uid))
+        )
         _db().commit()
 
 def user_revoke(uid: int|str):
+    """إلغاء VIP (لن نستخدمها إلا بإرادتك)."""
     with _conn_lock:
-        _db().execute("UPDATE users SET premium=0 WHERE id=?", (str(uid),))
+        _db().execute("UPDATE users SET premium=0, vip_forever=0 WHERE id=?", (str(uid),))
         _db().commit()
 
 def ai_set_mode(uid: int|str, mode: str|None):
     with _conn_lock:
+        _db().execute("""
+        CREATE TABLE IF NOT EXISTS ai_state (
+          user_id TEXT PRIMARY KEY,
+          mode TEXT DEFAULT NULL,
+          updated_at INTEGER
+        );""")
         _db().execute(
             "INSERT INTO ai_state (user_id, mode, updated_at) VALUES (?, ?, strftime('%s','now')) "
             "ON CONFLICT(user_id) DO UPDATE SET mode=excluded.mode, updated_at=strftime('%s','now')",
@@ -402,7 +410,7 @@ def payments_status(ref: str) -> str | None:
         return r["status"] if r else None
 
 def payments_mark_paid_by_ref(ref: str, raw=None) -> bool:
-    # خارج القفل نفعل VIP لتجنب deadlock
+    """تفعيل VIP دائم عند الدفع."""
     with _conn_lock:
         c = _db().cursor()
         c.execute("SELECT user_id, status FROM payments WHERE ref=?", (ref,))
@@ -410,6 +418,9 @@ def payments_mark_paid_by_ref(ref: str, raw=None) -> bool:
         if not r:
             return False
         if r["status"] == "paid":
+            # سبق تفعيله — تأكد فقط من المستخدم
+            try: user_grant(r["user_id"])
+            except Exception as e: log.error("[payments_mark_paid] grant again error: %s", e)
             return True
         user_id = r["user_id"]
         _db().execute(
@@ -418,7 +429,7 @@ def payments_mark_paid_by_ref(ref: str, raw=None) -> bool:
         )
         _db().commit()
     try:
-        user_grant(user_id)
+        user_grant(user_id)  # VIP مدى الحياة
     except Exception as e:
         log.error("[payments_mark_paid] grant error: %s", e)
     return True
@@ -440,11 +451,7 @@ async def paylink_auth_token():
         return _paylink_token
 
     url = f"{PAYLINK_API_BASE}/auth"
-    payload = {
-        "apiId": PAYLINK_API_ID,
-        "secretKey": PAYLINK_API_SECRET,
-        "persistToken": False
-    }
+    payload = {"apiId": PAYLINK_API_ID, "secretKey": PAYLINK_API_SECRET, "persistToken": False}
     async with ClientSession() as s:
         async with s.post(url, json=payload, timeout=20) as r:
             data = await r.json(content_type=None)
@@ -469,9 +476,7 @@ async def paylink_create_invoice(order_number: str, amount: float, client_name: 
         "callBackUrl": _public_url("/payhook"),
         "displayPending": False,
         "note": f"VIP via Telegram #{order_number}",
-        "products": [
-            {"title": "VIP Access", "price": amount, "qty": 1, "isDigital": True}
-        ]
+        "products": [{"title": "VIP Access (Lifetime)", "price": amount, "qty": 1, "isDigital": True}]
     }
     headers = {"Authorization": f"Bearer {token}"}
     async with ClientSession() as s:
@@ -712,11 +717,9 @@ async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int,
 
 # ====== AI ======
 def _chat_with_fallback(messages):
-    """يحاول بعدة نماذج حديثة بترتيب مفضل، ويعيد (response, err_code_or_None)."""
     if not AI_ENABLED or client is None:
         return None, "ai_disabled"
 
-    # ترتيب نماذج معقولة السعر/الأداء
     primary = (OPENAI_CHAT_MODEL or "").strip()
     fallbacks = [m for m in [primary, "gpt-4o-mini", "gpt-4.1-mini", "gpt-4o", "gpt-4.1", "gpt-3.5-turbo"] if m]
     seen = set(); ordered = []
@@ -727,26 +730,18 @@ def _chat_with_fallback(messages):
     last_err = None
     for model in ordered:
         try:
-            r = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=0.7,
-                timeout=30  # يحتاج openai>=1.30 تقريباً
-            )
+            r = client.chat.completions.create(model=model, messages=messages, temperature=0.7, timeout=30)
             return r, None
         except Exception as e:
             msg = str(e); last_err = msg
-            # خرائط أخطاء مفيدة للمستخدم
             if "insufficient_quota" in msg or "You exceeded your current quota" in msg:
                 return None, "quota"
             if "invalid_api_key" in msg or "Incorrect API key" in msg or "No API key provided" in msg:
                 return None, "apikey"
-            # جرّب نموذج آخر
             continue
     return None, (last_err or "unknown")
 
 def ai_chat_reply(prompt: str) -> str:
-    """واجهة سهلة لاستدعاء الشات وإرجاع نص عربي + رسائل أخطاء واضحة."""
     if not AI_ENABLED or client is None:
         return tr("ai_disabled")
     try:
@@ -832,6 +827,18 @@ async def paylist(update: Update, context: ContextTypes.DEFAULT_TYPE):
         txt.append(f"ref={r['ref']}  user={r['user_id']}  {r['status']}  at={time.strftime('%Y-%m-%d %H:%M', time.gmtime(r['created_at']))}")
     await update.message.reply_text("\n".join(txt))
 
+async def vipinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != OWNER_ID: return
+    uid = None
+    if context.args:
+        uid = context.args[0]
+    else:
+        uid = update.effective_user.id
+    u = user_get(uid)
+    txt = (f"UID: {u['id']}\n"
+           f"premium={u.get('premium')}  vip_forever={u.get('vip_forever')}  vip_since={u.get('vip_since')}")
+    await update.message.reply_text(txt)
+
 async def debug_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
     uid = update.effective_user.id
@@ -893,14 +900,17 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit(q, "🔐 انضم للقناة لاستخدام البوت:", kb=gate_kb()); return
 
     if q.data == "vip_badge":
-        await safe_edit(q, "⭐ حسابك مفعل VIP — استمتع بكل الأقسام.", kb=bottom_menu_kb(uid)); return
+        u = user_get(uid)
+        since = u.get("vip_since", 0)
+        since_txt = time.strftime('%Y-%m-%d', time.gmtime(since)) if since else "N/A"
+        await safe_edit(q, f"⭐ حسابك VIP (مدى الحياة)\nمنذ: {since_txt}", kb=bottom_menu_kb(uid)); return
 
     if q.data == "myinfo":
         await safe_edit(q, f"👤 اسمك: {q.from_user.full_name}\n🆔 معرفك: {uid}\n", kb=bottom_menu_kb(uid)); return
 
     if q.data == "upgrade":
         if user_is_premium(uid) or uid == OWNER_ID:
-            await safe_edit(q, "⭐ حسابك مفعل VIP بالفعل.", kb=bottom_menu_kb(uid))
+            await safe_edit(q, "⭐ حسابك مفعل VIP بالفعل (مدى الحياة).", kb=bottom_menu_kb(uid))
             return
 
         ref = payments_create(uid, VIP_PRICE_SAR, "paylink")
@@ -909,11 +919,11 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]))
         try:
             if USE_PAYLINK_API:
-                pay_url, invoice = await paylink_create_invoice(ref, VIP_PRICE_SAR, q.from_user.full_name or "Telegram User")
+                pay_url, _invoice = await paylink_create_invoice(ref, VIP_PRICE_SAR, q.from_user.full_name or "Telegram User")
             else:
                 pay_url = _build_pay_link(ref)
 
-            txt = (f"💳 ترقية إلى VIP ({VIP_PRICE_SAR:.2f} SAR)\n"
+            txt = (f"💳 ترقية إلى VIP مدى الحياة ({VIP_PRICE_SAR:.2f} SAR)\n"
                    f"سيتم التفعيل تلقائيًا بعد الدفع.\n"
                    f"🔖 مرجعك: <code>{ref}</code>")
             await safe_edit(q, txt, kb=InlineKeyboardMarkup([
@@ -930,7 +940,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ref = q.data.replace("verify_pay_", "")
         st = payments_status(ref)
         if st == "paid" or user_is_premium(uid):
-            await safe_edit(q, "🎉 تم تفعيل VIP بالفعل على حسابك. استمتع!", kb=bottom_menu_kb(uid))
+            await safe_edit(q, "🎉 تم تفعيل VIP (مدى الحياة) على حسابك. استمتع!", kb=bottom_menu_kb(uid))
         else:
             await safe_edit(q, "⌛ لم يصل إشعار الدفع بعد.\nإذا دفعت للتو فانتظر قليلاً ثم اضغط تحقّق مرة أخرى.\n"
                                "لو استمر التأخير، احتفظ بمرجعك وأرسل لقطة للإدارة.", kb=InlineKeyboardMarkup([
@@ -944,7 +954,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "back_sections":
         await safe_edit(q, "📂 الأقسام:", kb=sections_list_kb()); return
 
-    # الأقسام (مع حالة خاصة لـ AI Hub لعرض زر دردشة AI)
+    # الأقسام (حالة خاصة لـ AI Hub)
     if q.data.startswith("sec_"):
         key = q.data.replace("sec_", "")
         sec = SECTIONS.get(key)
@@ -956,7 +966,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not allowed:
             await safe_edit(q, f"🔒 {sec['title']}\n\n{tr('access_denied')} — فعّل VIP من زر الترقية.", kb=sections_list_kb()); return
 
-        # حالة خاصة: AI Hub
+        # AI Hub
         if key == "ai_hub":
             if not AI_ENABLED:
                 await safe_edit(q, f"{sec['title']}\n\n{tr('ai_disabled')}", kb=ai_hub_kb())
@@ -981,7 +991,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, text, kb=section_back_kb())
         return
 
-    # AI: تفعيل وضع الدردشة + إرسال رسالة واضحة (مو بس Edit)
+    # AI: تفعيل وضع الدردشة + إرسال رسالة جديدة
     if q.data == "ai_chat":
         if not AI_ENABLED:
             await safe_edit(q, tr("ai_disabled"), kb=sections_list_kb()); 
@@ -990,7 +1000,6 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         ai_set_mode(uid, "ai_chat")
         await safe_edit(q, "🤖 وضع الدردشة مفعّل.\nأرسل سؤالك الآن.", kb=ai_stop_kb())
-        # رسالة جديدة لضمان ظهور التنبيه مهما كان وضع الرسالة الأصلية
         try:
             await q.message.reply_text("🤖 أكتب سؤالك هنا…", reply_markup=ai_stop_kb())
         except Exception as e:
@@ -1030,13 +1039,19 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ====== أوامر المالك ======
 async def grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
-    if not context.args: await update.message.reply_text("استخدم: /grant <user_id>"); return
-    user_grant(context.args[0]); await update.message.reply_text(f"✅ تم تفعيل {context.args[0]}")
+    if not context.args:
+        await update.message.reply_text("استخدم: /grant <user_id>")
+        return
+    user_grant(context.args[0])
+    await update.message.reply_text(f"✅ تم تفعيل VIP مدى الحياة للمستخدم {context.args[0]}")
 
 async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
-    if not context.args: await update.message.reply_text("استخدم: /revoke <user_id>"); return
-    user_revoke(context.args[0]); await update.message.reply_text(f"❌ تم إلغاء {context.args[0]}")
+    if not context.args:
+        await update.message.reply_text("استخدم: /revoke <user_id>")
+        return
+    user_revoke(context.args[0])
+    await update.message.reply_text(f"❌ تم إلغاء VIP للمستخدم {context.args[0]}")
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
     log.error("⚠️ Error: %s", getattr(context, 'error', 'unknown'))
@@ -1056,6 +1071,7 @@ def main():
     app.add_handler(CommandHandler("id", cmd_id))
     app.add_handler(CommandHandler("grant", grant))
     app.add_handler(CommandHandler("revoke", revoke))
+    app.add_handler(CommandHandler("vipinfo", vipinfo))
     app.add_handler(CommandHandler("refreshcmds", refresh_cmds))
     app.add_handler(CommandHandler("aidiag", aidiag))
     app.add_handler(CommandHandler("libdiag", libdiag))
@@ -1071,5 +1087,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
