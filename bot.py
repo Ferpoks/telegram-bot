@@ -275,7 +275,7 @@ async def on_startup(app: Application):
         print("[startup] set_my_commands owner:", e)
 
 # ====== قاعدة البيانات ======
-# FIX 1: استخدمنا RLock بدل Lock لتفادي Deadlock عند إعادة الدخول
+# RLock لتفادي Deadlock
 _conn_lock = threading.RLock()
 
 def _db():
@@ -407,7 +407,7 @@ def payments_status(ref: str) -> str | None:
         return r["status"] if r else None
 
 def payments_mark_paid_by_ref(ref: str, raw=None) -> bool:
-    # FIX 2: لا ننادي user_grant داخل الـ lock لتفادي قفل متداخل
+    # خارج القفل نفعل VIP لتجنب deadlock
     with _conn_lock:
         c = _db().cursor()
         c.execute("SELECT user_id, status FROM payments WHERE ref=?", (ref,))
@@ -422,7 +422,6 @@ def payments_mark_paid_by_ref(ref: str, raw=None) -> bool:
             (int(time.time()), json.dumps(raw, ensure_ascii=False) if raw is not None else None, ref)
         )
         _db().commit()
-    # خارج القفل: فعّل VIP
     try:
         user_grant(user_id)
     except Exception as e:
@@ -435,7 +434,7 @@ def payments_last(limit=10):
         c.execute("SELECT * FROM payments ORDER BY created_at DESC LIMIT ?", (limit,))
         return [dict(x) for x in c.fetchall()]
 
-# ====== Paylink API (توكن مع كاش لتقليل التأخير) ======
+# ====== Paylink API ======
 _paylink_token = None
 _paylink_token_exp = 0
 
@@ -447,7 +446,7 @@ async def paylink_auth_token():
 
     url = f"{PAYLINK_API_BASE}/auth"
     payload = {
-        "apiId": PAYLINK_API_ID,        # مهم: apiId
+        "apiId": PAYLINK_API_ID,
         "secretKey": PAYLINK_API_SECRET,
         "persistToken": False
     }
@@ -937,7 +936,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "back_sections":
         await safe_edit(q, "📂 الأقسام:", kb=sections_list_kb()); return
 
-    # الأقسام (مع احترام VIP/المالك)
+    # الأقسام (مع حالة خاصة لـ AI Hub لعرض زر دردشة AI)
     if q.data.startswith("sec_"):
         key = q.data.replace("sec_", "")
         sec = SECTIONS.get(key)
@@ -949,6 +948,15 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not allowed:
             await safe_edit(q, f"🔒 {sec['title']}\n\n{tr('access_denied')} — فعّل VIP من زر الترقية.", kb=sections_list_kb()); return
 
+        # حالة خاصة: AI Hub
+        if key == "ai_hub":
+            if not AI_ENABLED:
+                await safe_edit(q, f"{sec['title']}\n\n{tr('ai_disabled')}", kb=ai_hub_kb())
+            else:
+                await safe_edit(q, f"{sec['title']}\n\n{sec.get('desc','')}\n\nاختر أداة:", kb=ai_hub_kb())
+            return
+
+        # باقي الأقسام
         text = build_section_text(sec)
         local, photo = sec.get("local_file"), sec.get("photo")
         if local and Path(local).exists():
@@ -965,20 +973,30 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, text, kb=section_back_kb())
         return
 
-    # AI
+    # AI: تفعيل وضع الدردشة + إرسال رسالة واضحة (مو بس Edit)
     if q.data == "ai_chat":
         if not AI_ENABLED:
-            await safe_edit(q, tr("ai_disabled"), kb=sections_list_kb()); return
-        if not (SECTIONS['ai_hub'].get("is_free") or user_is_premium(uid) or uid == OWNER_ID):
-            await safe_edit(q, f"🔒 {SECTIONS['ai_hub']['title']}\n\n{tr('access_denied')}\n\n"
-                               f"استخدم زر الترقية لتفعيل VIP.", kb=sections_list_kb())
+            await safe_edit(q, tr("ai_disabled"), kb=sections_list_kb()); 
+            await q.message.reply_text(tr("ai_disabled"), reply_markup=sections_list_kb())
             return
+
         ai_set_mode(uid, "ai_chat")
-        await safe_edit(q, "🤖 وضع الدردشة مفعّل.\nأرسل سؤالك الآن.", kb=ai_stop_kb()); 
+        await safe_edit(q, "🤖 وضع الدردشة مفعّل.\nأرسل سؤالك الآن.", kb=ai_stop_kb())
+        # رسالة جديدة لضمان ظهور التنبيه مهما كان وضع الرسالة الأصلية
+        try:
+            await q.message.reply_text("🤖 أكتب سؤالك هنا…", reply_markup=ai_stop_kb())
+        except Exception as e:
+            print("[ai_chat] reply error:", e)
         return
 
     if q.data == "ai_stop":
-        ai_set_mode(uid, None); await safe_edit(q, "🔚 تم إنهاء وضع الذكاء الاصطناعي.", kb=sections_list_kb()); return
+        ai_set_mode(uid, None)
+        await safe_edit(q, "🔚 تم إنهاء وضع الذكاء الاصطناعي.", kb=sections_list_kb())
+        try:
+            await q.message.reply_text("تم إيقاف وضع الذكاء الاصطناعي.", reply_markup=sections_list_kb())
+        except Exception:
+            pass
+        return
 
 # ====== رسائل عامة ======
 async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1042,6 +1060,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
