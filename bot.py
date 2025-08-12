@@ -31,13 +31,14 @@ if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN مفقود")
 
 DB_PATH = os.getenv("DB_PATH", "/var/data/bot.db")
-try:
-    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-except Exception:
-    pass
 
-OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
-OPENAI_CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-4.1")
+def _ensure_parent(pth: str) -> bool:
+    try:
+        Path(pth).parent.mkdir(parents=True, exist_ok=True)
+        return True
+    except Exception as e:
+        print("[db] cannot create parent dir for", pth, "->", e)
+        return False
 
 # تحقق توافق httpx مع openai 1.x (يتعطل مع httpx>=0.28)
 def _httpx_is_compatible() -> bool:
@@ -53,6 +54,8 @@ def _httpx_is_compatible() -> bool:
 
 HTTPX_OK = _httpx_is_compatible()
 
+OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
+OPENAI_CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-4.1")
 AI_ENABLED = bool(OPENAI_API_KEY) and (OpenAI is not None) and HTTPX_OK
 client = OpenAI(api_key=OPENAI_API_KEY) if AI_ENABLED else None
 
@@ -95,18 +98,16 @@ except Exception:
     AIOHTTP_AVAILABLE = False
 
 def _find_ref_in_obj(obj) -> str | None:
-    """يحاول إيجاد ref مثل <digits>-<digits> أو أي قيمة ref سبق أن خزّناها."""
+    """يحاول إيجاد ref مثل <digits>-<digits> أو من سلسلة ref=..."""
     try:
         s = json.dumps(obj, ensure_ascii=False)
     except Exception:
         s = str(obj)
-    # refs التي ننشئها: uid-timestamp
     m = re.search(r"\b(\d{6,}-\d{10,})\b", s)
-    if m:
-        return m.group(1)
-    # أو ref=xxxx في نص طويل
-    m = re.search(r"ref=([\w\-:]+)", s)
-    return m.group(1) if m else None
+    if m: return m.group(1)
+    m = re.search(r"[?&]ref=([\w\-:]+)", s)
+    if m: return m.group(1)
+    return None
 
 async def _payhook(request):
     # تحقق من السر (إن تم ضبطه)
@@ -120,7 +121,6 @@ async def _payhook(request):
     ref = _find_ref_in_obj(data)
     if not ref:
         return web.Response(text="no-ref")
-    # فعّل العضوية لو ref معروف ومدفوع
     activated = payments_mark_paid_by_ref(ref, raw=data)
     return web.Response(text=("OK" if activated else "ref-not-found"))
 
@@ -128,16 +128,25 @@ def _run_http_server():
     if not (AIOHTTP_AVAILABLE and (SERVE_HEALTH or PAY_WEBHOOK_ENABLE)):
         print("[http] aiohttp غير متوفر أو الإعدادات لا تتطلب خادم ويب")
         return
+
+    async def _health(_):
+        return web.Response(text="OK")
+
+    async def _payhook_get(_):
+        return web.Response(text="OK")
+
     app = web.Application()
     if SERVE_HEALTH:
-        async def _health(_): return web.Response(text="OK")
         app.router.add_get("/", _health)
     if PAY_WEBHOOK_ENABLE:
         app.router.add_post("/payhook", _payhook)
-        app.router.add_get("/payhook", lambda _: web.Response(text="OK"))
+        app.router.add_get("/payhook", _payhook_get)
+
     port = int(os.getenv("PORT", "10000"))
     print(f"[http] starting on 0.0.0.0:{port} (webhook={'ON' if PAY_WEBHOOK_ENABLE else 'OFF'})")
-    web.run_app(app, port=port)
+
+    # المهم: لا نركّب signal handlers لأننا داخل Thread (fix set_wakeup_fd)
+    web.run_app(app, host="0.0.0.0", port=port, handle_signals=False)
 
 # شغّل الخادم في ثريد جانبي
 threading.Thread(target=_run_http_server, daemon=True).start()
@@ -199,11 +208,25 @@ async def on_startup(app: Application):
 _conn_lock = threading.Lock()
 def _db():
     conn = getattr(_db, "_conn", None)
-    if conn is None:
-        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    if conn is not None:
+        return conn
+    path = DB_PATH
+    _ensure_parent(path)
+    try:
+        conn = sqlite3.connect(path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         _db._conn = conn
-    return conn
+        print(f"[db] using {path}")
+        return conn
+    except sqlite3.OperationalError as e:
+        # Fallback إلى /tmp عند عدم وجود قرص /var/data
+        alt = "/tmp/bot.db"
+        _ensure_parent(alt)
+        print(f"[db] fallback to {alt} because: {e}")
+        conn = sqlite3.connect(alt, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        _db._conn = conn
+        return conn
 
 def migrate_db():
     with _conn_lock:
@@ -496,10 +519,14 @@ def sections_list_kb():
 def section_back_kb():
     return InlineKeyboardMarkup([[InlineKeyboardButton("📂 رجوع للأقسام", callback_data="back_sections")]])
 
+def _build_pay_link(ref: str) -> str:
+    if "{ref}" in PAYLINK_CHECKOUT_BASE:
+        return PAYLINK_CHECKOUT_BASE.format(ref=ref)
+    sep = "&" if "?" in PAYLINK_CHECKOUT_BASE else "?"
+    return PAYLINK_CHECKOUT_BASE + f"{sep}ref={ref}"
+
 def pay_buttons(ref: str):
-    link = PAYLINK_CHECKOUT_BASE.format(ref=ref) if "{ref}" in PAYLINK_CHECKOUT_BASE else (
-        PAYLINK_CHECKOUT_BASE + ("&" if "?" in PAYLINK_CHECKOUT_BASE else "?") + f"ref={ref}"
-    )
+    link = _build_pay_link(ref)
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(f"💳 ادفع {PRICE_USD}$ عبر Paylink", url=link)],
         [InlineKeyboardButton("✅ تحقّق الدفع", callback_data=f"paycheck:{ref}")],
@@ -770,7 +797,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, tr("ai_disabled"), kb=sections_list_kb()); return
         if not (SECTIONS['ai_hub'].get("is_free") or user_is_premium(uid) or uid == OWNER_ID):
             await safe_edit(q, f"🔒 {SECTIONS['ai_hub']['title']}\n\n{tr('access_denied')}\n\n"
-                               f"استخدم زر الترقية لتفعيل VIP.", kb=sections_list_kb()); 
+                               f"استخدم زر الترقية لتفعيل VIP.", kb=sections_list_kb())
             return
         ai_set_mode(uid, "ai_chat")
         await safe_edit(q, "🤖 وضع الدردشة مفعّل.\nأرسل سؤالك الآن.", kb=ai_stop_kb()); 
@@ -783,7 +810,9 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data.startswith("sec_"):
         key = q.data.replace("sec_", "")
         sec = SECTIONS.get(key)
-        if not sec: await safe_edit(q, "قريباً…", kb=sections_list_kk()); return
+        if not sec:
+            await safe_edit(q, "قريباً…", kb=sections_list_kb()); 
+            return
 
         if key == "ai_hub":
             if not AI_ENABLED: await safe_edit(q, tr("ai_disabled"), kb=sections_list_kb()); return
@@ -868,5 +897,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
