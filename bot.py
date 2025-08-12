@@ -37,7 +37,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN") or ""
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN مفقود")
 
-# مهم: تأكد أن هذا المسار على قرص دائم (Render: Persistent Disk)
+# مهم: تأكد أن هذا المسار على قرص دائم
 DB_PATH = os.getenv("DB_PATH", "/var/data/bot.db")
 
 def _ensure_parent(pth: str) -> bool:
@@ -234,7 +234,7 @@ async def on_startup(app: Application):
     # أوامر عامة للمستخدمين
     try:
         await app.bot.set_my_commands(
-            [BotCommand("start", "بدء"), BotCommand("help", "مساعدة")],
+            [BotCommand("start", "بدء"), BotCommand("help", "مساعدة"), BotCommand("geo", "تحديد موقع IP")],
             scope=BotCommandScopeDefault()
         )
     except Exception as e:
@@ -289,7 +289,6 @@ def _db():
 def migrate_db():
     with _conn_lock:
         c = _db().cursor()
-        # users
         _db().execute("""
         CREATE TABLE IF NOT EXISTS users (
           id TEXT PRIMARY KEY,
@@ -299,7 +298,6 @@ def migrate_db():
           vip_forever INTEGER DEFAULT 0,
           vip_since INTEGER DEFAULT 0
         );""")
-        # ترحيل أعمدة إن كانت ناقصة
         c.execute("PRAGMA table_info(users)")
         cols = {row["name"] for row in c.fetchall()}
         if "verified_ok" not in cols:
@@ -310,8 +308,6 @@ def migrate_db():
             _db().execute("ALTER TABLE users ADD COLUMN vip_forever INTEGER DEFAULT 0;")
         if "vip_since" not in cols:
             _db().execute("ALTER TABLE users ADD COLUMN vip_since INTEGER DEFAULT 0;")
-
-        # payments
         _db().execute("""
         CREATE TABLE IF NOT EXISTS payments (
             ref TEXT PRIMARY KEY,
@@ -354,7 +350,6 @@ def user_is_premium(uid: int|str) -> bool:
     return bool(u.get("premium")) or bool(u.get("vip_forever"))
 
 def user_grant(uid: int|str):
-    """منح VIP مدى الحياة (دائم)."""
     now = int(time.time())
     with _conn_lock:
         _db().execute(
@@ -364,7 +359,6 @@ def user_grant(uid: int|str):
         _db().commit()
 
 def user_revoke(uid: int|str):
-    """إلغاء VIP (لن نستخدمها إلا بإرادتك)."""
     with _conn_lock:
         _db().execute("UPDATE users SET premium=0, vip_forever=0 WHERE id=?", (str(uid),))
         _db().commit()
@@ -410,7 +404,6 @@ def payments_status(ref: str) -> str | None:
         return r["status"] if r else None
 
 def payments_mark_paid_by_ref(ref: str, raw=None) -> bool:
-    """تفعيل VIP دائم عند الدفع."""
     with _conn_lock:
         c = _db().cursor()
         c.execute("SELECT user_id, status FROM payments WHERE ref=?", (ref,))
@@ -418,7 +411,6 @@ def payments_mark_paid_by_ref(ref: str, raw=None) -> bool:
         if not r:
             return False
         if r["status"] == "paid":
-            # سبق تفعيله — تأكد فقط من المستخدم
             try: user_grant(r["user_id"])
             except Exception as e: log.error("[payments_mark_paid] grant again error: %s", e)
             return True
@@ -429,7 +421,7 @@ def payments_mark_paid_by_ref(ref: str, raw=None) -> bool:
         )
         _db().commit()
     try:
-        user_grant(user_id)  # VIP مدى الحياة
+        user_grant(user_id)
     except Exception as e:
         log.error("[payments_mark_paid] grant error: %s", e)
     return True
@@ -517,20 +509,21 @@ SECTIONS = {
     },
     "followers_safe": {
         "title": "🚀 نمو المتابعين (آمن)",
-        "desc": (
-            "تنبيه: شراء/رشق متابعين قد يخالف سياسات المنصات.\n"
-            "بدائل آمنة:\n"
-            "• تحسين المحتوى + الهاشتاقات\n"
-            "• تعاون/مسابقات\n"
-            "• إعلانات ممولة\n"
-            "• محتوى قصير مع CTA واضح"
-        ),
+        "desc": "بدائل آمنة + تنبيهات سياسات.",
         "is_free": True,
-        "links": []
+        "links": [
+            "https://zyadat.com/",
+            "https://followadd.com",
+            "https://smmcpan.com",
+            "https://seoclevers.com",
+            "https://followergi.com",
+            "https://seorrs.com",
+            "https://drd3m.com/ref/ixeuw"
+        ]
     },
     "epic_recovery": {
         "title": "🎮 استرجاع حساب Epic (ربط PSN)",
-        "desc": "نموذج مراسلة دعم Epic إذا تم اختراق الحساب وتم ربط PSN بغير علمك.",
+        "desc": "نموذج مراسلة دعم Epic في حال ربط PSN بغير علمك.",
         "is_free": True,
         "content": (
             "Hello Epic Games Support,\n\n"
@@ -577,10 +570,8 @@ SECTIONS = {
     },
     "geolocation": {
         "title": "📍 تحديد الموقع عبر IP (عام)",
-        "desc": "استخدم لأغراض مشروعة فقط.",
-        "is_free": True,
-        "links": ["https://www.geolocation.com/ar"],
-        "content": "أدخل IP تملكه/مأذون به لعرض البلد والمدينة ومزود الخدمة."
+        "desc": "أدخل IP أو دومين وسيتم جلب البلد/المدينة وبيانات المزود داخل تيليجرام.",
+        "is_free": True
     },
 
     # VIP
@@ -637,7 +628,7 @@ def gate_kb():
 def sections_list_kb():
     rows = []
     for k, sec in SECTIONS.items():
-        if not sec.get("title"): 
+        if not sec.get("title"):
             continue
         lock = "🟢" if sec.get("is_free") else "🔒"
         rows.append([InlineKeyboardButton(f"{lock} {sec['title']}", callback_data=f"sec_{k}")])
@@ -658,6 +649,12 @@ def ai_stop_kb():
         [InlineKeyboardButton("🔚 إنهاء وضع الذكاء الاصطناعي", callback_data="ai_stop")],
         [InlineKeyboardButton("↩️ رجوع للأقسام", callback_data="back_sections")]
     ])
+
+def links_kb(urls: list[str]):
+    """لوحة تفتح الروابط مباشرة."""
+    rows = [[InlineKeyboardButton(f"🔗 رابط {i+1}", url=u)] for i, u in enumerate(urls)]
+    rows.append([InlineKeyboardButton("↩️ رجوع للأقسام", callback_data="back_sections")])
+    return InlineKeyboardMarkup(rows)
 
 # ====== تعديل آمن ======
 async def safe_edit(q, text=None, kb=None):
@@ -719,14 +716,12 @@ async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int,
 def _chat_with_fallback(messages):
     if not AI_ENABLED or client is None:
         return None, "ai_disabled"
-
     primary = (OPENAI_CHAT_MODEL or "").strip()
     fallbacks = [m for m in [primary, "gpt-4o-mini", "gpt-4.1-mini", "gpt-4o", "gpt-4.1", "gpt-3.5-turbo"] if m]
     seen = set(); ordered = []
     for m in fallbacks:
         if m not in seen:
             ordered.append(m); seen.add(m)
-
     last_err = None
     for model in ordered:
         try:
@@ -773,9 +768,57 @@ def build_section_text(sec: dict) -> str:
         parts.append("\n🔗 الرابط:"); parts.append(link)
     return "\n".join(parts).strip()
 
+# ====== أدوات قسم الجيو ======
+_IP_RE = re.compile(r"\b(?:(?:[0-9]{1,3}\.){3}[0-9]{1,3})\b")
+_HOST_RE = re.compile(r"^[a-zA-Z0-9.-]{1,253}\.[A-Za-z]{2,63}$")
+
+async def fetch_geo(query: str) -> dict|None:
+    """
+    يستعلم ip-api.com (بدون مفتاح) — يدعم IP أو دومين.
+    """
+    if not AIOHTTP_AVAILABLE:
+        return None
+    url = f"http://ip-api.com/json/{query}?fields=status,message,country,regionName,city,isp,org,as,query,lat,lon,timezone,zip,reverse"
+    try:
+        async with ClientSession() as s:
+            async with s.get(url, timeout=15) as r:
+                data = await r.json(content_type=None)
+                if data.get("status") != "success":
+                    return {"error": data.get("message","lookup failed")}
+                return data
+    except Exception as e:
+        log.warning("[geo] fetch error: %s", e)
+        return {"error": "network error"}
+
+def fmt_geo(data: dict) -> str:
+    if not data:
+        return "⚠️ تعذّر جلب البيانات."
+    if data.get("error"):
+        return f"⚠️ {data['error']}"
+    parts = []
+    parts.append(f"🔎 الاستعلام: <code>{data.get('query','')}</code>")
+    parts.append(f"🌍 الدولة/المنطقة: {data.get('country','?')} — {data.get('regionName','?')}")
+    parts.append(f"🏙️ المدينة/الرمز: {data.get('city','?')} — {data.get('zip','-')}")
+    parts.append(f"⏰ التوقيت: {data.get('timezone','-')}")
+    parts.append(f"📡 ISP/ORG: {data.get('isp','-')} / {data.get('org','-')}")
+    parts.append(f"🛰️ AS: {data.get('as','-')}")
+    parts.append(f"📍 الإحداثيات: {data.get('lat','?')}, {data.get('lon','?')}")
+    if data.get("reverse"):
+        parts.append(f"🔁 Reverse: {data['reverse']}")
+    parts.append("\nℹ️ استخدم هذه المعلومات لأغراض مشروعة فقط.")
+    return "\n".join(parts)
+
 # ====== أوامر ======
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📜 الأوامر:\n/start – بدء\n/help – مساعدة")
+    await update.message.reply_text("📜 الأوامر:\n/start – بدء\n/help – مساعدة\n/geo – تحديد موقع IP")
+
+async def geo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """أمر يبدأ وضع تحديد الموقع."""
+    uid = update.effective_user.id
+    if not await must_be_member_or_vip(context, uid):
+        await update.message.reply_text("🔐 انضم للقناة لاستخدام البوت:", reply_markup=gate_kb()); return
+    ai_set_mode(uid, "geo_ip")
+    await update.message.reply_text("📍 أرسل الآن **IP** أو **دومين** (مثال: 8.8.8.8 أو example.com).", parse_mode="HTML")
 
 async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
@@ -796,6 +839,7 @@ async def aidiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = (f"AI_ENABLED={'ON' if AI_ENABLED else 'OFF'}\n"
                f"Key={'set(len=%d)'%len(k) if k else 'missing'}\n"
                f"Model={OPENAI_CHAT_MODEL}\n"
+               f"aiohttp={'ok' if AIOHTTP_AVAILABLE else 'missing'}\n"
                f"openai={v('openai')}")
         await update.message.reply_text(msg)
     except Exception as e:
@@ -829,11 +873,7 @@ async def paylist(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def vipinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
-    uid = None
-    if context.args:
-        uid = context.args[0]
-    else:
-        uid = update.effective_user.id
+    uid = context.args[0] if context.args else update.effective_user.id
     u = user_get(uid)
     txt = (f"UID: {u['id']}\n"
            f"premium={u.get('premium')}  vip_forever={u.get('vip_forever')}  vip_since={u.get('vip_since')}")
@@ -895,7 +935,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, "❗️ ما زلت غير مشترك بالقناة.\nانضم ثم اضغط تحقّق.\n\n" + need_admin_text(), kb=gate_kb())
         return
 
-    # VIP/مالك bypass للانضمام
+    # VIP/مالك bypass
     if not await must_be_member_or_vip(context, uid):
         await safe_edit(q, "🔐 انضم للقناة لاستخدام البوت:", kb=gate_kb()); return
 
@@ -922,7 +962,6 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pay_url, _invoice = await paylink_create_invoice(ref, VIP_PRICE_SAR, q.from_user.full_name or "Telegram User")
             else:
                 pay_url = _build_pay_link(ref)
-
             txt = (f"💳 ترقية إلى VIP مدى الحياة ({VIP_PRICE_SAR:.2f} SAR)\n"
                    f"سيتم التفعيل تلقائيًا بعد الدفع.\n"
                    f"🔖 مرجعك: <code>{ref}</code>")
@@ -954,7 +993,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "back_sections":
         await safe_edit(q, "📂 الأقسام:", kb=sections_list_kb()); return
 
-    # الأقسام (حالة خاصة لـ AI Hub)
+    # الأقسام
     if q.data.startswith("sec_"):
         key = q.data.replace("sec_", "")
         sec = SECTIONS.get(key)
@@ -966,7 +1005,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not allowed:
             await safe_edit(q, f"🔒 {sec['title']}\n\n{tr('access_denied')} — فعّل VIP من زر الترقية.", kb=sections_list_kb()); return
 
-        # AI Hub
+        # حالة خاصة: AI Hub
         if key == "ai_hub":
             if not AI_ENABLED:
                 await safe_edit(q, f"{sec['title']}\n\n{tr('ai_disabled')}", kb=ai_hub_kb())
@@ -974,7 +1013,24 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await safe_edit(q, f"{sec['title']}\n\n{sec.get('desc','')}\n\nاختر أداة:", kb=ai_hub_kb())
             return
 
-        # باقي الأقسام
+        # حالة خاصة: geolocation — تفاعلية
+        if key == "geolocation":
+            ai_set_mode(uid, "geo_ip")
+            await safe_edit(q,
+                "📍 أرسل الآن **IP** أو **دومين** (مثال: 8.8.8.8 أو example.com).\n"
+                "بعد الإرسال سيتم جلب البيانات وإظهارها هنا.",
+                kb=section_back_kb()
+            )
+            return
+
+        # الحالة الخاصة: أقسام روابط — نفتح روابط مباشرة كأزرار
+        if key in ("virtual_numbers", "plus_apps", "followers_safe"):
+            links = sec.get("links", [])
+            desc = sec.get("desc", "")
+            await safe_edit(q, f"{sec['title']}\n\n{desc}\n\nاختر رابط:", kb=links_kb(links))
+            return
+
+        # باقي الأقسام (نصي/رابط)
         text = build_section_text(sec)
         local, photo = sec.get("local_file"), sec.get("photo")
         if local and Path(local).exists():
@@ -991,13 +1047,12 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, text, kb=section_back_kb())
         return
 
-    # AI: تفعيل وضع الدردشة + إرسال رسالة جديدة
+    # AI: تفعيل وضع الدردشة
     if q.data == "ai_chat":
         if not AI_ENABLED:
             await safe_edit(q, tr("ai_disabled"), kb=sections_list_kb()); 
             await q.message.reply_text(tr("ai_disabled"), reply_markup=sections_list_kb())
             return
-
         ai_set_mode(uid, "ai_chat")
         await safe_edit(q, "🤖 وضع الدردشة مفعّل.\nأرسل سؤالك الآن.", kb=ai_stop_kb())
         try:
@@ -1024,6 +1079,34 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔐 انضم للقناة لاستخدام البوت:", reply_markup=gate_kb()); return
 
     mode = ai_get_mode(uid)
+
+    # وضع تحديد الموقع
+    if mode == "geo_ip":
+        t = (update.message.text or "").strip()
+        if not t:
+            return
+        await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
+        # تحقّق سريع من IP أو دومين
+        query = None
+        m = _IP_RE.search(t)
+        if m:
+            query = m.group(0)
+        elif _HOST_RE.match(t.lower()):
+            query = t.lower()
+        else:
+            await update.message.reply_text("⚠️ صيغة غير صحيحة. أرسل IP مثل 8.8.8.8 أو دومين مثل example.com.")
+            return
+
+        sent = await update.message.reply_text("⏳ جاري الاستعلام عن البيانات…")
+        data = await fetch_geo(query)
+        text = fmt_geo(data)
+        try:
+            await sent.edit_text(text, parse_mode="HTML", reply_markup=section_back_kb())
+        except Exception:
+            await update.message.reply_text(text, parse_mode="HTML", reply_markup=section_back_kb())
+        return
+
+    # وضع دردشة AI
     if mode == "ai_chat":
         t = (update.message.text or "").strip()
         if not t: 
@@ -1033,6 +1116,7 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(reply, reply_markup=ai_stop_kb()); 
         return
 
+    # افتراضي
     await update.message.reply_text("👇 القائمة:", reply_markup=bottom_menu_kb(uid))
     await update.message.reply_text("📂 الأقسام:", reply_markup=sections_list_kb())
 
@@ -1066,6 +1150,7 @@ def main():
            .build())
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("geo", geo_cmd))
 
     # أوامر المالك فقط
     app.add_handler(CommandHandler("id", cmd_id))
@@ -1087,6 +1172,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
