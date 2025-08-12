@@ -176,29 +176,49 @@ async def _payhook(request):
     print(f"[payhook] ref={ref} -> activated={activated}")
     return web.json_response({"ok": True, "ref": ref, "activated": bool(activated)}, status=200)
 
+# --- التعديل المهم هنا فقط: تشغيل aiohttp بشكل مستقر بدون run_app ---
 def _run_http_server():
     if not (AIOHTTP_AVAILABLE and (SERVE_HEALTH or PAY_WEBHOOK_ENABLE)):
         print("[http] aiohttp غير متوفر أو الإعدادات لا تتطلب خادم ويب")
         return
 
-    async def _health(_):
-        return web.json_response({"ok": True})
+    async def _make_app():
+        app = web.Application()
+        if SERVE_HEALTH:
+            async def _health(_):
+                return web.json_response({"ok": True})
+            app.router.add_get("/", _health)
+        if PAY_WEBHOOK_ENABLE:
+            app.router.add_post("/payhook", _payhook)
+            async def _payhook_get(_):
+                return web.json_response({"ok": True})
+            app.router.add_get("/payhook", _payhook_get)
+        return app
 
-    async def _payhook_get(_):
-        return web.json_response({"ok": True})
+    def _thread_main():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
 
-    app = web.Application()
-    if SERVE_HEALTH:
-        app.router.add_get("/", _health)
-    if PAY_WEBHOOK_ENABLE:
-        app.router.add_post("/payhook", _payhook)
-        app.router.add_get("/payhook", _payhook_get)
+        async def _start():
+            app = await _make_app()
+            runner = web.AppRunner(app)
+            await runner.setup()
+            port = int(os.getenv("PORT", "10000"))
+            site = web.TCPSite(runner, "0.0.0.0", port)
+            await site.start()
+            print(f"[http] serving on 0.0.0.0:{port} (webhook={'ON' if PAY_WEBHOOK_ENABLE else 'OFF'})")
 
-    port = int(os.getenv("PORT", "10000"))
-    print(f"[http] starting on 0.0.0.0:{port} (webhook={'ON' if PAY_WEBHOOK_ENABLE else 'OFF'})")
-    web.run_app(app, host="0.0.0.0", port=port, handle_signals=False)  # fix set_wakeup_fd
+        loop.run_until_complete(_start())
+        try:
+            loop.run_forever()
+        finally:
+            loop.stop()
+            loop.close()
 
-threading.Thread(target=_run_http_server, daemon=True).start()
+    threading.Thread(target=_thread_main, daemon=True).start()
+
+_run_http_server()
+# --- انتهى تعديل الخادم ---
 
 # ====== عند الإقلاع ======
 async def on_startup(app: Application):
