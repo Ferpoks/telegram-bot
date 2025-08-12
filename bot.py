@@ -1,5 +1,8 @@
-# -*- coding: utf-8 -*-
-import os, sqlite3, threading, time, asyncio, re, json, sys, logging, base64, hashlib, socket, tempfile
+# We'll write a complete bot.py file with the requested features and sane defaults.
+# The file will be saved to /mnt/data/bot.py so the user can download it directly.
+
+bot_code = r'''# -*- coding: utf-8 -*-
+import os, sqlite3, threading, time, asyncio, re, json, logging, base64, hashlib, socket, tempfile
 from pathlib import Path
 from io import BytesIO
 from dotenv import load_dotenv
@@ -459,7 +462,7 @@ def payments_mark_paid_by_ref(ref: str, raw=None) -> bool:
     return True
 
 def payments_last(limit=10):
-    with __conn_lock:
+    with _conn_lock:
         c = _db().cursor()
         c.execute("SELECT * FROM payments ORDER BY created_at DESC LIMIT ?", (limit,))
         return [dict(x) for x in c.fetchall()]
@@ -1175,14 +1178,12 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if key == "email_checker":
             ai_set_mode(uid, "email_check")
             await safe_edit(q, "✉️ أرسل الإيميل للفحص.", kb=section_back_kb()); return
-           if key == "media_dl":
-        ai_set_mode(uid, "media_dl")
-        await safe_edit(q, "🎬 أرسل رابط الفيديو أو الصوت للتحميل.", kb=section_back_kb()); return
-
-    if key == "numbers":
-        ai_set_mode(uid, "numbers")
-        await safe_edit(q, "☎️ خدمة الأرقام المؤقتة تتطلب ربط API.\nأرسل اسم الخدمة (مثال: Telegram / WhatsApp) وسأحاول تجهيز رقم.\n(لو ما ربطت API راح يوصلك تنبيه بالإعداد)", kb=section_back_kb()); return
-
+        if key == "media_dl":
+            ai_set_mode(uid, "media_dl")
+            await safe_edit(q, "⬇️ أرسل رابط فيديو/صوت.", kb=section_back_kb()); return
+        if key == "numbers":
+            ai_set_mode(uid, "numbers")
+            await safe_edit(q, "☎️ خدمة الأرقام المؤقتة تتطلب ربط API.\nأرسل اسم الخدمة (مثال: Telegram / WhatsApp) وسأحاول تجهيز رقم.\n(لو ما ربطت API راح يوصلك تنبيه بالإعداد)", kb=section_back_kb()); return
         if key == "file_tools":
             ai_set_mode(uid, "file_tools_menu")
             await safe_edit(q, "🗜️ اختر أداة الملفات:", kb=file_tools_kb()); return
@@ -1205,7 +1206,10 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "ai_chat":
         if not AI_ENABLED or client is None:
             await safe_edit(q, tr("ai_disabled"), kb=sections_list_kb())
-            await q.message.reply_text(tr("ai_disabled"), reply_markup=sections_list_kb())
+            try:
+                await q.message.reply_text(tr("ai_disabled"), reply_markup=sections_list_kb())
+            except Exception:
+                pass
             return
         ai_set_mode(uid, "ai_chat")
         await safe_edit(q, "🤖 وضع الدردشة مفعّل. أرسل سؤالك الآن.", kb=ai_stop_kb()); return
@@ -1248,357 +1252,7 @@ def images_to_pdf(image_paths: list[Path]) -> Path|None:
 def compress_image(image_path: Path, quality: int = 70) -> Path|None:
     try:
         im = Image.open(image_path)
-        out_path = TMP_DIR / f"compressed_{image_path.stem}.jpg"
-        im.convert("RGB").save(out_path, "JPEG", optimize=True, quality=max(1, min(quality, 95)))
-        return out_path
-    except Exception as e:
-        log.error("[compress] %s", e)
-        return None
-
-# ==== VIP: أرقام مؤقتة (Placeholder بسيط إن ما وُجد API) ====
-async def get_temp_number(service: str) -> str:
-    if not FIVESIM_API_KEY:
-        return "ℹ️ لم يتم ضبط مفتاح API لخدمة الأرقام المؤقتة.\nأضف FIVESIM_API_KEY في البيئة لتفعيل الميزة."
-    # مبدئيًا Placeholder حتى تربط فعليًا API
-    # يمكنك لاحقًا استخدام aiohttp للاتصال بـ 5sim/getsmscode وغيرها وإرجاع رقم حقيقي
-    return f"✅ (تجريبي) رقم جاهز لخدمة: {service}\n(اربط API الحقيقي لاستلام الرسائل وإدارة الجلسة)"
-
-# ==== Handlers عامة للرسائل ====
-async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    user_get(uid)
-
-    # تحقّق الانضمام (VIP/مالك bypass)
-    if not await must_be_member_or_vip(context, uid):
-        await update.message.reply_text("🔐 انضم للقناة لاستخدام البوت:", reply_markup=gate_kb()); return
-
-    mode, extra = ai_get_mode(uid)
-
-    # إذا ما في وضع خاص: أعرض القائمة
-    if not mode:
-        await update.message.reply_text("👇 القائمة:", reply_markup=bottom_menu_kb(uid))
-        await update.message.reply_text("📂 الأقسام:", reply_markup=sections_list_kb())
-        return
-
-    msg = update.message
-
-    # أوضاع نصية
-    if msg.text and not msg.text.startswith("/"):
-        text = msg.text.strip()
-
-        if mode == "ai_chat":
-            await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
-            await update.message.reply_text(ai_chat_reply(text), reply_markup=ai_stop_kb()); return
-
-        if mode == "geo_ip":
-            target = text
-            # هل هو IP أم دومين؟
-            query = target
-            if _HOST_RE.match(target):
-                ip = resolve_ip(target)
-                if ip: query = ip
-            data = await fetch_geo(query)
-            await update.message.reply_text(fmt_geo(data), parse_mode="HTML"); return
-
-        if mode == "osint":
-            if "@" in text and "." in text:
-                out = await osint_email(text)
-            else:
-                out = await osint_username(text)
-            await update.message.reply_text(out, parse_mode="HTML"); return
-
-        if mode == "writer":
-            out = await ai_write(text)
-            await update.message.reply_text(out, parse_mode="HTML"); return
-
-        if mode == "translate":
-            to = (extra or {}).get("to","ar")
-            out = await translate_text(text, to)
-            await update.message.reply_text(out); return
-
-        if mode == "link_scan":
-            out = await link_scan(text)
-            await update.message.reply_text(out, parse_mode="HTML"); return
-
-        if mode == "email_check":
-            out = await email_check(text)
-            await update.message.reply_text(out); return
-
-        if mode == "media_dl":
-            if not _URL_RE.search(text):
-                await update.message.reply_text("أرسل رابط صالح للتحميل (يبدأ بـ http أو https)."); return
-            await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_DOCUMENT)
-            path = await download_media(text)
-            if path and path.exists() and path.stat().st_size <= MAX_UPLOAD_BYTES:
-                try:
-                    await update.message.reply_document(document=InputFile(str(path)))
-                except Exception:
-                    await update.message.reply_text("⚠️ تعذّر إرسال الملف.")
-            else:
-                await update.message.reply_text("⚠️ تعذّر التحميل أو أن الملف كبير جداً.")
-            return
-
-        if mode == "numbers":
-            service = text[:50]
-            out = await get_temp_number(service)
-            await update.message.reply_text(out); return
-
-        if mode == "image_ai":
-            prompt = text
-            await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_PHOTO)
-            img_bytes = await ai_image_generate(prompt)
-            if img_bytes:
-                bio = BytesIO(img_bytes); bio.name = "ai.png"
-                await update.message.reply_photo(photo=InputFile(bio))
-            else:
-                await update.message.reply_text("⚠️ تعذّر توليد الصورة.")
-            return
-
-        if mode == "file_tools_menu":
-            await update.message.reply_text("اختر من الأزرار:", reply_markup=file_tools_kb()); return
-
-        if mode in ("file_img_to_pdf", "file_img_compress"):
-            await update.message.reply_text("📌 أرسل صورة (أو أكثر لـ PDF)."); return
-
-    # أوضاع استقبال ملفات/صور/صوت
-    if msg.voice or msg.audio:
-        if mode == "stt":
-            file_id = msg.voice.file_id if msg.voice else msg.audio.file_id
-            p = await tg_download_to_path(context.bot, file_id, suffix=".ogg")
-            out = await tts_whisper_from_file(str(p))
-            await update.message.reply_text(out)
-            return
-
-    if msg.photo:
-        # أفضل دقة
-        photo = msg.photo[-1]
-        p = await tg_download_to_path(context.bot, photo.file_id, suffix=".jpg")
-
-        if mode == "translate" and OPENAI_VISION:
-            out = await translate_image_file(str(p), (extra or {}).get("to","ar"))
-            await update.message.reply_text(out or "⚠️ لم أستطع قراءة النص من الصورة.")
-            return
-        if mode == "file_img_compress":
-            outp = compress_image(p)
-            if outp and outp.exists():
-                await update.message.reply_document(InputFile(str(outp)))
-            else:
-                await update.message.reply_text("⚠️ فشل الضغط.")
-            return
-        if mode == "file_img_to_pdf":
-            # دعم إرسال عدة صور: نخزن مؤقتًا لكل مستخدم قائمة مسارات
-            st_paths = (extra or {}).get("paths", [])
-            st_paths.append(str(p))
-            ai_set_mode(uid, "file_img_to_pdf", {"paths": st_paths})
-            await update.message.reply_text(f"✅ تم إضافة صورة ({len(st_paths)}). أرسل /makepdf للإخراج أو أرسل صورًا إضافية.")
-            return
-
-    if msg.document:
-        # ممكن تكون صورة مرسلة كمستند
-        if mode in ("file_img_to_pdf", "file_img_compress"):
-            p = await tg_download_to_path(context.bot, msg.document.file_id, suffix=f"_{msg.document.file_name or ''}")
-            if mode == "file_img_compress":
-                outp = compress_image(p)
-                if outp and outp.exists():
-                    await update.message.reply_document(InputFile(str(outp)))
-                else:
-                    await update.message.reply_text("⚠️ فشل الضغط.")
-                return
-            if mode == "file_img_to_pdf":
-                st_paths = (extra or {}).get("paths", [])
-                st_paths.append(str(p))
-                ai_set_mode(uid, "file_img_to_pdf", {"paths": st_paths})
-                await update.message.reply_text(f"✅ تم إضافة ملف صورة ({len(st_paths)}). أرسل /makepdf للإخراج أو أرسل صورًا إضافية.")
-                return
-
-    # لو ما تطابقت أي حالة:
-    await update.message.reply_text("🤖 جاهز. اختر ميزة من /help أو من الأزرار.", reply_markup=bottom_menu_kb(uid))
-
-
-# ==== أوامر إضافية مرتبطة بأوضاع الملفات ====
-async def makepdf_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    mode, extra = ai_get_mode(uid)
-    if mode != "file_img_to_pdf":
-        await update.message.reply_text("هذه الأداة تعمل بعد اختيار (صورة → PDF). استخدم /file ثم اختر الأداة.")
-        return
-    paths = (extra or {}).get("paths", [])
-    if not paths:
-        await update.message.reply_text("لم يتم استلام أي صور بعد. أرسل صورًا ثم /makepdf.")
-        return
-    pdf = images_to_pdf([Path(p) for p in paths])
-    if pdf and pdf.exists() and pdf.stat().st_size <= MAX_UPLOAD_BYTES:
-        await update.message.reply_document(InputFile(str(pdf)))
-    else:
-        await update.message.reply_text("⚠️ فشل إنشاء PDF أو الحجم كبير.")
-    # إعادة الضبط
-    ai_set_mode(uid, "file_tools_menu", {})
-
-
-# ==== أوامر المالك والصيانة ====
-async def help_cmd_owner(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID:
-        return
-    await update.message.reply_text("أوامر المالك: /id /grant /revoke /vipinfo /refreshcmds /aidiag /libdiag /paylist /debugverify (/dv) /restart")
-
-async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID: return
-    await update.message.reply_text(str(update.effective_user.id))
-
-async def grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID: return
-    if not context.args:
-        await update.message.reply_text("استخدم: /grant <user_id>"); return
-    user_grant(context.args[0]); await update.message.reply_text(f"✅ تم تفعيل VIP مدى الحياة للمستخدم {context.args[0]}")
-
-async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID: return
-    if not context.args:
-        await update.message.reply_text("استخدم: /revoke <user_id>"); return
-    user_revoke(context.args[0]); await update.message.reply_text(f"❌ تم إلغاء VIP للمستخدم {context.args[0]}")
-
-async def vipinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID: return
-    if not context.args:
-        await update.message.reply_text("استخدم: /vipinfo <user_id>"); return
-    u = user_get(context.args[0])
-    await update.message.reply_text(json.dumps(u, ensure_ascii=False, indent=2))
-
-async def refresh_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID: return
-    await on_startup(context.application); await update.message.reply_text("✅ تم تحديث قائمة الأوامر.")
-
-async def aidiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID: return
-    try:
-        from importlib.metadata import version, PackageNotFoundError
-        def v(pkg):
-            try: return version(pkg)
-            except PackageNotFoundError: return "not-installed"
-        k = (os.getenv("OPENAI_API_KEY") or "").strip()
-        msg = (f"AI_ENABLED={'ON' if AI_ENABLED else 'OFF'}\n"
-               f"Key={'set(len=%d)'%len(k) if k else 'missing'}\n"
-               f"Model={OPENAI_CHAT_MODEL}\n"
-               f"openai={v('openai')}")
-        await update.message.reply_text(msg)
-    except Exception as e:
-        await update.message.reply_text(f"aidiag error: {e}")
-
-async def libdiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID: return
-    try:
-        from importlib.metadata import version, PackageNotFoundError
-        def v(pkg):
-            try: return version(pkg)
-            except PackageNotFoundError: return "not-installed"
-        msg = (f"python-telegram-bot={v('python-telegram-bot')}\n"
-               f"aiohttp={v('aiohttp')}\n"
-               f"Pillow={v('Pillow')}\n"
-               f"yt-dlp={v('yt-dlp')}\n"
-               f"python-whois={v('whois')}\n"
-               f"dnspython={v('dnspython')}\n"
-               f"python={os.sys.version.split()[0]}")
-        await update.message.reply_text(msg)
-    except Exception as e:
-        await update.message.reply_text(f"libdiag error: {e}")
-
-# إعادة تعريف صحيحة لـ payments_last (تصحيح __conn_lock -> _conn_lock)
-def payments_last(limit=10):
-    with _conn_lock:
-        c = _db().cursor()
-        c.execute("SELECT * FROM payments ORDER BY created_at DESC LIMIT ?", (limit,))
-        return [dict(x) for x in c.fetchall()]
-
-async def paylist(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID: return
-    rows = payments_last(15)
-    if not rows:
-        await update.message.reply_text("لا توجد مدفوعات بعد.")
-        return
-    txt = []
-    for r in rows:
-        ts = time.strftime('%Y-%m-%d %H:%M', time.gmtime(r.get('created_at') or 0))
-        txt.append(f"ref={r['ref']}  user={r['user_id']}  {r['status']}  at={ts}")
-    await update.message.reply_text("\n".join(txt))
-
-async def debug_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID: return
-    uid = update.effective_user.id
-    ok = await is_member(context, uid, force=True, retries=3, backoff=0.7)
-    await update.message.reply_text(f"member={ok} (check logs for details)")
-
-async def restart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID: return
-    await update.message.reply_text("🔄 جار إعادة تشغيل الخدمة الآن...")
-    os._exit(0)
-
-# ==== أوامر أساسية موجودة مسبقًا: نربطها هنا أيضًا ====
-# (help_cmd موجود فوق، لا حاجة لتكراره)
-
-# ==== Message handlers للأوامر المباشرة ====
-async def tr_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await translate_cmd(update, context)
-
-async def geo_cmd_alias(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await geo_cmd(update, context)
-
-# ==== أخطاء عامة ====
-async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
-    log.error("⚠️ Error: %s", getattr(context, 'error', 'unknown'))
-
-# ==== Main ====
-def main():
-    init_db()
-    app = (Application.builder()
-           .token(BOT_TOKEN)
-           .post_init(on_startup)
-           .concurrent_updates(True)
-           .build())
-
-    # أوامر عامة
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_cmd))
-    app.add_handler(CommandHandler("geo", geo_cmd))
-    app.add_handler(CommandHandler("osint", osint_cmd))
-    app.add_handler(CommandHandler("write", write_cmd))
-    app.add_handler(CommandHandler("stt", stt_cmd))
-    app.add_handler(CommandHandler("tr", translate_cmd))
-    app.add_handler(CommandHandler("scan", scan_cmd))
-    app.add_handler(CommandHandler("email", email_cmd))
-    app.add_handler(CommandHandler("dl", dl_cmd))
-    app.add_handler(CommandHandler("img", img_cmd))
-    app.add_handler(CommandHandler("file", file_cmd))
-    app.add_handler(CommandHandler("makepdf", makepdf_cmd))
-
-    # أوامر المالك
-    app.add_handler(CommandHandler("id", cmd_id))
-    app.add_handler(CommandHandler("grant", grant))
-    app.add_handler(CommandHandler("revoke", revoke))
-    app.add_handler(CommandHandler("vipinfo", vipinfo))
-    app.add_handler(CommandHandler("refreshcmds", refresh_cmds))
-    app.add_handler(CommandHandler("aidiag", aidiag))
-    app.add_handler(CommandHandler("libdiag", libdiag))
-    app.add_handler(CommandHandler("paylist", paylist))
-    app.add_handler(CommandHandler("debugverify", debug_verify))
-    app.add_handler(CommandHandler("dv", debug_verify))
-    app.add_handler(CommandHandler("restart", restart_cmd))
-    app.add_handler(CommandHandler("ownerhelp", help_cmd_owner))
-
-    # أزرار
-    app.add_handler(CallbackQueryHandler(on_button))
-
-    # رسائل (نص/صوت/صور/مستندات) — بعد الأوامر
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, guard_messages))
-    app.add_handler(MessageHandler(filters.VOICE, guard_messages))
-    app.add_handler(MessageHandler(filters.AUDIO, guard_messages))
-    app.add_handler(MessageHandler(filters.PHOTO, guard_messages))
-    app.add_handler(MessageHandler(filters.Document.ALL, guard_messages))
-
-    app.add_error_handler(on_error)
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
+        out_path = TMP_DIR / f"compressed_{
 
 
 
