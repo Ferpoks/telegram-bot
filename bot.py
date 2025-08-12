@@ -275,7 +275,9 @@ async def on_startup(app: Application):
         print("[startup] set_my_commands owner:", e)
 
 # ====== قاعدة البيانات ======
-_conn_lock = threading.Lock()
+# FIX 1: استخدمنا RLock بدل Lock لتفادي Deadlock عند إعادة الدخول
+_conn_lock = threading.RLock()
+
 def _db():
     conn = getattr(_db, "_conn", None)
     if conn is not None:
@@ -405,6 +407,7 @@ def payments_status(ref: str) -> str | None:
         return r["status"] if r else None
 
 def payments_mark_paid_by_ref(ref: str, raw=None) -> bool:
+    # FIX 2: لا ننادي user_grant داخل الـ lock لتفادي قفل متداخل
     with _conn_lock:
         c = _db().cursor()
         c.execute("SELECT user_id, status FROM payments WHERE ref=?", (ref,))
@@ -413,16 +416,18 @@ def payments_mark_paid_by_ref(ref: str, raw=None) -> bool:
             return False
         if r["status"] == "paid":
             return True
+        user_id = r["user_id"]
         _db().execute(
             "UPDATE payments SET status='paid', paid_at=?, raw=? WHERE ref=?",
             (int(time.time()), json.dumps(raw, ensure_ascii=False) if raw is not None else None, ref)
         )
         _db().commit()
-        try:
-            user_grant(r["user_id"])
-        except Exception as e:
-            print("[payments_mark_paid] grant error:", e)
-        return True
+    # خارج القفل: فعّل VIP
+    try:
+        user_grant(user_id)
+    except Exception as e:
+        print("[payments_mark_paid] grant error:", e)
+    return True
 
 def payments_last(limit=10):
     with _conn_lock:
@@ -682,7 +687,6 @@ except AttributeError: pass
 # ====== التحقق من العضوية (VIP/المالك bypass) ======
 _member_cache = {}  # {uid: (ok, expire)}
 async def must_be_member_or_vip(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
-    """يرجع True إذا كان VIP/مالك أو عضو في القناة."""
     if user_is_premium(user_id) or user_id == OWNER_ID:
         return True
     return await is_member(context, user_id, retries=3, backoff=0.7)
@@ -933,22 +937,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "back_sections":
         await safe_edit(q, "📂 الأقسام:", kb=sections_list_kb()); return
 
-    # AI
-    if q.data == "ai_chat":
-        if not AI_ENABLED:
-            await safe_edit(q, tr("ai_disabled"), kb=sections_list_kb()); return
-        if not (SECTIONS['ai_hub'].get("is_free") or user_is_premium(uid) or uid == OWNER_ID):
-            await safe_edit(q, f"🔒 {SECTIONS['ai_hub']['title']}\n\n{tr('access_denied')}\n\n"
-                               f"استخدم زر الترقية لتفعيل VIP.", kb=sections_list_kb())
-            return
-        ai_set_mode(uid, "ai_chat")
-        await safe_edit(q, "🤖 وضع الدردشة مفعّل.\nأرسل سؤالك الآن.", kb=ai_stop_kb()); 
-        return
-
-    if q.data == "ai_stop":
-        ai_set_mode(uid, None); await safe_edit(q, "🔚 تم إنهاء وضع الذكاء الاصطناعي.", kb=sections_list_kb()); return
-
-    # الأقسام
+    # الأقسام (مع احترام VIP/المالك)
     if q.data.startswith("sec_"):
         key = q.data.replace("sec_", "")
         sec = SECTIONS.get(key)
@@ -975,6 +964,21 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await safe_edit(q, text, kb=section_back_kb())
         return
+
+    # AI
+    if q.data == "ai_chat":
+        if not AI_ENABLED:
+            await safe_edit(q, tr("ai_disabled"), kb=sections_list_kb()); return
+        if not (SECTIONS['ai_hub'].get("is_free") or user_is_premium(uid) or uid == OWNER_ID):
+            await safe_edit(q, f"🔒 {SECTIONS['ai_hub']['title']}\n\n{tr('access_denied')}\n\n"
+                               f"استخدم زر الترقية لتفعيل VIP.", kb=sections_list_kb())
+            return
+        ai_set_mode(uid, "ai_chat")
+        await safe_edit(q, "🤖 وضع الدردشة مفعّل.\nأرسل سؤالك الآن.", kb=ai_stop_kb()); 
+        return
+
+    if q.data == "ai_stop":
+        ai_set_mode(uid, None); await safe_edit(q, "🔚 تم إنهاء وضع الذكاء الاصطناعي.", kb=sections_list_kb()); return
 
 # ====== رسائل عامة ======
 async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1038,6 +1042,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
