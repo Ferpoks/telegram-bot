@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import os, sqlite3, threading, time, asyncio, re, json
+import os, sqlite3, threading, time, asyncio, re, json, sys
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -125,11 +125,9 @@ def _public_url(path: str) -> str:
     return (base or "").rstrip("/") + path
 
 def _looks_like_ref(s: str) -> bool:
-    # ref شكل: userId-timestamp
-    return bool(re.fullmatch(r"\d{6,}-\d{9,}", s or ""))
+    return bool(re.fullmatch(r"\d{6,}-\d{9,}", s or ""))  # userId-timestamp
 
 def _find_ref_in_obj(obj):
-    """يحاول إيجاد مرجع الطلب داخل JSON (orderNumber/merchantOrderNumber/ref/...)"""
     if not obj:
         return None
     if isinstance(obj, (str, bytes)):
@@ -138,7 +136,6 @@ def _find_ref_in_obj(obj):
         if m and _looks_like_ref(m.group(1)): return m.group(1)
         m = re.search(r"[?&]ref=([\w\-:]+)", s)
         if m and _looks_like_ref(m.group(1)): return m.group(1)
-        # التقط uid-timestamp إن وُجد
         m = re.search(r"(\d{6,}-\d{9,})", s)
         if m: return m.group(1)
         return None
@@ -176,7 +173,6 @@ async def _payhook(request):
     print(f"[payhook] ref={ref} -> activated={activated}")
     return web.json_response({"ok": True, "ref": ref, "activated": bool(activated)}, status=200)
 
-# --- التعديل المهم هنا فقط: تشغيل aiohttp بشكل مستقر بدون run_app ---
 def _run_http_server():
     if not (AIOHTTP_AVAILABLE and (SERVE_HEALTH or PAY_WEBHOOK_ENABLE)):
         print("[http] aiohttp غير متوفر أو الإعدادات لا تتطلب خادم ويب")
@@ -184,6 +180,11 @@ def _run_http_server():
 
     async def _make_app():
         app = web.Application()
+        # favicon لإسكات 404
+        async def _favicon(_):
+            return web.Response(status=204)
+        app.router.add_get("/favicon.ico", _favicon)
+
         if SERVE_HEALTH:
             async def _health(_):
                 return web.json_response({"ok": True})
@@ -218,7 +219,6 @@ def _run_http_server():
     threading.Thread(target=_thread_main, daemon=True).start()
 
 _run_http_server()
-# --- انتهى تعديل الخادم ---
 
 # ====== عند الإقلاع ======
 async def on_startup(app: Application):
@@ -240,19 +240,19 @@ async def on_startup(app: Application):
     if CHANNEL_ID is None:
         print("[startup] ❌ could not resolve channel id; fallback to @username checks")
 
+    # أوامر عامة للمستخدمين: فقط start/help
     try:
         await app.bot.set_my_commands(
             [
                 BotCommand("start", "بدء"),
                 BotCommand("help", "مساعدة"),
-                BotCommand("debugverify", "تشخيص التحقق"),
-                BotCommand("dv", "تشخيص سريع"),
             ],
             scope=BotCommandScopeDefault()
         )
     except Exception as e:
         print("[startup] set_my_commands default:", e)
 
+    # أوامر المالك فقط
     try:
         await app.bot.set_my_commands(
             [
@@ -266,7 +266,8 @@ async def on_startup(app: Application):
                 BotCommand("dv", "تشخيص سريع"),
                 BotCommand("aidiag", "تشخيص AI"),
                 BotCommand("libdiag", "إصدارات المكتبات"),
-                BotCommand("paylist", "آخر المدفوعات")
+                BotCommand("paylist", "آخر المدفوعات"),
+                BotCommand("restart", "إعادة تشغيل الخدمة"),
             ],
             scope=BotCommandScopeChat(chat_id=OWNER_ID)
         )
@@ -311,7 +312,7 @@ def migrate_db():
             user_id TEXT,
             amount REAL,
             provider TEXT,
-            status TEXT,        -- pending/paid
+            status TEXT,
             created_at INTEGER,
             paid_at INTEGER,
             raw TEXT
@@ -434,7 +435,6 @@ _paylink_token = None
 _paylink_token_exp = 0
 
 async def paylink_auth_token():
-    """يحصل توكن باي لينك (كاش 9 دقائق) — يستخدم apiId."""
     global _paylink_token, _paylink_token_exp
     now = time.time()
     if _paylink_token and _paylink_token_exp > now + 10:
@@ -442,9 +442,9 @@ async def paylink_auth_token():
 
     url = f"{PAYLINK_API_BASE}/auth"
     payload = {
-        "apiId": PAYLINK_API_ID,        # ← مهم: apiId
+        "apiId": PAYLINK_API_ID,        # مهم: apiId
         "secretKey": PAYLINK_API_SECRET,
-        "persistToken": False           # Boolean
+        "persistToken": False
     }
     async with ClientSession() as s:
         async with s.post(url, json=payload, timeout=20) as r:
@@ -459,14 +459,13 @@ async def paylink_auth_token():
             return token
 
 async def paylink_create_invoice(order_number: str, amount: float, client_name: str):
-    """ينشئ فاتورة ويعيد رابط الدفع من باي لينك."""
     token = await paylink_auth_token()
     url = f"{PAYLINK_API_BASE}/addInvoice"
     body = {
-        "orderNumber": order_number,           # سنطابقها في الويبهوك
+        "orderNumber": order_number,
         "amount": amount,
         "clientName": client_name or "Telegram User",
-        "clientMobile": "0500000000",         # مطلوب من باي لينك؛ رقم افتراضي
+        "clientMobile": "0500000000",
         "currency": "SAR",
         "callBackUrl": _public_url("/payhook"),
         "displayPending": False,
@@ -490,7 +489,7 @@ async def paylink_create_invoice(order_number: str, amount: float, client_name: 
 def tr(k: str) -> str:
     M = {
         "follow_btn": "📣 الانضمام للقناة",
-        "check_btn": "✅ تحقّق",
+        "check_btn": "✅ تحقّق من القناة",
         "access_denied": "⚠️ هذا القسم خاص بمشتركي VIP.",
         "back": "↩️ رجوع",
         "ai_disabled": "🧠 ميزة الذكاء الاصطناعي غير مفعّلة حالياً.",
@@ -515,12 +514,12 @@ SECTIONS = {
     "followers_safe": {
         "title": "🚀 نمو المتابعين (آمن)",
         "desc": (
-            "تنبيه: شراء/رشق متابعين قد يخالف سياسات المنصات ويعرّض الحسابات للإغلاق.\n"
+            "تنبيه: شراء/رشق متابعين قد يخالف سياسات المنصات.\n"
             "بدائل آمنة:\n"
             "• تحسين المحتوى + الهاشتاقات\n"
             "• تعاون/مسابقات\n"
-            "• إعلانات ممولة دقيقة الاستهداف\n"
-            "• محتوى قصير متكرر مع CTA واضح"
+            "• إعلانات ممولة\n"
+            "• محتوى قصير مع CTA واضح"
         ),
         "is_free": True,
         "links": []
@@ -533,10 +532,9 @@ SECTIONS = {
             "Hello Epic Games Support,\n\n"
             "My Epic account appears to have been compromised via a phishing link. "
             "I have already secured my account (changed password and enabled 2FA). "
-            "However, my PlayStation Network (PSN) is currently linked incorrectly and I cannot link my own PSN.\n\n"
-            "Could you please review my account and help with either unlinking the current PSN or allowing me to link my PSN again?\n\n"
-            "Account details:\n- Email: ____\n- Display name: ____\n- Country/Region: ____\n\n"
-            "Thank you for your help."
+            "However, my PSN is currently linked incorrectly.\n\n"
+            "Please help unlink current PSN or let me link mine.\n"
+            "- Email: ____\n- Display name: ____\n- Country: ____\n"
         )
     },
     "virtual_numbers": {
@@ -553,14 +551,11 @@ SECTIONS = {
         "title": "✉️ فك تقييد تيليجرام",
         "desc": "خطوات مراسلة دعم تيليجرام لمراجعة القيود.",
         "is_free": True,
-        "content": (
-            "1) https://telegram.org/support\n"
-            "2) اكتب طلباً واضحاً لرفع التقييد مع رقمك وإصدار التطبيق."
-        )
+        "content": "1) https://telegram.org/support\n2) اكتب طلباً واضحاً لرفع التقييد."
     },
     "dev_test_cards": {
         "title": "💳 فيزا وهمية (بيئة اختبار)",
-        "desc": "استخدم بطاقات الاختبار الرسمية (Stripe/PayPal Sandbox) داخل بيئات التطوير فقط.",
+        "desc": "استخدم بطاقات الاختبار الرسمية داخل بيئات التطوير فقط.",
         "is_free": True
     },
     "plus_apps": {
@@ -594,7 +589,7 @@ SECTIONS = {
     "canva_500": {
         "title": "🖼️ 500 دعوة Canva Pro (VIP)",
         "desc": "دعوات كانفا برو مدى الحياة.",
-        "link": "https://digital-plus3.com/products/canva500?srsltid=AfmBOoq01P0ACvybFJkhb2yVBPSUPJadwrOw9LZmNxSUzWPDY8v_42C1",
+        "link": "https://digital-plus3.com/products/canva500",
         "photo": None, "is_free": False,
     },
     "dark_gpt": {
@@ -618,23 +613,27 @@ SECTIONS = {
 }
 
 # ====== لوحات الأزرار ======
+def bottom_menu_kb(uid: int):
+    is_vip = (user_is_premium(uid) or uid == OWNER_ID)
+    rows = []
+    rows.append([InlineKeyboardButton("👤 معلوماتي", callback_data="myinfo")])
+    if is_vip:
+        rows.append([InlineKeyboardButton("⭐ حسابك VIP", callback_data="vip_badge")])
+    else:
+        rows.append([InlineKeyboardButton("⚡ ترقية إلى VIP", callback_data="upgrade")])
+    rows.append([InlineKeyboardButton("📨 تواصل مع الإدارة", url=admin_button_url())])
+    return InlineKeyboardMarkup(rows)
+
 def gate_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(tr("follow_btn"), url=MAIN_CHANNEL_LINK)],
         [InlineKeyboardButton(tr("check_btn"), callback_data="verify")]
     ])
 
-def bottom_menu_kb(uid: int):
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("👤 معلوماتي", callback_data="myinfo")],
-        [InlineKeyboardButton("⚡ ترقية إلى VIP", callback_data="upgrade")],
-        [InlineKeyboardButton("📨 تواصل مع الإدارة", url=admin_button_url())]
-    ])
-
 def sections_list_kb():
     rows = []
     for k, sec in SECTIONS.items():
-        if not sec.get("title"):
+        if not sec.get("title"): 
             continue
         lock = "🟢" if sec.get("is_free") else "🔒"
         rows.append([InlineKeyboardButton(f"{lock} {sec['title']}", callback_data=f"sec_{k}")])
@@ -680,8 +679,14 @@ except AttributeError: pass
 try: ALLOWED_STATUSES.add(ChatMemberStatus.CREATOR)
 except AttributeError: pass
 
-# ====== التحقق من العضوية ======
+# ====== التحقق من العضوية (VIP/المالك bypass) ======
 _member_cache = {}  # {uid: (ok, expire)}
+async def must_be_member_or_vip(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+    """يرجع True إذا كان VIP/مالك أو عضو في القناة."""
+    if user_is_premium(user_id) or user_id == OWNER_ID:
+        return True
+    return await is_member(context, user_id, retries=3, backoff=0.7)
+
 async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id: int,
                     force=False, retries=3, backoff=0.7) -> bool:
     now = time.time()
@@ -762,7 +767,7 @@ def build_section_text(sec: dict) -> str:
 
 # ====== أوامر ======
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📜 الأوامر:\n/start – بدء\n/help – مساعدة\n/debugverify – تشخيص التحقق\n/dv – تشخيص سريع")
+    await update.message.reply_text("📜 الأوامر:\n/start – بدء\n/help – مساعدة")
 
 async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
@@ -817,9 +822,15 @@ async def paylist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(txt))
 
 async def debug_verify(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != OWNER_ID: return
     uid = update.effective_user.id
     ok = await is_member(context, uid, force=True, retries=3, backoff=0.7)
     await update.message.reply_text(f"member={ok} (check logs for details)")
+
+async def restart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != OWNER_ID: return
+    await update.message.reply_text("🔄 جار إعادة تشغيل الخدمة الآن...")
+    os._exit(0)
 
 # ====== /start ======
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -836,11 +847,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print("[welcome] ERROR:", e)
 
-    try:
-        ok = await is_member(context, uid, force=True, retries=3, backoff=0.7)
-    except Exception as e:
-        print("[start] is_member ERROR:", e); ok = False
-
+    ok = await must_be_member_or_vip(context, uid)
     if not ok:
         try:
             await context.bot.send_message(chat_id, "🔐 انضم للقناة لاستخدام البوت:", reply_markup=gate_kb())
@@ -867,18 +874,25 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, "👌 تم التحقق من اشتراكك بالقناة.\nاختر من القائمة بالأسفل:", kb=bottom_menu_kb(uid))
             await q.message.reply_text("📂 الأقسام:", reply_markup=sections_list_kb())
         else:
-            await safe_edit(q, "❗️ ما زلت غير مشترك أو تعذّر التحقق.\nانضم ثم اضغط تحقّق.\n\n" + need_admin_text(), kb=gate_kb())
+            await safe_edit(q, "❗️ ما زلت غير مشترك بالقناة.\nانضم ثم اضغط تحقّق.\n\n" + need_admin_text(), kb=gate_kb())
         return
 
-    if not await is_member(context, uid, retries=3, backoff=0.7):
+    # VIP/مالك bypass للانضمام
+    if not await must_be_member_or_vip(context, uid):
         await safe_edit(q, "🔐 انضم للقناة لاستخدام البوت:", kb=gate_kb()); return
 
+    if q.data == "vip_badge":
+        await safe_edit(q, "⭐ حسابك مفعل VIP — استمتع بكل الأقسام.", kb=bottom_menu_kb(uid)); return
+
     if q.data == "myinfo":
-        await safe_edit(q, f"👤 اسمك: {q.from_user.full_name}\n🆔 معرفك: {uid}\n\n— شارك المعرف مع الإدارة للترقية إلى VIP.", kb=bottom_menu_kb(uid)); return
+        await safe_edit(q, f"👤 اسمك: {q.from_user.full_name}\n🆔 معرفك: {uid}\n", kb=bottom_menu_kb(uid)); return
 
     if q.data == "upgrade":
-        ref = payments_create(uid, VIP_PRICE_SAR, "paylink")  # pending
-        # عرض فوري لتقليل التأخير
+        if user_is_premium(uid) or uid == OWNER_ID:
+            await safe_edit(q, "⭐ حسابك مفعل VIP بالفعل.", kb=bottom_menu_kb(uid))
+            return
+
+        ref = payments_create(uid, VIP_PRICE_SAR, "paylink")
         await safe_edit(q, f"⏳ جاري إنشاء رابط الدفع…\n🔖 مرجعك: <code>{ref}</code>", kb=InlineKeyboardMarkup([
             [InlineKeyboardButton(tr("back"), callback_data="back_sections")]
         ]))
@@ -942,12 +956,6 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, "قريباً…", kb=sections_list_kb()); 
             return
 
-        if key == "ai_hub":
-            if not AI_ENABLED: await safe_edit(q, tr("ai_disabled"), kb=sections_list_kb()); return
-            if not (sec.get("is_free") or user_is_premium(uid) or uid == OWNER_ID):
-                await safe_edit(q, f"🔒 {sec['title']}\n\n{tr('access_denied')}\n\nاستخدم زر الترقية لتفعيل VIP.", kb=sections_list_kb()); return
-            await safe_edit(q, f"{sec['title']}\n\n{sec['desc']}\n\nاختر أداة:", kb=ai_hub_kb()); return
-
         allowed = sec.get("is_free") or user_is_premium(uid) or uid == OWNER_ID
         if not allowed:
             await safe_edit(q, f"🔒 {sec['title']}\n\n{tr('access_denied')} — فعّل VIP من زر الترقية.", kb=sections_list_kb()); return
@@ -973,7 +981,7 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     user_get(uid)
 
-    if not await is_member(context, uid, retries=3, backoff=0.7):
+    if not await must_be_member_or_vip(context, uid):
         await update.message.reply_text("🔐 انضم للقناة لاستخدام البوت:", reply_markup=gate_kb()); return
 
     mode = ai_get_mode(uid)
@@ -1010,6 +1018,8 @@ def main():
            .build())
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
+
+    # أوامر المالك فقط
     app.add_handler(CommandHandler("id", cmd_id))
     app.add_handler(CommandHandler("grant", grant))
     app.add_handler(CommandHandler("revoke", revoke))
@@ -1017,7 +1027,10 @@ def main():
     app.add_handler(CommandHandler("aidiag", aidiag))
     app.add_handler(CommandHandler("libdiag", libdiag))
     app.add_handler(CommandHandler("paylist", paylist))
-    app.add_handler(CommandHandler(["debugverify","dv"], debug_verify))
+    app.add_handler(CommandHandler("debugverify", debug_verify))
+    app.add_handler(CommandHandler("dv", debug_verify))
+    app.add_handler(CommandHandler("restart", restart_cmd))
+
     app.add_handler(CallbackQueryHandler(on_button))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, guard_messages))
     app.add_error_handler(on_error)
