@@ -1175,12 +1175,14 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if key == "email_checker":
             ai_set_mode(uid, "email_check")
             await safe_edit(q, "✉️ أرسل الإيميل للفحص.", kb=section_back_kb()); return
-        if key == "media_dl":
-            ai_set_mode(uid, "media_dl")
-            await safe_edit(q, "⬇️ أرسل رابط فيديو/صوت.", kb=section_back_kb()); return
-               if key == "numbers":
-            ai_set_mode(uid, "numbers")
-            await safe_edit(q, "☎️ خدمة الأرقام المؤقتة تتطلب ربط API.\nأرسل اسم الخدمة (مثال: Telegram / WhatsApp) وسأحاول تجهيز رقم.\n(لو ما ربطت API راح يوصلك تنبيه بالإعداد)", kb=section_back_kb()); return
+           if key == "media_dl":
+        ai_set_mode(uid, "media_dl")
+        await safe_edit(q, "🎬 أرسل رابط الفيديو أو الصوت للتحميل.", kb=section_back_kb()); return
+
+    if key == "numbers":
+        ai_set_mode(uid, "numbers")
+        await safe_edit(q, "☎️ خدمة الأرقام المؤقتة تتطلب ربط API.\nأرسل اسم الخدمة (مثال: Telegram / WhatsApp) وسأحاول تجهيز رقم.\n(لو ما ربطت API راح يوصلك تنبيه بالإعداد)", kb=section_back_kb()); return
+
         if key == "file_tools":
             ai_set_mode(uid, "file_tools_menu")
             await safe_edit(q, "🗜️ اختر أداة الملفات:", kb=file_tools_kb()); return
