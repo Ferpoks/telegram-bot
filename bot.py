@@ -1,12 +1,3 @@
-# We'll generate a corrected, self-contained Telegram bot file "bot_fixed.py"
-# addressing the user's reported issues: sections restored, deep OSINT,
-# proper translate (text + image), image generation, link scan, IP lookup,
-# email checker, virtual numbers (requires env), image compress/PDF,
-# media downloads, and language switcher.
-
-
-from textwrap import dedent
-bot_code = dedent(r'''
 # -*- coding: utf-8 -*-
 """
 Bot: Ferpoks – Full-featured Telegram Bot (fixed)
@@ -599,11 +590,9 @@ async def download_media(url:str, is_vip:bool)->tuple[str,bytes]|tuple[None,None
     def _run():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info=ydl.extract_info(url, download=True)
-            # pick best file produced
             if "requested_downloads" in info and info["requested_downloads"]:
                 fn=info["requested_downloads"][0]["filepath"]
             else:
-                # guess by title/ext
                 title=info.get("title","media")
                 exts=("mp4","mkv","webm","mp3","m4a")
                 fn=None
@@ -741,7 +730,6 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit(q, f"⏳ إنشاء رابط الدفع…\n🔖 مرجعك: <code>{ref}</code>", kb=InlineKeyboardMarkup([[InlineKeyboardButton(tr("back"), callback_data="back_sections")]]))
         try:
             if USE_PAYLINK_API:
-                # minimal call to create invoice
                 token = await paylink_auth_token()
                 url = f"{PAYLINK_API_BASE}/addInvoice"
                 body = {
@@ -1083,12 +1071,5 @@ def main():
 
 if __name__=="__main__":
     main()
-''')
-
-# Write to file
-with open('/mnt/data/bot_fixed.py', 'w', encoding='utf-8') as f:
-    f.write(bot_code)
-
-print("READY:/mnt/data/bot_fixed.py")
 
 
