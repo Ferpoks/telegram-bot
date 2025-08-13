@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import os, re, io, json, sys, time, zipfile, tempfile, logging, socket, asyncio, base64
+import os, re, io, sys, time, zipfile, tempfile, logging, socket, asyncio, base64
 import sqlite3
 from pathlib import Path
 from contextlib import closing, suppress
@@ -47,7 +47,7 @@ from telegram.ext import (
 )
 from telegram.error import BadRequest
 
-# ==== AIOHTTP (خادم ويب بسيط لفتح المنفذ) ====
+# ==== AIOHTTP (خادم ويب بسيط لفتح المنفذ في Render) ====
 from aiohttp import web
 
 # ========= إعدادات عامة =========
@@ -87,9 +87,9 @@ def _env_id_list(name: str) -> list[int]:
             pass
     return ids
 
-ADMIN_IDS = _env_id_list("ADMIN_IDS")  # مثال: "6468743821,123456"
-VERIFY_CHANNEL_IDS = _env_id_list("VERIFY_CHANNEL_IDS")  # مثال: "-1002840134926,-1001122334455"
-WELCOME_IMAGE_PATH = os.getenv("WELCOME_IMAGE_PATH", "").strip()  # مثال: "/opt/render/project/src/assets/ferpoks.jpg"
+ADMIN_IDS = _env_id_list("ADMIN_IDS")                 # مثال: "6468743821,123456"
+VERIFY_CHANNEL_IDS = _env_id_list("VERIFY_CHANNEL_IDS")# مثال: "-1002840134926,-1001122334455"
+WELCOME_IMAGE_PATH = os.getenv("WELCOME_IMAGE_PATH", "").strip()
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
@@ -101,20 +101,92 @@ def db() -> sqlite3.Connection:
     return con
 
 def db_init():
+    """
+    ترحيل تلقائي للجداول (users/kv) لتفادي أخطاء:
+    sqlite3.OperationalError: table users has no column named user_id
+    """
+    reset = os.getenv("DB_RESET", "").strip() == "1"
+
+    def has_table(con, name: str) -> bool:
+        r = con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
+        return bool(r)
+
+    def cols_of(con, name: str) -> list[str]:
+        try:
+            return [row["name"] for row in con.execute(f"PRAGMA table_info({name})").fetchall()]
+        except Exception:
+            return []
+
     with closing(db()) as con, con:
-        con.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            lang TEXT NOT NULL DEFAULT 'ar',
-            created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
-        )""")
-        con.execute("""
-        CREATE TABLE IF NOT EXISTS kv (
-            user_id INTEGER NOT NULL,
-            k TEXT NOT NULL,
-            v TEXT,
-            PRIMARY KEY (user_id, k)
-        )""")
+        con.execute("PRAGMA foreign_keys=ON;")
+        con.execute("PRAGMA journal_mode=WAL;")
+
+        if reset:
+            con.execute("DROP TABLE IF EXISTS kv")
+            con.execute("DROP TABLE IF EXISTS users")
+
+        # --- users table ---
+        need_create_users = True
+        if has_table(con, "users"):
+            c = cols_of(con, "users")
+            if set(("user_id","lang","created_at")).issubset(set(c)):
+                need_create_users = False
+            else:
+                con.execute("ALTER TABLE users RENAME TO users_old")
+                need_create_users = True
+
+        if need_create_users:
+            con.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id INTEGER PRIMARY KEY,
+                    lang TEXT NOT NULL DEFAULT 'ar',
+                    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+                )
+            """)
+            if has_table(con, "users_old"):
+                old_cols = cols_of(con, "users_old")
+                if "id" in old_cols:
+                    con.execute("""
+                        INSERT OR IGNORE INTO users(user_id, lang, created_at)
+                        SELECT id, COALESCE(lang,'ar'), COALESCE(created_at, strftime('%s','now'))
+                        FROM users_old
+                    """)
+                elif "user_id" in old_cols:
+                    con.execute("""
+                        INSERT OR IGNORE INTO users(user_id, lang, created_at)
+                        SELECT user_id, COALESCE(lang,'ar'), COALESCE(created_at, strftime('%s','now'))
+                        FROM users_old
+                    """)
+                con.execute("DROP TABLE users_old")
+
+        # --- kv table ---
+        need_create_kv = True
+        if has_table(con, "kv"):
+            c = cols_of(con, "kv")
+            if set(("user_id","k","v")).issubset(set(c)):
+                need_create_kv = False
+            else:
+                con.execute("ALTER TABLE kv RENAME TO kv_old")
+                need_create_kv = True
+
+        if need_create_kv:
+            con.execute("""
+                CREATE TABLE IF NOT EXISTS kv (
+                    user_id INTEGER NOT NULL,
+                    k TEXT NOT NULL,
+                    v TEXT,
+                    PRIMARY KEY (user_id, k)
+                )
+            """)
+            if has_table(con, "kv_old"):
+                old_cols = cols_of(con, "kv_old")
+                if set(("user","key","value")).issubset(set(old_cols)):
+                    con.execute("INSERT OR IGNORE INTO kv(user_id, k, v) SELECT user, key, value FROM kv_old")
+                elif set(("user_id","k","v")).issubset(set(old_cols)):
+                    con.execute("INSERT OR IGNORE INTO kv(user_id, k, v) SELECT user_id, k, v FROM kv_old")
+                con.execute("DROP TABLE kv_old")
+
+        con.execute("CREATE INDEX IF NOT EXISTS idx_kv_user ON kv(user_id)")
 
 def user_lang(uid: int) -> str:
     with closing(db()) as con, con:
@@ -290,13 +362,13 @@ LOCALES = {
     }
 }
 
-LANG_CHOICES = [("ar", "العربية"), ("en", "English"), ("fr", "Français"), ("tr", "Türkçe")]
+LANG_CHOICES = [("ar","العربية"),("en","English"),("fr","Français"),("tr","Türkçe")]
 
 def t(uid_or_lang, key: str) -> str:
     lang = uid_or_lang if isinstance(uid_or_lang, str) else user_lang(int(uid_or_lang))
     return LOCALES.get(lang, LOCALES["ar"]).get(key, key)
 
-# ========= قوائم =========
+# ========= القوائم =========
 def main_menu(uid: int) -> InlineKeyboardMarkup:
     lang = user_lang(uid); txt = LOCALES[lang]
     kb = [
@@ -354,7 +426,20 @@ def vip_menu(uid: int) -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(kb)
 
-# ========= أدوات مساعدة آمنة =========
+def translate_menu(uid: int, step: str="choose_from") -> InlineKeyboardMarkup:
+    lang = user_lang(uid)
+    if step == "choose_from":
+        kb = [[InlineKeyboardButton(name, callback_data=f"tr_from:{code}")]
+              for code, name in LANG_CHOICES]
+    elif step == "choose_to":
+        kb = [[InlineKeyboardButton(name, callback_data=f"tr_to:{code}")]
+              for code, name in LANG_CHOICES]
+    else:
+        kb = []
+    kb.append([InlineKeyboardButton(LOCALES[lang]["back"], callback_data="menu:back")])
+    return InlineKeyboardMarkup(kb)
+
+# ========= أدوات مساعدة =========
 async def safe_answer_callback(query):
     try:
         await query.answer()
@@ -397,6 +482,18 @@ async def send_photo(update: Update, context: ContextTypes.DEFAULT_TYPE, file_ob
     if chat_id:
         return await context.bot.send_photo(chat_id, photo=photo, caption=caption, **kwargs)
 
+# ========= التحقق من العضوية المطلوبة =========
+async def check_required_memberships(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> tuple[bool, list[int]]:
+    missing = []
+    for cid in VERIFY_CHANNEL_IDS:
+        try:
+            member = await context.bot.get_chat_member(cid, user_id)
+            if getattr(member, "status", "") in ("left", "kicked"):
+                missing.append(cid)
+        except Exception:
+            missing.append(cid)
+    return (len(missing) == 0, missing)
+
 # ========= Handlers =========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -438,7 +535,7 @@ async def cb_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "menu:security":
         await q.message.edit_text(t(uid,"security_title"), reply_markup=security_menu(uid)); return
     if data == "menu:imggen":
-        # مثال تقييد VIP (اختياري): فعّل السطرين التاليين لو تبغى الذكاء للـVIP فقط
+        # لو تبغى الذكاء للـ VIP فقط، فعّل السطرين التاليين:
         # if not is_vip(uid):
         #     await q.message.reply_text("هذه الميزة للـ VIP فقط.", reply_markup=vip_menu(uid)); return
         context.user_data["await"] = "imggen_prompt"
@@ -502,10 +599,9 @@ async def cb_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["await"]="translate_text"
         await q.message.edit_text(t(uid,"translate_now"), reply_markup=main_menu(uid)); return
 
-    # إضافات
+    # Extras
     if data == "menu:extras":
         await q.message.edit_text("اختر من الإضافات:", reply_markup=extras_menu(uid)); return
-
     if data == "ex:smm":
         links = [
             ("zyadat.com", "https://zyadat.com/"),
@@ -519,7 +615,6 @@ async def cb_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rows = [[InlineKeyboardButton(name, url=url)] for name, url in links]
         rows.append([InlineKeyboardButton(LOCALES[user_lang(uid)]["back"], callback_data="menu:back")])
         await q.message.edit_text("🚀 مواقع الرشق:", reply_markup=InlineKeyboardMarkup(rows)); return
-
     if data == "ex:epic":
         txt = ("Hello Epicgames, I am the dad of (اسمك), so my son was on an app called Discord and fell for a phishing site, "
                "logged in with his Epicgames information and someone got into his account. The hacker linked his PSN account so "
@@ -527,10 +622,9 @@ async def cb_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
                "Please unlink the hacker’s PSN from my son’s Epic account so he can play again. Thanks.")
         await q.message.edit_text("✉️ انسخ الرسالة وعدّل الاسم:\n\n" + txt, reply_markup=extras_menu(uid)); return
 
-    # VIP & Verify
+    # VIP
     if data == "menu:vip":
         await q.message.edit_text("⭐ VIP & التحقق", reply_markup=vip_menu(uid)); return
-
     if data == "vip:verify":
         ok, missing = await check_required_memberships(context, uid)
         set_verified(uid, ok)
@@ -539,29 +633,16 @@ async def cb_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             btns = []
             for cid in missing:
-                # رابط فتح القناة الخاصة: تحويل -100xxxxxxxxxx إلى /c/xxxxxxxxxx (ينفع للقنوات العامة/الخاصة حسب الحالة)
                 btns.append([InlineKeyboardButton(f"فتح القناة {cid}", url=f"https://t.me/c/{str(cid).replace('-100','')}")])
             btns.append([InlineKeyboardButton(LOCALES[user_lang(uid)]["back"], callback_data="menu:back")])
             await q.message.edit_text("❌ لست عضوًا في كل القنوات المطلوبة. انضم ثم اضغط تحقق مجددًا.",
                                       reply_markup=InlineKeyboardMarkup(btns))
         return
-
     if data == "vip:status":
         await q.message.edit_text(f"⭐ VIP: {'✅' if is_vip(uid) else '❌'}\n🔒 Verified: {'✅' if is_verified(uid) else '❌'}",
                                   reply_markup=vip_menu(uid)); return
 
 # ========= الموقع =========
-async def check_required_memberships(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> tuple[bool, list[int]]:
-    missing = []
-    for cid in VERIFY_CHANNEL_IDS:
-        try:
-            member = await context.bot.get_chat_member(cid, user_id)
-            if getattr(member, "status", "") in ("left", "kicked"):
-                missing.append(cid)
-        except Exception:
-            missing.append(cid)
-    return (len(missing) == 0, missing)
-
 async def on_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if context.user_data.get("await") != "address_location":
@@ -986,7 +1067,7 @@ async def _start_http_server():
     await site.start()
     log.info(f"🌐 Health server started on port {port}")
 
-# ========= تشغيل (نسخة Web Service مع polling) =========
+# ========= تشغيل (Web Service مع polling) =========
 async def amain():
     db_init()
 
@@ -1000,20 +1081,19 @@ async def amain():
     tg.add_handler(CommandHandler("status", status_cmd))
     tg.add_error_handler(errors)
 
-    # ابدأ خادم الويب أولًا لضمان فتح المنفذ قبل فحص Render
-    await _start_http_server()
+    await _start_http_server()  # افتح المنفذ قبل فحص Render
 
-    # تشغيل البوت يدويًا لتفادي مشاكل event loop
     await tg.initialize()
     await tg.start()
     await tg.updater.start_polling(drop_pending_updates=True)
+    log.info("✅ Bot started.")
 
-    # انتظر الإيقاف
     await tg.updater.wait_until_closed()
     await tg.stop()
     await tg.shutdown()
 
 if __name__ == "__main__":
     asyncio.run(amain())
+
 
 
