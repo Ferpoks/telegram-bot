@@ -53,6 +53,9 @@ from aiohttp import web
 # ========= إعدادات عامة =========
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("bot")
+# لوج تفصيلي لمكتبة تيليجرام نفسها
+logging.getLogger("telegram").setLevel(logging.INFO)
+logging.getLogger("telegram.ext").setLevel(logging.INFO)
 
 ENV_PATH = Path(".env")
 if ENV_PATH.exists():
@@ -393,6 +396,25 @@ async def send_photo(update: Update, context: ContextTypes.DEFAULT_TYPE, file_ob
     chat_id = update.effective_chat.id if update.effective_chat else None
     if chat_id:
         return await context.bot.send_photo(chat_id, photo=photo, caption=caption, **kwargs)
+
+# ========= لوج لكل تحديث (تشخيص) =========
+async def log_updates(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id if update.effective_user else None
+    text = None
+    m = update.effective_message
+    if m:
+        if getattr(m, "text", None):
+            text = m.text
+        elif getattr(m, "caption", None):
+            text = m.caption
+        elif getattr(m, "location", None):
+            text = "[location]"
+        elif getattr(m, "photo", None):
+            text = "[photo]"
+        elif getattr(m, "document", None):
+            mt = m.document.mime_type if m.document else ""
+            text = f"[document:{mt}]"
+    log.info(f"📥 Update from {uid}: {text or '(no text)'}")
 
 # ========= التحقق من العضوية =========
 async def check_required_memberships(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> tuple[bool, list[int]]:
@@ -990,9 +1012,18 @@ async def amain():
     tg.add_handler(CommandHandler("revoke", revoke_cmd))
     tg.add_handler(CommandHandler("status", status_cmd))
     tg.add_error_handler(errors)
+    # لوج لكل تحديث (group=99 عشان ما يتداخل مع المعالجة)
+    tg.add_handler(MessageHandler(filters.ALL, log_updates), group=99)
 
     # افتح المنفذ قبل فحص Render
     await _start_http_server()
+
+    # اطبع معلومات البوت + احذف أي Webhook قبل polling
+    me = await tg.bot.get_me()
+    log.info(f"🤖 Logged in as @{me.username} (id={me.id}) with BOT_TOKEN starting: {BOT_TOKEN[:10]}...")
+    with suppress(Exception):
+        await tg.bot.delete_webhook(drop_pending_updates=True)
+        log.info("🧹 deleteWebhook done (drop_pending_updates=True)")
 
     # شغّل تيليجرام يدويًا
     await tg.initialize()
@@ -1018,6 +1049,3 @@ async def amain():
 
 if __name__ == "__main__":
     asyncio.run(amain())
-
-
-
