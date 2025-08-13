@@ -1,4 +1,23 @@
 # -*- coding: utf-8 -*-
+# ضع هذا الاستدعاء مرّة واحدة في بداية main() قبل app.run_polling()
+def _hotfix_add_lang_column():
+    try:
+        c = _db().cursor()
+        c.execute("PRAGMA table_info(users)")
+        cols = {r["name"] for r in c.fetchall()}
+        if "lang" not in cols:
+            _db().execute("ALTER TABLE users ADD COLUMN lang TEXT DEFAULT 'ar'")
+            _db().commit()
+            log.info("[db] hotfix: added column 'lang'")
+    except Exception as e:
+        log.error("[db] hotfix lang failed: %s", e)
+
+# داخل main():
+def main():
+    init_db()
+    _hotfix_add_lang_column()  # ← أضِف هذا السطر
+    ...
+
 """
 Bot: Ferpoks – Full-featured Telegram Bot (fixed)
 Fixes:
