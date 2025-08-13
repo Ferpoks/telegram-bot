@@ -7,7 +7,7 @@ from typing import Optional, List
 
 import requests
 
-# ==== OpenAI اختياري ====
+# ==== OpenAI (اختياري) ====
 OPENAI_AVAILABLE = False
 try:
     from openai import OpenAI
@@ -47,6 +47,9 @@ from telegram.ext import (
 )
 from telegram.error import BadRequest
 
+# ==== AIOHTTP (خادم ويب بسيط لفتح المنفذ) ====
+from aiohttp import web
+
 # ========= إعدادات عامة =========
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("bot")
@@ -69,6 +72,27 @@ URLSCAN_API_KEY = os.getenv("URLSCAN_API_KEY", "").strip()
 
 DB_PATH = os.getenv("DB_PATH", "/var/data/bot.db")
 Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+
+# ========= إعدادات إضافية (VIP/تحقق/صورة ترحيب) =========
+def _env_id_list(name: str) -> list[int]:
+    raw = os.getenv(name, "").strip()
+    ids = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            ids.append(int(part))
+        except Exception:
+            pass
+    return ids
+
+ADMIN_IDS = _env_id_list("ADMIN_IDS")  # مثال: "6468743821,123456"
+VERIFY_CHANNEL_IDS = _env_id_list("VERIFY_CHANNEL_IDS")  # مثال: "-1002840134926,-1001122334455"
+WELCOME_IMAGE_PATH = os.getenv("WELCOME_IMAGE_PATH", "").strip()  # مثال: "/opt/render/project/src/assets/ferpoks.jpg"
+
+def is_admin(user_id: int) -> bool:
+    return user_id in ADMIN_IDS
 
 # ========= قاعدة البيانات =========
 def db() -> sqlite3.Connection:
@@ -113,6 +137,18 @@ def kv_get(uid: int, k: str, default: Optional[str]=None) -> Optional[str]:
     with closing(db()) as con, con:
         r = con.execute("SELECT v FROM kv WHERE user_id=? AND k=?", (uid, k)).fetchone()
         return (r["v"] if r else default)
+
+def set_vip(uid: int, value: bool):
+    kv_set(uid, "vip", "1" if value else "0")
+
+def is_vip(uid: int) -> bool:
+    return (kv_get(uid, "vip", "0") == "1")
+
+def set_verified(uid: int, value: bool):
+    kv_set(uid, "verified_ok", "1" if value else "0")
+
+def is_verified(uid: int) -> bool:
+    return (kv_get(uid, "verified_ok", "0") == "1")
 
 # ========= التعريب =========
 LOCALES = {
@@ -270,6 +306,8 @@ def main_menu(uid: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(txt["menu_security"], callback_data="menu:security")],
         [InlineKeyboardButton(txt["menu_imggen"], callback_data="menu:imggen")],
         [InlineKeyboardButton(txt["menu_translate"], callback_data="menu:translate")],
+        [InlineKeyboardButton("🧰 إضافات / Extras", callback_data="menu:extras")],
+        [InlineKeyboardButton("⭐ VIP & التحقق", callback_data="menu:vip")],
         [InlineKeyboardButton(txt["menu_lang"], callback_data="lang:toggle")],
     ]
     return InlineKeyboardMarkup(kb)
@@ -298,17 +336,22 @@ def security_menu(uid: int) -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(kb)
 
-def translate_menu(uid: int, step: str="choose_from") -> InlineKeyboardMarkup:
-    lang = user_lang(uid)
-    if step == "choose_from":
-        kb = [[InlineKeyboardButton(name, callback_data=f"tr_from:{code}")]
-              for code, name in LANG_CHOICES]
-    elif step == "choose_to":
-        kb = [[InlineKeyboardButton(name, callback_data=f"tr_to:{code}")]
-              for code, name in LANG_CHOICES]
-    else:
-        kb = []
-    kb.append([InlineKeyboardButton(LOCALES[lang]["back"], callback_data="menu:back")])
+def extras_menu(uid: int) -> InlineKeyboardMarkup:
+    kb = [
+        [InlineKeyboardButton("🚀 رشق متابعين (روابطي)", callback_data="ex:smm")],
+        [InlineKeyboardButton("🎮 رسالة Epicgames", callback_data="ex:epic")],
+        [InlineKeyboardButton(LOCALES[user_lang(uid)]["back"], callback_data="menu:back")],
+    ]
+    return InlineKeyboardMarkup(kb)
+
+def vip_menu(uid: int) -> InlineKeyboardMarkup:
+    vip = "✅" if is_vip(uid) else "❌"
+    ver = "✅" if is_verified(uid) else "❌"
+    kb = [
+        [InlineKeyboardButton(f"التحقّق من القنوات {ver}", callback_data="vip:verify")],
+        [InlineKeyboardButton("حالة VIP " + vip, callback_data="vip:status")],
+        [InlineKeyboardButton(LOCALES[user_lang(uid)]["back"], callback_data="menu:back")],
+    ]
     return InlineKeyboardMarkup(kb)
 
 # ========= أدوات مساعدة آمنة =========
@@ -359,7 +402,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     with closing(db()) as con, con:
         con.execute("INSERT OR IGNORE INTO users(user_id) VALUES(?)", (uid,))
-    await send_text(update, context, f"🛠️ {t(uid,'app_title')}\n\n{t(uid,'welcome')}", reply_markup=main_menu(uid))
+    # صورة ترحيب اختيارية
+    if WELCOME_IMAGE_PATH and Path(WELCOME_IMAGE_PATH).exists():
+        try:
+            with open(WELCOME_IMAGE_PATH, "rb") as f:
+                await send_photo(update, context, f, caption=f"🛠️ {t(uid,'app_title')}\n{t(uid,'welcome')}")
+        except Exception:
+            await send_text(update, context, f"🛠️ {t(uid,'app_title')}\n{t(uid,'welcome')}")
+    else:
+        await send_text(update, context, f"🛠️ {t(uid,'app_title')}\n\n{t(uid,'welcome')}")
+    await send_text(update, context, "اختر من القائمة:", reply_markup=main_menu(uid))
 
 async def cb_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -386,6 +438,9 @@ async def cb_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "menu:security":
         await q.message.edit_text(t(uid,"security_title"), reply_markup=security_menu(uid)); return
     if data == "menu:imggen":
+        # مثال تقييد VIP (اختياري): فعّل السطرين التاليين لو تبغى الذكاء للـVIP فقط
+        # if not is_vip(uid):
+        #     await q.message.reply_text("هذه الميزة للـ VIP فقط.", reply_markup=vip_menu(uid)); return
         context.user_data["await"] = "imggen_prompt"
         await q.message.edit_text(t(uid,"imggen_hint"), reply_markup=main_menu(uid)); return
     if data == "menu:translate":
@@ -407,7 +462,7 @@ async def cb_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif op == "jpg2pdf_finish":
             imgs = context.user_data.get("jpg2pdf_list") or []
             if not imgs:
-                await send_text(update, context, "لا توجد صور بعد.", reply_markup=pdf_menu(uid))
+                await q.message.reply_text("لا توجد صور بعد.", reply_markup=pdf_menu(uid))
             else:
                 await do_jpg_to_pdf_and_send(update, context, imgs)
                 context.user_data["jpg2pdf_list"]=[]
@@ -447,7 +502,66 @@ async def cb_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["await"]="translate_text"
         await q.message.edit_text(t(uid,"translate_now"), reply_markup=main_menu(uid)); return
 
+    # إضافات
+    if data == "menu:extras":
+        await q.message.edit_text("اختر من الإضافات:", reply_markup=extras_menu(uid)); return
+
+    if data == "ex:smm":
+        links = [
+            ("zyadat.com", "https://zyadat.com/"),
+            ("followadd.com", "https://followadd.com"),
+            ("smmcpan.com", "https://smmcpan.com"),
+            ("seoclevers.com", "https://seoclevers.com"),
+            ("followergi.com", "https://followergi.com"),
+            ("seorrs.com", "https://seorrs.com"),
+            ("drd3m.com/ref/ixeuw", "https://drd3m.com/ref/ixeuw"),
+        ]
+        rows = [[InlineKeyboardButton(name, url=url)] for name, url in links]
+        rows.append([InlineKeyboardButton(LOCALES[user_lang(uid)]["back"], callback_data="menu:back")])
+        await q.message.edit_text("🚀 مواقع الرشق:", reply_markup=InlineKeyboardMarkup(rows)); return
+
+    if data == "ex:epic":
+        txt = ("Hello Epicgames, I am the dad of (اسمك), so my son was on an app called Discord and fell for a phishing site, "
+               "logged in with his Epicgames information and someone got into his account. The hacker linked his PSN account so "
+               "my son cannot link his own PSN account. I managed to change everything and got the phishing site deleted. "
+               "Please unlink the hacker’s PSN from my son’s Epic account so he can play again. Thanks.")
+        await q.message.edit_text("✉️ انسخ الرسالة وعدّل الاسم:\n\n" + txt, reply_markup=extras_menu(uid)); return
+
+    # VIP & Verify
+    if data == "menu:vip":
+        await q.message.edit_text("⭐ VIP & التحقق", reply_markup=vip_menu(uid)); return
+
+    if data == "vip:verify":
+        ok, missing = await check_required_memberships(context, uid)
+        set_verified(uid, ok)
+        if ok:
+            await q.message.edit_text("✅ تم التحقق: أنت عضو في كل القنوات.", reply_markup=vip_menu(uid))
+        else:
+            btns = []
+            for cid in missing:
+                # رابط فتح القناة الخاصة: تحويل -100xxxxxxxxxx إلى /c/xxxxxxxxxx (ينفع للقنوات العامة/الخاصة حسب الحالة)
+                btns.append([InlineKeyboardButton(f"فتح القناة {cid}", url=f"https://t.me/c/{str(cid).replace('-100','')}")])
+            btns.append([InlineKeyboardButton(LOCALES[user_lang(uid)]["back"], callback_data="menu:back")])
+            await q.message.edit_text("❌ لست عضوًا في كل القنوات المطلوبة. انضم ثم اضغط تحقق مجددًا.",
+                                      reply_markup=InlineKeyboardMarkup(btns))
+        return
+
+    if data == "vip:status":
+        await q.message.edit_text(f"⭐ VIP: {'✅' if is_vip(uid) else '❌'}\n🔒 Verified: {'✅' if is_verified(uid) else '❌'}",
+                                  reply_markup=vip_menu(uid)); return
+
 # ========= الموقع =========
+async def check_required_memberships(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> tuple[bool, list[int]]:
+    missing = []
+    for cid in VERIFY_CHANNEL_IDS:
+        try:
+            member = await context.bot.get_chat_member(cid, user_id)
+            if getattr(member, "status", "") in ("left", "kicked"):
+                missing.append(cid)
+        except Exception:
+            missing.append(cid)
+    return (len(missing) == 0, missing)
+
 async def on_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if context.user_data.get("await") != "address_location":
@@ -820,23 +934,86 @@ async def do_translate(text: str, src: str, dst: str) -> str:
             pass
     return f"[{src}→{dst}] {text}"
 
+# ========= أوامر VIP =========
+async def grant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not is_admin(uid):
+        await send_text(update, context, "غير مصرح."); return
+    target = None
+    if update.message.reply_to_message:
+        target = update.message.reply_to_message.from_user.id
+    elif context.args and context.args[0].isdigit():
+        target = int(context.args[0])
+    if not target:
+        await send_text(update, context, "استخدم: /grant <USER_ID> أو رد على رسالة المستخدم."); return
+    set_vip(target, True)
+    await send_text(update, context, f"✅ تم منح VIP للمستخدم {target}.")
+
+async def revoke_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not is_admin(uid):
+        await send_text(update, context, "غير مصرح."); return
+    target = None
+    if update.message.reply_to_message:
+        target = update.message.reply_to_message.from_user.id
+    elif context.args and context.args[0].isdigit():
+        target = int(context.args[0])
+    if not target:
+        await send_text(update, context, "استخدم: /revoke <USER_ID> أو رد على رسالة المستخدم."); return
+    set_vip(target, False)
+    await send_text(update, context, f"✅ تم إلغاء VIP عن المستخدم {target}.")
+
+async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    await send_text(update, context, f"⭐ VIP: {'✅' if is_vip(uid) else '❌'}\n🔒 Verified: {'✅' if is_verified(uid) else '❌'}")
+
 # ========= أخطاء عامة =========
 async def errors(update: object, context: ContextTypes.DEFAULT_TYPE):
     log.exception("Exception in handler", exc_info=context.error)
 
-# ========= تشغيل =========
-def main():
+# ========= خادم ويب صحي (لـ Render) =========
+async def _health(request):
+    return web.Response(text="OK", status=200)
+
+async def _start_http_server():
+    app = web.Application()
+    app.router.add_get("/", _health)
+    app.router.add_get("/health", _health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.getenv("PORT", "10000"))
+    site = web.TCPSite(runner, host="0.0.0.0", port=port)
+    await site.start()
+    log.info(f"🌐 Health server started on port {port}")
+
+# ========= تشغيل (نسخة Web Service مع polling) =========
+async def amain():
     db_init()
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler(["start","menu"], start))
-    app.add_handler(CallbackQueryHandler(cb_nav))
-    app.add_handler(MessageHandler(filters.LOCATION, on_location))
-    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, on_message))
-    app.add_error_handler(errors)
-    log.info("✅ Bot started.")
-    app.run_polling(close_loop=False, drop_pending_updates=True)
+
+    tg = Application.builder().token(BOT_TOKEN).build()
+    tg.add_handler(CommandHandler(["start","menu"], start))
+    tg.add_handler(CallbackQueryHandler(cb_nav))
+    tg.add_handler(MessageHandler(filters.LOCATION, on_location))
+    tg.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, on_message))
+    tg.add_handler(CommandHandler("grant", grant_cmd))
+    tg.add_handler(CommandHandler("revoke", revoke_cmd))
+    tg.add_handler(CommandHandler("status", status_cmd))
+    tg.add_error_handler(errors)
+
+    # ابدأ خادم الويب أولًا لضمان فتح المنفذ قبل فحص Render
+    await _start_http_server()
+
+    # تشغيل البوت يدويًا لتفادي مشاكل event loop
+    await tg.initialize()
+    await tg.start()
+    await tg.updater.start_polling(drop_pending_updates=True)
+
+    # انتظر الإيقاف
+    await tg.updater.wait_until_closed()
+    await tg.stop()
+    await tg.shutdown()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(amain())
 
 
