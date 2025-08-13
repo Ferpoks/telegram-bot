@@ -1,11 +1,12 @@
-python-telegram-bot==21.7        # تشغيل بوت التليجرام
-python-dotenv==1.0.1             # قراءة ملف .env
-openai==1.43.0                   # توليد الصور والترجمة (اختياري)
-requests==2.32.3                 # طلبات HTTP أساسية
-yt-dlp==2024.8.6                 # تنزيل الفيديو والصوت
-dnspython==2.6.1                 # فحص DNS للبريد
-Pillow==10.4.0                   # معالجة الصور (JPG→PDF والعكس)
-PyMuPDF==1.24.9                  # معالجة ملفات PDF
+python-telegram-bot==21.7
+python-dotenv==1.0.1
+openai==1.43.0
+requests==2.32.3
+yt-dlp==2024.8.6
+dnspython==2.6.1
+Pillow==10.4.0
+PyMuPDF==1.24.9
+
 
 
 
