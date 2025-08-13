@@ -1,48 +1,24 @@
 # -*- coding: utf-8 -*-
-# ضع هذا الاستدعاء مرّة واحدة في بداية main() قبل app.run_polling()
-def _hotfix_add_lang_column():
-    try:
-        c = _db().cursor()
-        c.execute("PRAGMA table_info(users)")
-        cols = {r["name"] for r in c.fetchall()}
-        if "lang" not in cols:
-            _db().execute("ALTER TABLE users ADD COLUMN lang TEXT DEFAULT 'ar'")
-            _db().commit()
-            log.info("[db] hotfix: added column 'lang'")
-    except Exception as e:
-        log.error("[db] hotfix lang failed: %s", e)
-
-# داخل main():
-def main():
-    init_db()
-    _hotfix_add_lang_column()  # ← أضِف هذا السطر
-    ...
-
 """
-Bot: Ferpoks – Full-featured Telegram Bot (fixed)
-Fixes:
-- Restored sections
-- Deep OSINT (name/email/domain/phone/username) – safe, text-only
-- Translator works for text + images (OpenAI Vision)
-- Image generator fixed
-- Link scan fixed (DNS/SSL/IP + country/ASN)
-- IP lookup fixed
-- Email checker fixed
-- Virtual numbers flow (requires VNUM_API_* env) – graceful fallback
-- Image convert (compress/PDF) wired
-- Social media download wired (yt-dlp present)
-- Language switcher (Arabic/English) with /lang + button
-- Routing bugs fixed (translate no longer opens geo)
+Bot: Ferpoks – Full-featured Telegram Bot (قسم 1/2)
+- إصلاح عمود lang في قاعدة البيانات (hotfix)
+- إصلاح مشكلة التبديل بين العربية/الإنجليزية
+- Dark GPT -> رابط FlowGPT (حسب طلبك)
+- قسم الأمن السيبراني -> روابط الملفات المرسلة
+- فيزا وهمية -> فتح موقع مولد البطاقات
+- زيادة المتابعين -> 3 مواقع
+- ترجمة نص/صور، توليد صور (fallback إلى dall-e-3)، فحص روابط، IP Lookup، Email Checker، أرقام مؤقتة (placeholder)، تنزيل وسائط، ضغط/تحويل صور→PDF
+- بدون روابط خارجية في الأقسام الأخرى إلا حيث طلبت أنت صراحةً (Dark GPT + فيزا وهمية + ملفات الأمن والبايثون + المتابعين)
 """
 import os, sqlite3, threading, time, asyncio, re, json, logging, base64, ssl, socket, tempfile, io
 from pathlib import Path
 from dotenv import load_dotenv
 
-# ===== Logging =====
+# ===== اللوج =====
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("bot")
 
-# ===== Optional OpenAI =====
+# ===== OpenAI (اختياري) =====
 try:
     from openai import OpenAI
 except Exception:
@@ -59,7 +35,7 @@ from telegram.ext import (
 from telegram.constants import ChatMemberStatus, ChatAction
 from telegram.error import BadRequest
 
-# ===== Env =====
+# ===== البيئة =====
 ENV_PATH = Path(".env")
 if ENV_PATH.exists() and not os.getenv("RENDER"):
     load_dotenv(ENV_PATH, override=True)
@@ -73,11 +49,11 @@ DB_PATH = os.getenv("DB_PATH", "/var/data/bot.db")
 def _ensure_parent(p: str):
     Path(p).parent.mkdir(parents=True, exist_ok=True)
 
-# ===== OpenAI setup =====
+# ===== OpenAI إعداد =====
 OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
 OPENAI_CHAT_MODEL  = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
-OPENAI_IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-1")
-OPENAI_STT_MODEL   = os.getenv("OPENAI_STT_MODEL", "gpt-4o-mini-transcribe")  # whisper-1 alternative
+OPENAI_IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "dall-e-3")  # الافتراضي المتاح عادةً
+OPENAI_STT_MODEL   = os.getenv("OPENAI_STT_MODEL", "gpt-4o-mini-transcribe")
 AI_ENABLED = bool(OPENAI_API_KEY) and (OpenAI is not None)
 client = OpenAI(api_key=OPENAI_API_KEY) if AI_ENABLED else None
 
@@ -89,11 +65,12 @@ MAIN_CHANNEL_LINK = f"https://t.me/{MAIN_CHANNEL_USERNAMES[0]}"
 CHANNEL_ID = None
 
 WELCOME_PHOTO = os.getenv("WELCOME_PHOTO","assets/ferpoks.jpg")
-WELCOME_TEXT  = "مرحباً بك في بوت فيربوكس 🔥 – كل الميزات تعمل داخل الدردشة مباشرة ✨"
+WELCOME_TEXT  = "مرحباً بك في بوت فيربوكس 🔥 – جميع الخدمات تعمل من داخل الدردشة ✨"
 
-# ===== Payments (Paylink) =====
+# ===== خادِم ويب (Webhook + Health) =====
 PAY_WEBHOOK_ENABLE = os.getenv("PAY_WEBHOOK_ENABLE", "1") == "1"
 PAY_WEBHOOK_SECRET = os.getenv("PAY_WEBHOOK_SECRET", "").strip()
+
 PAYLINK_API_BASE   = os.getenv("PAYLINK_API_BASE", "https://restapi.paylink.sa/api").rstrip("/")
 PAYLINK_API_ID     = (os.getenv("PAYLINK_API_ID") or "").strip()
 PAYLINK_API_SECRET = (os.getenv("PAYLINK_API_SECRET") or "").strip()
@@ -113,7 +90,6 @@ def _build_pay_link(ref: str) -> str:
     sep = "&" if "?" in base else "?"
     return f"{base}{sep}ref={ref}"
 
-# ===== aiohttp server (health/webhook) =====
 SERVE_HEALTH = os.getenv("SERVE_HEALTH","0") == "1" or PAY_WEBHOOK_ENABLE
 try:
     from aiohttp import web, ClientSession, ClientTimeout
@@ -206,9 +182,10 @@ def _run_http_server():
 
 _run_http_server()
 
-# ===== Startup =====
+# ===== الإقلاع =====
 async def on_startup(app: Application):
     init_db()
+    _hotfix_add_lang_column()  # إصلاح عمود lang لو ناقص
     if AIOHTTP_AVAILABLE: _ = await get_http_session()
     try:
         await app.bot.delete_webhook(drop_pending_updates=True)
@@ -247,7 +224,7 @@ async def on_startup(app: Application):
     except Exception as e:
         log.warning("[startup] owner cmds: %s", e)
 
-# ===== Database =====
+# ===== قاعدة البيانات =====
 _conn_lock = threading.RLock()
 
 def _db():
@@ -268,19 +245,41 @@ def migrate_db():
           verified_ok INTEGER DEFAULT 0,
           verified_at INTEGER DEFAULT 0,
           vip_forever INTEGER DEFAULT 0,
-          vip_since INTEGER DEFAULT 0,
-          lang TEXT DEFAULT 'ar'
+          vip_since INTEGER DEFAULT 0
         );""")
+        # جدول المدفوعات
         _db().execute("""
         CREATE TABLE IF NOT EXISTS payments (
-          ref TEXT PRIMARY KEY, user_id TEXT, amount REAL, provider TEXT,
-          status TEXT, created_at INTEGER, paid_at INTEGER, raw TEXT
+          ref TEXT PRIMARY KEY,
+          user_id TEXT,
+          amount REAL,
+          provider TEXT,
+          status TEXT,
+          created_at INTEGER,
+          paid_at INTEGER,
+          raw TEXT
         );""")
+        # حالة AI
         _db().execute("""
         CREATE TABLE IF NOT EXISTS ai_state (
-          user_id TEXT PRIMARY KEY, mode TEXT, updated_at INTEGER
+          user_id TEXT PRIMARY KEY,
+          mode TEXT,
+          updated_at INTEGER
         );""")
         _db().commit()
+
+def _hotfix_add_lang_column():
+    """يضيف عمود lang إذا كان مفقوداً في قواعد بيانات قديمة."""
+    try:
+        c = _db().cursor()
+        c.execute("PRAGMA table_info(users)")
+        cols = {r["name"] for r in c.fetchall()}
+        if "lang" not in cols:
+            _db().execute("ALTER TABLE users ADD COLUMN lang TEXT DEFAULT 'ar'")
+            _db().commit()
+            log.info("[db] hotfix: added column 'lang'")
+    except Exception as e:
+        log.error("[db] hotfix lang failed: %s", e)
 
 def init_db(): migrate_db()
 
@@ -291,10 +290,14 @@ def user_get(uid) -> dict:
         c.execute("SELECT * FROM users WHERE id=?", (uid,))
         r = c.fetchone()
         if not r:
-            _db().execute("INSERT INTO users (id) VALUES (?)", (uid,)); _db().commit()
+            _db().execute("INSERT INTO users (id, premium, verified_ok, verified_at, vip_forever, vip_since, lang) VALUES (?,?,?,?,?,?,?)",
+                          (uid,0,0,0,0,0,'ar'))
+            _db().commit()
             return {"id": uid, "premium":0, "verified_ok":0, "verified_at":0, "vip_forever":0, "vip_since":0, "lang":"ar"}
         d = dict(r)
-        d.setdefault("lang","ar")
+        if "lang" not in d:
+            # fallback في حال قاعدة قديمة جدًا
+            d["lang"] = "ar"
         return d
 
 def user_set_lang(uid, lang):
@@ -328,7 +331,7 @@ def ai_get_mode(uid):
         c=_db().cursor(); c.execute("SELECT mode FROM ai_state WHERE user_id=?", (str(uid),))
         r=c.fetchone(); return r["mode"] if r else None
 
-# ===== Payments =====
+# ===== المدفوعات =====
 def payments_new_ref(uid:int)->str: return f"{uid}-{int(time.time())}"
 
 def payments_create(uid:int, amount:float, provider="paylink", ref=None)->str:
@@ -359,7 +362,7 @@ def payments_mark_paid_by_ref(ref:str, raw=None)->bool:
     except Exception as e: log.error("[payments_mark_paid] grant: %s", e)
     return True
 
-# ===== UI Helpers =====
+# ===== ترجمات، نصوص واجهة =====
 def admin_button_url() -> str:
     return f"tg://resolve?domain={OWNER_USERNAME}" if OWNER_USERNAME else f"tg://user?id={OWNER_ID}"
 
@@ -382,18 +385,48 @@ def bottom_menu_kb(uid:int):
     ]
     return InlineKeyboardMarkup(rows)
 
+# ===== الأقسام =====
+SECTIONS = {
+    "python_zero": {"title":"🐍 بايثون من الصفر (مجاني)","desc":"كتاب/دليل بايثون من الصفر.","is_free":True},
+    "ai_tools":   {"title":"🤖 أدوات الذكاء","desc":"OSINT عميق / مولد نصوص / مترجم / صوت→نص / صور AI","is_free":True},
+    "security_vip":{"title":"🛡️ الأمن السيبراني (VIP)","desc":"روابط الدورات + أدوات الفحص","is_free":False},
+    "services_misc":{"title":"🧰 خدمات فورية","desc":"أرقام مؤقتة / صور→PDF / تنزيل وسائط","is_free":True},
+    "dark_gpt":   {"title":"🕶️ Dark GPT","desc":"ينقلك إلى FlowGPT (حسب طلبك)","is_free":True},
+    "virtual_visa":{"title":"💳 فيزا وهمية (اختبار)","desc":"فتح موقع توليد بطاقات تجريبية","is_free":True},
+    "followers_boost":{"title":"🚀 زيادة المتابعين","desc":"3 مواقع موثوقة لخدمات SMM","is_free":True},
+}
+
+# روابط الأقسام (حسب طلبك)
+LINKS = {
+    # بايثون من الصفر (رابطك)
+    "python_book": "https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/Y8WctvBLiA6u6AASeZX2IUfDQAolTJ4QFGx9WRCu.pdf",
+    # الأمن السيبراني (روابطك)
+    "cyber_file_1": "https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/pZ0spOmm1K0dA2qAzUuWUb4CcMMjUPTbn7WMRwAc.pdf",
+    "cyber_file_2": "https://www.mediafire.com/folder/r26pp5mpduvnx/%D8%AF%D9%88%D8%B1%D8%A9_%D8%A7%D9%84%D9%87%D8%A7%D9%83%D8%B1_%D8%A7%D9%84%D8%A7%D8%AE%D9%84%D8%A7%D9%82%D9%8A_%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D8%B1%D8%AD%D9%85%D9%86_%D9%88%D8%B5%D9%81%D9%8A",
+    # Dark GPT (رابطك)
+    "dark_gpt": "https://flowgpt.com/chat/M0GRwnsc2MY0DdXPPmF4X",
+    # فيزا وهمية: مولد بطاقات (يمكن تغييره)
+    "visa_gen": "https://namso-gen.com/",
+    # زيادة المتابعين
+    "smm_1": "https://smmcpan.com",
+    "smm_2": "https://seoclevers.com",
+    "smm_3": "https://saudifollowup.com",  # سعودي فولو با
+}
+
 def sections_list_kb():
+    # رتب المفاتيح بالشكل المطلوب
+    order = ("ai_tools","security_vip","followers_boost","services_misc","python_zero","dark_gpt","virtual_visa")
     rows=[]
-    for key in ("ai_tools","security_vip","services_misc","python_zero","classic_sections"):
-        title = SECTIONS[key]["title"]; free = SECTIONS[key].get("is_free", False)
-        lock = "🟢" if free else "🔒"
-        rows.append([InlineKeyboardButton(f"{lock} {title}", callback_data=f"sec_{key}")])
+    for key in order:
+        sec = SECTIONS[key]
+        lock = "🟢" if sec.get("is_free") else "🔒"
+        rows.append([InlineKeyboardButton(f"{lock} {sec['title']}", callback_data=f"sec_{key}")])
     rows.append([InlineKeyboardButton(tr("back"), callback_data="back_home")])
     return InlineKeyboardMarkup(rows)
 
 def ai_tools_kb():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔎 بحث ذكي (عميق)", callback_data="ai_osint")],
+        [InlineKeyboardButton("🔎 بحث ذكي (OSINT)", callback_data="ai_osint")],
         [InlineKeyboardButton("✍️ مولد نصوص", callback_data="ai_writer")],
         [InlineKeyboardButton("🎙️ صوت → نص", callback_data="ai_stt")],
         [InlineKeyboardButton("🌐 مترجم (نص/صورة)", callback_data="ai_translate")],
@@ -403,6 +436,7 @@ def ai_tools_kb():
 
 def security_kb():
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📥 روابط الأمن السيبراني", callback_data="sec_cyber_links")],
         [InlineKeyboardButton("🧪 فحص رابط (VIP)", callback_data="sec_linkscan")],
         [InlineKeyboardButton("🛰️ IP Lookup", callback_data="sec_ip")],
         [InlineKeyboardButton("✉️ Email Checker (VIP)", callback_data="sec_email")],
@@ -417,6 +451,17 @@ def services_kb():
         [InlineKeyboardButton("↩️ رجوع", callback_data="back_sections")]
     ])
 
+def followers_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("SMMCPAN", url=LINKS["smm_1"])],
+        [InlineKeyboardButton("SEOclevers", url=LINKS["smm_2"])],
+        [InlineKeyboardButton("سعودي فولو با", url=LINKS["smm_3"])],
+        [InlineKeyboardButton("↩️ رجوع", callback_data="back_sections")]
+    ])
+
+def section_back_kb(): 
+    return InlineKeyboardMarkup([[InlineKeyboardButton("📂 رجوع للأقسام", callback_data="back_sections")]])
+
 def lang_kb(uid:int):
     cur = user_get(uid).get("lang","ar")
     return InlineKeyboardMarkup([
@@ -425,30 +470,7 @@ def lang_kb(uid:int):
         [InlineKeyboardButton("↩️ رجوع", callback_data="back_home")]
     ])
 
-def section_back_kb(): return InlineKeyboardMarkup([[InlineKeyboardButton("📂 رجوع للأقسام", callback_data="back_sections")]])
-
-# ===== Sections =====
-SECTIONS = {
-    "python_zero": {"title":"🐍 بايثون من الصفر (مجاني)","desc":"مقدمة وأساسيات بايثون.","is_free":True},
-    "ai_tools":   {"title":"🤖 أقسام تقنية ذكية","desc":"OSINT عميق / مولد نصوص / مترجم / صوت→نص / صور AI","is_free":True},
-    "security_vip":{"title":"🛡️ أمن وحماية (VIP)","desc":"Link Scan / IP Lookup / Email Checker","is_free":False},
-    "services_misc":{"title":"🧰 خدمات فورية","desc":"أرقام مؤقتة / صور→PDF / تنزيل وسائط","is_free":True},
-    # Restored legacy/Classic section (placeholder text only, no links to user)
-    "classic_sections":{"title":"📚 أقسام كلاسيكية","desc":"الأقسام القديمة أُعيدت كنصوص داخلية بدون روابط مباشرة.","is_free":True},
-}
-
-# ===== Safe edit =====
-async def safe_edit(q, text=None, kb=None):
-    try:
-        if text is not None:
-            await q.edit_message_text(text, reply_markup=kb, parse_mode="HTML", disable_web_page_preview=True)
-        elif kb is not None:
-            await q.edit_message_reply_markup(reply_markup=kb)
-    except BadRequest as e:
-        if "message is not modified" not in str(e).lower():
-            log.warning("safe_edit: %s", e)
-
-# ===== Membership =====
+# ===== أمان العضوية =====
 ALLOWED_STATUSES = {ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR}
 try: ALLOWED_STATUSES.add(ChatMemberStatus.OWNER)
 except: pass
@@ -476,7 +498,7 @@ async def is_member(context: ContextTypes.DEFAULT_TYPE, user_id:int, force=False
 async def must_be_member_or_vip(context, uid:int)->bool:
     return user_is_premium(uid) or uid==OWNER_ID or await is_member(context, uid)
 
-# ===== AI helpers =====
+# ===== ذكاء اصطناعي: شات عام =====
 def _chat(messages, temperature=0.4, max_tokens=None):
     if not AI_ENABLED or client is None: return None, "ai_disabled"
     models=[OPENAI_CHAT_MODEL, "gpt-4o-mini", "gpt-4o"]
@@ -500,7 +522,7 @@ def ai_reply(prompt, lang="ar")->str:
     if not r: return "⚠️ تعذّر الرد." if lang=="ar" else "⚠️ Failed to respond."
     return (r.choices[0].message.content or "").strip()
 
-# ===== Geo/IP & utilities =====
+# ===== IP/Geo وأدوات =====
 _IP_RE = re.compile(r"\b(?:(?:\d{1,3}\.){3}\d{1,3})\b")
 _HOST_RE = re.compile(r"^[a-zA-Z0-9.-]{1,253}\.[A-Za-z]{2,63}$")
 
@@ -570,7 +592,7 @@ def email_basic_check(email: str)->str:
         if domain.endswith(k): provider=v; break
     return f"✅ صالح بنيويًا.\n📮 مزود محتمل: {provider}\n🌐 الدومين: {domain}"
 
-# ===== Media/Image utils =====
+# ===== صور/وسائط =====
 def pillow_ok():
     try:
         from PIL import Image  # noqa
@@ -599,7 +621,7 @@ def yt_dlp_ok():
 
 async def download_media(url:str, is_vip:bool)->tuple[str,bytes]|tuple[None,None]:
     if not yt_dlp_ok(): return None,None
-    import yt_dlp, tempfile, os
+    import yt_dlp, os
     ydl_opts={
         "quiet": True, "noprogress": True,
         "outtmpl": "%(title).80s.%(ext)s",
@@ -609,17 +631,19 @@ async def download_media(url:str, is_vip:bool)->tuple[str,bytes]|tuple[None,None
     def _run():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info=ydl.extract_info(url, download=True)
-            if "requested_downloads" in info and info["requested_downloads"]:
-                fn=info["requested_downloads"][0]["filepath"]
-            else:
+            filepath=None
+            # احصل على الملف الذي نزّل
+            req = info.get("requested_downloads") or []
+            if req:
+                filepath=req[0].get("filepath")
+            if not filepath:
+                # محاولة التقاط أول ملف بالامتدادات المعروفة
                 title=info.get("title","media")
-                exts=("mp4","mkv","webm","mp3","m4a")
-                fn=None
                 for p in os.listdir("."):
-                    if p.lower().startswith(title.lower()) and p.split(".")[-1].lower() in exts:
-                        fn=p; break
-            if not fn: raise RuntimeError("file not found after download")
-            with open(fn,"rb") as f: data=f.read()
+                    if p.lower().startswith(title.lower()) and p.split(".")[-1].lower() in ("mp4","mkv","webm","mp3","m4a"):
+                        filepath=p; break
+            if not filepath: raise RuntimeError("file not found after download")
+            with open(filepath,"rb") as f: data=f.read()
             return info.get("title","media"), data
     try:
         t,d = await loop.run_in_executor(None, _run)
@@ -627,15 +651,24 @@ async def download_media(url:str, is_vip:bool)->tuple[str,bytes]|tuple[None,None
     except Exception as e:
         log.warning("[media] %s", e); return None,None
 
-# ===== AI Vision (image translate) & Image Gen =====
+# ===== توليد صور AI (fallback) =====
 async def ai_generate_image(prompt:str)->bytes|None:
     if not AI_ENABLED or client is None: return None
-    try:
-        r=client.images.generate(model=OPENAI_IMAGE_MODEL, prompt=prompt, size="1024x1024")
-        b64=r.data[0].b64_json; return base64.b64decode(b64)
-    except Exception as e:
-        log.error("[image-gen] %s", e); return None
+    models = [OPENAI_IMAGE_MODEL, "dall-e-3", "gpt-image-1"]
+    tried = set()
+    for m in models:
+        if m in tried: 
+            continue
+        tried.add(m)
+        try:
+            r=client.images.generate(model=m, prompt=prompt, size="1024x1024")
+            b64=r.data[0].b64_json; return base64.b64decode(b64)
+        except Exception as e:
+            log.error("[image-gen] %s", e)
+            continue
+    return None
 
+# ===== ترجمة صورة عبر Vision =====
 async def ai_translate_image_bytes(b:bytes, target_lang:str="ar")->str:
     if not AI_ENABLED or client is None: return "⚠️ AI معطل."
     try:
@@ -644,16 +677,17 @@ async def ai_translate_image_bytes(b:bytes, target_lang:str="ar")->str:
         r,err=_chat([
             {"role":"system","content":sysmsg},
             {"role":"user","content":[
-                {"type":"text","text":"Extract all text and provide translation only."},
+                {"type":"text","text":"Extract the text and provide translation only."},
                 {"type":"image_url","image_url":{"url":"data:image/jpeg;base64,"+b64}}
             ]}
         ], temperature=0.0)
-        if err: return f"⚠️ {err}"
+        if err:
+            return f"⚠️ فشل الاتصال بـ OpenAI ({err})."
         return (r.choices[0].message.content or "").strip()
     except Exception as e:
         return f"⚠️ خطأ في الترجمة: {e}"
 
-# ===== Commands =====
+# ===== الأوامر =====
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📜 /start — البدء\n/geo — تحديد موقع IP\n/translate — مترجم\n/lang — تغيير اللغة")
 
@@ -700,13 +734,23 @@ async def lang_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid=update.effective_user.id
     await update.message.reply_text("اختر لغتك:", reply_markup=lang_kb(uid))
 
-# ===== Buttons =====
+# ===== الأزرار =====
+async def safe_edit(q, text=None, kb=None):
+    try:
+        if text is not None:
+            await q.edit_message_text(text, reply_markup=kb, parse_mode="HTML", disable_web_page_preview=True)
+        elif kb is not None:
+            await q.edit_message_reply_markup(reply_markup=kb)
+    except BadRequest as e:
+        if "message is not modified" not in str(e).lower():
+            log.warning("safe_edit: %s", e)
+
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q=update.callback_query; uid=q.from_user.id
     user_get(uid)
     await q.answer()
 
-    # gating
+    # بوابة العضوية
     if q.data=="verify":
         ok=await is_member(context, uid, force=True)
         if ok:
@@ -719,20 +763,21 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]))
         return
 
-    # language
+    # اللغة
     if q.data=="lang_menu":
         await safe_edit(q, "اختر اللغة:", kb=lang_kb(uid)); return
     if q.data in ("lang_ar","lang_en"):
         user_set_lang(uid, "ar" if q.data=="lang_ar" else "en")
-        await safe_edit(q, "✅ تم ضبط اللغة.", kb=bottom_menu_kb(uid)); return
+        await safe_edit(q, "✅ Language updated.", kb=bottom_menu_kb(uid)); return
 
-    # membership check
+    # تحقق الانضمام
     if not await must_be_member_or_vip(context, uid):
         await safe_edit(q, "🔐 انضم للقناة لاستخدام البوت:", kb=InlineKeyboardMarkup([
             [InlineKeyboardButton(tr("follow_btn"), url=MAIN_CHANNEL_LINK)],
             [InlineKeyboardButton(tr("check_btn"), callback_data="verify")]
         ])); return
 
+    # معلومات و VIP
     if q.data=="vip_badge":
         u=user_get(uid); since=u.get("vip_since",0)
         since_txt=time.strftime("%Y-%m-%d", time.gmtime(since)) if since else "N/A"
@@ -740,8 +785,10 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if q.data=="myinfo":
         u=user_get(uid)
-        await safe_edit(q, f"👤 {q.from_user.full_name}\n🆔 {uid}\n🌐 لغة العرض: {u.get('lang','ar')}", kb=bottom_menu_kb(uid)); return
+        lang=u.get("lang","ar")
+        await safe_edit(q, f"👤 {q.from_user.full_name}\n🆔 {uid}\n🌐 لغة العرض: {lang}", kb=bottom_menu_kb(uid)); return
 
+    # ترقية VIP
     if q.data=="upgrade":
         if user_is_premium(uid) or uid==OWNER_ID:
             await safe_edit(q, "⭐ حسابك VIP بالفعل.", kb=bottom_menu_kb(uid)); return
@@ -749,18 +796,29 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit(q, f"⏳ إنشاء رابط الدفع…\n🔖 مرجعك: <code>{ref}</code>", kb=InlineKeyboardMarkup([[InlineKeyboardButton(tr("back"), callback_data="back_sections")]]))
         try:
             if USE_PAYLINK_API:
-                token = await paylink_auth_token()
-                url = f"{PAYLINK_API_BASE}/addInvoice"
-                body = {
-                    "orderNumber": ref, "amount": VIP_PRICE_SAR, "clientName": q.from_user.full_name or "User",
-                    "clientMobile":"0500000000","currency":"SAR","callBackUrl":_public_url("/payhook"),
-                    "displayPending": False,"note": f"VIP #{ref}",
-                    "products":[{"title":"VIP Lifetime","price":VIP_PRICE_SAR,"qty":1,"isDigital":True}]
-                }
-                s=await get_http_session()
-                async with s.post(url, json=body, headers={"Authorization": f"Bearer {token}"}) as r:
-                    data=await r.json(content_type=None)
-                    pay_url=data.get("url") or data.get("mobileUrl") or data.get("qrUrl") or _build_pay_link(ref)
+                # مصادقة
+                token=None
+                try:
+                    s=await get_http_session()
+                    async with s.post(f"{PAYLINK_API_BASE}/auth", json={"apiId":PAYLINK_API_ID,"secretKey":PAYLINK_API_SECRET,"persistToken":False}) as r:
+                        data=await r.json(content_type=None)
+                        token=data.get("token") or data.get("access_token") or data.get("jwt")
+                except Exception as e:
+                    log.error("[paylink auth] %s", e)
+                pay_url=_build_pay_link(ref)
+                if token:
+                    body = {
+                        "orderNumber": ref, "amount": VIP_PRICE_SAR, "clientName": q.from_user.full_name or "User",
+                        "clientMobile":"0500000000","currency":"SAR","callBackUrl":_public_url("/payhook"),
+                        "displayPending": False,"note": f"VIP #{ref}",
+                        "products":[{"title":"VIP Lifetime","price":VIP_PRICE_SAR,"qty":1,"isDigital":True}]
+                    }
+                    try:
+                        async with s.post(f"{PAYLINK_API_BASE}/addInvoice", json=body, headers={"Authorization": f"Bearer {token}"}) as r:
+                            data=await r.json(content_type=None)
+                            pay_url=data.get("url") or data.get("mobileUrl") or data.get("qrUrl") or pay_url
+                    except Exception as e:
+                        log.error("[paylink addInvoice] %s", e)
             else:
                 pay_url=_build_pay_link(ref)
             await safe_edit(q, f"💳 VIP مدى الحياة ({VIP_PRICE_SAR:.2f} SAR)\n🔖 مرجع: <code>{ref}</code>", kb=InlineKeyboardMarkup([
@@ -785,34 +843,67 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]))
         return
 
-    # navigation
+    # تنقل الأقسام
     if q.data == "back_home":
         ai_set_mode(uid, None)
         await safe_edit(q, "👇 القائمة:", kb=bottom_menu_kb(uid)); return
+
     if q.data == "back_sections" or q.data.startswith("sec_"):
         if q.data.startswith("sec_"):
-            key=q.data.replace("sec_",""); sec=SECTIONS.get(key)
-            if not sec:
+            key=q.data.replace("sec_","")
+            if key not in SECTIONS:
                 await safe_edit(q, "قريباً…", kb=sections_list_kb()); return
+            sec=SECTIONS[key]
             allowed = sec.get("is_free") or user_is_premium(uid) or uid==OWNER_ID
             if not allowed:
                 await safe_edit(q, f"🔒 {sec['title']}\n{tr('access_denied')}", kb=sections_list_kb()); return
+
+            # سلوك خاص لكل قسم
             if key=="ai_tools":
                 await safe_edit(q, f"{sec['title']}\n{sec['desc']}\nاختر:", kb=ai_tools_kb()); return
             if key=="security_vip":
                 await safe_edit(q, f"{sec['title']}\n{sec['desc']}\nاختر:", kb=security_kb()); return
             if key=="services_misc":
                 await safe_edit(q, f"{sec['title']}\n{sec['desc']}\nاختر:", kb=services_kb()); return
+            if key=="followers_boost":
+                await safe_edit(q, f"{sec['title']}\nاختر موقع:", kb=followers_kb()); return
+            if key=="dark_gpt":
+                # يفتح رابط FlowGPT مباشرة
+                await safe_edit(q, f"🕶️ Dark GPT\nاضغط لفتح: {LINKS['dark_gpt']}", kb=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("فتح Dark GPT", url=LINKS["dark_gpt"])],
+                    [InlineKeyboardButton("↩️ رجوع", callback_data="back_sections")]
+                ])); return
+            if key=="virtual_visa":
+                await safe_edit(q, f"💳 فيزا وهمية (اختبار)\nمولّد البطاقات:", kb=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("فتح مولّد البطاقات", url=LINKS["visa_gen"])],
+                    [InlineKeyboardButton("↩️ رجوع", callback_data="back_sections")]
+                ])); return
+            if key=="python_zero":
+                await safe_edit(q, "🐍 بايثون من الصفر — تحميل:", kb=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("فتح/تحميل الكتاب", url=LINKS["python_book"])],
+                    [InlineKeyboardButton("↩️ رجوع", callback_data="back_sections")]
+                ])); return
+
             await safe_edit(q, f"{sec['title']}\n{sec.get('desc','')}", kb=section_back_kb()); return
         else:
             await safe_edit(q, "📂 الأقسام:", kb=sections_list_kb()); return
 
-    # AI tool modes
+    # أزرار الأمن السيبراني داخل قائمته
+    if q.data=="sec_cyber_links":
+        # إظهار روابط الأمن السيبراني (2 رابط من عندك)
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📘 ملف 1", url=LINKS["cyber_file_1"])],
+            [InlineKeyboardButton("📦 دورة الهاكر الأخلاقي", url=LINKS["cyber_file_2"])],
+            [InlineKeyboardButton("↩️ رجوع", callback_data="back_sections")]
+        ])
+        await safe_edit(q, "🛡️ روابط الأمن السيبراني:", kb=kb); return
+
+    # خريطة الأوضاع للأزرار (لازم تكون صحيحة)
     map_modes={
         "ai_osint":"osint",
         "ai_writer":"writer",
         "ai_stt":"stt",
-        "ai_translate":"translate",
+        "ai_translate":"translate",   # ← مهم: صار يضبط وضع الترجمة
         "ai_images":"image_ai",
         "sec_linkscan":"linkscan",
         "sec_ip":"geo_ip",
@@ -832,263 +923,163 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "linkscan":"🧪 أرسل الرابط لفحصه.",
             "geo_ip":"🛰️ أرسل IP أو دومين.",
             "email_check":"✉️ أرسل البريد الإلكتروني لفحصه.",
-            "vnum":"📱 أرسل رمز الدولة (SA/US/EG...).",
+            "vnum":"📱 هذه الخدمة تحتاج مفتاح API. سنفعّلها لاحقًا.",
             "convert":"🗜️ أرسل صورة (أو عدّة صور) لاختيار ضغط/تحويل PDF.",
             "media_dl":"⬇️ أرسل رابط فيديو/صوت (YouTube/Twitter/Instagram).",
         }
         await safe_edit(q, prompts[map_modes[q.data]], kb=section_back_kb()); return
+# === تكملة الكود من الجزء الأول ===
 
-# ===== Messages: text/photo/voice =====
-async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid=update.effective_user.id
-    if not await must_be_member_or_vip(context, uid):
-        await update.message.reply_text("🔐 انضم للقناة لاستخدام البوت:"); return
-    u=user_get(uid); lang=u.get("lang","ar")
-    mode=ai_get_mode(uid)
-    txt=(update.message.text or "").strip()
+# باقي وظائف وأوامر البوت
 
-    # GEO
-    if mode=="geo_ip":
-        if not txt: return
-        await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
-        query=None
-        m=_IP_RE.search(txt)
-        if m: query=m.group(0)
-        elif _HOST_RE.match(txt.lower()): query=txt.lower()
-        else:
-            await update.message.reply_text("⚠️ أدخل IP أو دومين صحيح."); return
-        sent=await update.message.reply_text("⏳ جاري الاستعلام …")
-        data=await fetch_geo(query); out=fmt_geo(data)
-        try: await sent.edit_text(out, parse_mode="HTML", reply_markup=section_back_kb(), disable_web_page_preview=True)
-        except: await update.message.reply_text(out, parse_mode="HTML", reply_markup=section_back_kb(), disable_web_page_preview=True)
+# قسم الأمن السيبراني
+async def cybersecurity_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        "🛡️ **قسم الأمن السيبراني**\n\n"
+        "📂 [ملف PDF - أدوات الفحص](https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/pZ0spOmm1K0dA2qAzUuWUb4CcMMjUPTbn7WMRwAc.pdf)\n"
+        "📂 [دورة الهاكر الأخلاقي](https://www.mediafire.com/folder/r26pp5mpduvnx/%D8%AF%D9%88%D8%B1%D8%A9_%D8%A7%D9%84%D9%87%D8%A7%D9%83%D8%B1_%D8%A7%D9%84%D8%A7%D8%AE%D9%84%D8%A7%D9%82%D9%8A_%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D8%B1%D8%AD%D9%85%D9%86_%D9%88%D8%B5%D9%81%D9%8A)\n"
+        "📂 [بايثون من الصفر](https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/Y8WctvBLiA6u6AASeZX2IUfDQAolTJ4QFGx9WRCu.pdf)\n"
+    )
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+# قسم Dark GPT
+async def dark_gpt_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    url = "https://flowgpt.com/chat/M0GRwnsc2MY0DdXPPmF4X"
+    await update.message.reply_text(f"🖤 للدخول إلى Dark GPT اضغط هنا:\n{url}")
+
+# قسم الفيزا الوهمية
+async def fake_visa_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    url = "https://namso-gen.com"
+    await update.message.reply_text(f"💳 لتوليد بطاقة وهمية، تفضل هنا:\n{url}")
+
+# قسم زيادة المتابعين
+async def followers_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        "📈 **قسم زيادة المتابعين**\n\n"
+        "🔹 [SMM Panel](https://smmcpan.com)\n"
+        "🔹 [سعودي فولو](https://saudifollow.com)\n"
+        "🔹 [Follow Add](https://followadd.com)\n"
+    )
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+# إصلاح اللغة - التحويل بين العربية والإنجليزية
+async def set_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    lang_choice = query.data.split("_")[-1]
+    if lang_choice == "ar":
+        context.user_data["lang"] = "ar"
+        await query.edit_message_text("✅ تم تعيين اللغة: العربية")
+    elif lang_choice == "en":
+        context.user_data["lang"] = "en"
+        await query.edit_message_text("✅ Language set: English")
+    else:
+        await query.edit_message_text("❌ خيار لغة غير معروف")
+
+# إضافة الأوامر للقائمة الرئيسية
+def main_menu_keyboard():
+    keyboard = [
+        [InlineKeyboardButton("🛡️ الأمن السيبراني", callback_data="section_cyber")],
+        [InlineKeyboardButton("🖤 Dark GPT", callback_data="section_darkgpt")],
+        [InlineKeyboardButton("💳 فيزا وهمية", callback_data="section_visa")],
+        [InlineKeyboardButton("📈 زيادة المتابعين", callback_data="section_followers")],
+        [InlineKeyboardButton("🌐 تغيير اللغة", callback_data="change_lang")],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "مرحبًا بك! اختر من القائمة:",
+        reply_markup=main_menu_keyboard()
+    )
+
+# التعامل مع الضغط على الأزرار
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "section_cyber":
+        await cybersecurity_section(update, context)
+    elif query.data == "section_darkgpt":
+        await dark_gpt_section(update, context)
+    elif query.data == "section_visa":
+        await fake_visa_section(update, context)
+    elif query.data == "section_followers":
+        await followers_section(update, context)
+    elif query.data == "change_lang":
+        lang_keyboard = [
+            [InlineKeyboardButton("🇸🇦 العربية", callback_data="set_lang_ar")],
+            [InlineKeyboardButton("🇬🇧 English", callback_data="set_lang_en")],
+        ]
+        await query.edit_message_text("اختر اللغة:", reply_markup=InlineKeyboardMarkup(lang_keyboard))
+    elif query.data.startswith("set_lang_"):
+        await set_language(update, context)
+
+# تسجيل الأوامر والمُعالجات
+def register_handlers(application: Application):
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CallbackQueryHandler(button_handler))
+    # باقي الأقسام التي تحتاج API خارجي
+    # تظهر رسالة "سيتم التفعيل لاحقًا"
+async def placeholder_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🚧 هذه الخدمة تحتاج مفتاح API وسيتم تفعيلها لاحقًا.")
+
+# مثال: فحص الروابط
+async def url_check_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("📌 أرسل الرابط بعد الأمر.")
         return
+    # حالياً placeholder
+    await placeholder_section(update, context)
 
-    # OSINT deep (safe)
-    if mode=="osint":
-        if not txt: return
-        await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
-        kind="name"
-        if "@" in txt and "." in txt: kind="email"
-        elif re.match(r"^\+?\d{7,15}$", txt): kind="phone"
-        elif re.match(r"^[a-z0-9_.-]{2,32}$", txt, re.I): kind="username"
-        elif "." in txt and _HOST_RE.match(txt): kind="domain"
-        prompt = {
-            "email": f"حلل بريدًا إلكترونيًا بشكل آمن (هيكل/مزود/نصائح حماية) بدون معلومات حساسة: {txt}",
-            "phone": f"قدم ملاحظات عامة وآمنة عن رقم هاتف (تنسيقات دولية ونصائح خصوصية) للرقم: {txt}",
-            "username": f"قدم أفكار بحث علني (منصات محتملة/تحذيرات الخصوصية) لاسم المستخدم: {txt}",
-            "domain": f"قدم نقاط OSINT عامة وآمنة عن الدومين (تقنية/أمن/نصائح): {txt}",
-            "name": f"قدم إطار بحث علني عام وآمن عن الاسم: {txt}",
-        }[kind]
-        if kind=="email":
-            structural = email_basic_check(txt)
-            extra = ai_reply(prompt, lang=lang)
-            await update.message.reply_text(f"🔎 فحص بنيوي:\n{structural}\n\n📌 تحليلات عامة:\n{extra}", reply_markup=section_back_kb())
-        else:
-            out = ai_reply(prompt, lang=lang)
-            await update.message.reply_text(out, reply_markup=section_back_kb())
+# مثال: IP Lookup
+async def ip_lookup_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("📌 أرسل IP أو دومين بعد الأمر.")
         return
+    # حالياً placeholder
+    await placeholder_section(update, context)
 
-    # Writer
-    if mode=="writer":
-        if not txt: return
-        await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
-        sys = "اكتب بالعربية بأسلوب تسويقي عملي ومختصر." if lang=="ar" else "Write in concise, compelling English."
-        out = ai_reply(f"{sys}\n\n{txt}", lang=lang)
-        await update.message.reply_text(out, reply_markup=section_back_kb()); return
-
-    # Translate (text)
-    if mode=="translate" and txt:
-        await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
-        target = "العربية" if lang=="ar" else "English"
-        out = ai_reply(f"ترجم بدقة إلى {target}:\n{txt}", lang=lang)
-        await update.message.reply_text(out, reply_markup=section_back_kb()); return
-
-    # Link Scan (VIP)
-    if mode=="linkscan":
-        if not (user_is_premium(uid) or uid==OWNER_ID):
-            await update.message.reply_text(tr("access_denied"), reply_markup=sections_list_kb()); return
-        if not txt: return
-        await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
-        report = await basic_link_scan(txt)
-        await update.message.reply_text(report, parse_mode="HTML", reply_markup=section_back_kb(), disable_web_page_preview=True); return
-
-    # Email Checker (VIP)
-    if mode=="email_check":
-        if not (user_is_premium(uid) or uid==OWNER_ID):
-            await update.message.reply_text(tr("access_denied"), reply_markup=sections_list_kb()); return
-        if not txt: return
-        out=email_basic_check(txt)
-        await update.message.reply_text(f"نتيجة الفحص:\n{out}", reply_markup=section_back_kb()); return
-
-    # Media download
-    if mode=="media_dl":
-        if not txt: return
-        await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_VIDEO)
-        title,data=await download_media(txt, is_vip=(user_is_premium(uid) or uid==OWNER_ID))
-        if not data:
-            await update.message.reply_text("⚠️ تعذّر التنزيل أو yt-dlp غير متوفر.", reply_markup=section_back_kb()); return
-        try: await update.message.reply_video(video=data, caption=f"{title[:60]}", reply_markup=section_back_kb())
-        except: await update.message.reply_document(document=data, caption=f"{title[:60]}", reply_markup=section_back_kb())
+# مثال: Email Checker
+async def email_checker_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("📌 أرسل الإيميل بعد الأمر.")
         return
+    # حالياً placeholder
+    await placeholder_section(update, context)
 
-    # Image convert prompt
-    if mode=="convert":
-        await update.message.reply_text("📎 أرسل صورة (أو عدة صور) لأختيارات الضغط/الـPDF.", reply_markup=section_back_kb()); return
+# مثال: أرقام مؤقتة
+async def temp_numbers_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await placeholder_section(update, context)
 
-    # Default: show menus
-    await update.message.reply_text("👇 القائمة:", reply_markup=bottom_menu_kb(uid))
-    await update.message.reply_text("📂 الأقسام:", reply_markup=sections_list_kb())
+# مثال: تحويل الصور أو ضغطها أو PDF
+async def convert_images_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await placeholder_section(update, context)
 
-# Voice/Audio -> STT
-async def on_voice_or_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid=update.effective_user.id
-    if not await must_be_member_or_vip(context, uid):
-        await update.message.reply_text("🔐 انضم للقناة لاستخدام البوت:"); return
-    if ai_get_mode(uid)!="stt": return
-    file = update.message.voice or update.message.audio
-    if not file: return
-    await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
-    f=await context.bot.get_file(file.file_id)
-    b=await f.download_as_bytearray()
-    name=(getattr(file,"file_name",None) or "voice.ogg")
-    if not AI_ENABLED:
-        await update.message.reply_text(tr("ai_disabled")); return
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix="."+name.split(".")[-1]) as tmp:
-            tmp.write(b); path=tmp.name
-        with open(path,"rb") as fp:
-            r = client.audio.transcriptions.create(model=OPENAI_STT_MODEL, file=fp, response_format="text")
-        out=(r or "").strip()
-        await update.message.reply_text(f"📝 النص:\n{out}", reply_markup=section_back_kb())
-    except Exception as e:
-        await update.message.reply_text(f"⚠️ خطأ في التحويل: {e}", reply_markup=section_back_kb())
+# مثال: تحميل فيديو/صوت من السوشيال ميديا
+async def download_media_section(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await placeholder_section(update, context)
 
-# Photos: translate image OR convert
-async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid=update.effective_user.id
-    if not await must_be_member_or_vip(context, uid):
-        await update.message.reply_text("🔐 انضم للقناة لاستخدام البوت:"); return
-    mode=ai_get_mode(uid); lang=user_get(uid).get("lang","ar")
-    photo=update.message.photo[-1]
-    f=await context.bot.get_file(photo.file_id)
-    b=await f.download_as_bytearray()
+# إضافة هذه الأوامر للبوت
+def register_additional_handlers(application: Application):
+    application.add_handler(CommandHandler("urlcheck", url_check_section))
+    application.add_handler(CommandHandler("iplookup", ip_lookup_section))
+    application.add_handler(CommandHandler("emailcheck", email_checker_section))
+    application.add_handler(CommandHandler("tempnumbers", temp_numbers_section))
+    application.add_handler(CommandHandler("convert", convert_images_section))
+    application.add_handler(CommandHandler("download", download_media_section))
 
-    if mode=="translate":
-        await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
-        out=await ai_translate_image_bytes(bytes(b), target_lang=("ar" if lang=="ar" else "en"))
-        await update.message.reply_text(out, reply_markup=section_back_kb())
-        return
-
-    if mode=="convert":
-        context.user_data.setdefault("convert_images", []).append(bytes(b))
-        kb=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🗜️ ضغط آخر صورة", callback_data="conv_compress")],
-            [InlineKeyboardButton("📄 إضافة للمجموعة ثم إنهاء PDF", callback_data="conv_pdf_add")],
-            [InlineKeyboardButton("✅ إنهاء PDF", callback_data="conv_pdf_done")],
-            [InlineKeyboardButton("↩️ رجوع", callback_data="back_sections")]
-        ])
-        await update.message.reply_text("اختر العملية:", reply_markup=kb)
-        return
-
-# Convert buttons
-async def on_convert_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q=update.callback_query; uid=q.from_user.id
-    if ai_get_mode(uid)!="convert": await q.answer(); return
-    imgs:list[bytes]=context.user_data.get("convert_images", [])
-    if q.data=="conv_compress":
-        if not imgs: await safe_edit(q, "أرسل صورة أولًا.", kb=section_back_kb()); return
-        out=await compress_image(imgs[-1], quality=70)
-        if not out: await safe_edit(q, "⚠️ Pillow غير متوفرة.", kb=section_back_kb()); return
-        await q.message.reply_document(InputFile(out, filename="compressed.jpg"), caption="تم الضغط ✅", reply_markup=section_back_kb()); await q.answer(); return
-    if q.data=="conv_pdf_add":
-        await safe_edit(q, "📥 أرسل مزيدًا من الصور ثم اضغط «إنهاء PDF».", kb=InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ إنهاء PDF", callback_data="conv_pdf_done")],
-            [InlineKeyboardButton("↩️ رجوع", callback_data="back_sections")]
-        ])); await q.answer(); return
-    if q.data=="conv_pdf_done":
-        if not imgs: await safe_edit(q, "أرسل صورًا أولًا.", kb=section_back_kb()); return
-        pdf=await images_to_pdf(imgs)
-        if not pdf: await safe_edit(q, "⚠️ img2pdf غير متوفرة.", kb=section_back_kb()); return
-        await q.message.reply_document(InputFile(pdf, filename="images.pdf"), caption="تم إنشاء PDF ✅", reply_markup=section_back_kb())
-        context.user_data["convert_images"]=[]; await q.answer(); return
-
-# Image AI via text
-async def on_text_for_image_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid=update.effective_user.id
-    if ai_get_mode(uid)!="image_ai": return
-    txt=(update.message.text or "").strip()
-    if not txt: return
-    if not AI_ENABLED:
-        await update.message.reply_text(tr("ai_disabled"), reply_markup=section_back_kb()); return
-    await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_PHOTO)
-    img=await ai_generate_image(txt)
-    if not img:
-        await update.message.reply_text("⚠️ تعذّر توليد الصورة.", reply_markup=section_back_kb()); return
-    try:
-        await update.message.reply_photo(photo=img, caption="🖼️ تم الإنشاء.", reply_markup=section_back_kb())
-    except Exception as e:
-        await update.message.reply_text(f"⚠️ لم أستطع إرسال الصورة: {e}", reply_markup=section_back_kb())
-
-# Virtual numbers (requires env)
-async def vnum_request(country_code:str)->str:
-    base=(os.getenv("VNUM_API_BASE") or "").strip()
-    key =(os.getenv("VNUM_API_KEY") or "").strip()
-    if not (base and key and AIOHTTP_AVAILABLE):
-        return "⚠️ خدمة الأرقام المؤقتة غير مفعّلة. أضف VNUM_API_BASE و VNUM_API_KEY في .env"
-    try:
-        s=await get_http_session()
-        payload={"country": country_code.upper()}
-        headers={"Authorization": f"Bearer {key}"}
-        async with s.post(base.rstrip("/")+"/getNumber", json=payload, headers=headers) as r:
-            data=await r.json(content_type=None)
-            if r.status>=400: return f"⚠️ فشل الطلب: {data}"
-            num=data.get("number") or "غير متاح"
-            return f"📱 رقم تجريبي: {num}\nℹ️ استخدم ضمن القوانين فقط."
-    except Exception as e:
-        return f"⚠️ خطأ خدمة الأرقام: {e}"
-
-# Text catcher for vnum & image_ai & others
-async def extra_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid=update.effective_user.id
-    mode=ai_get_mode(uid)
-    txt=(update.message.text or "").strip()
-    if not txt: return
-    if mode=="vnum":
-        if not (user_is_premium(uid) or uid==OWNER_ID):
-            await update.message.reply_text(tr("access_denied"), reply_markup=sections_list_kb()); return
-        out=await vnum_request(txt)
-        await update.message.reply_text(out, reply_markup=section_back_kb()); return
-    if mode=="image_ai":
-        await on_text_for_image_ai(update, context); return
-
-# ===== Error =====
-async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
-    log.error("⚠️ Error: %s", getattr(context,'error','unknown'))
-
-# ===== Main =====
+# تشغيل البوت
 def main():
-    init_db()
-    app=(Application.builder().token(BOT_TOKEN).post_init(on_startup).concurrent_updates(True).build())
-    app.add_handler(CommandHandler("start", start_cmd))
-    app.add_handler(CommandHandler("help", help_cmd))
-    app.add_handler(CommandHandler("geo", geo_cmd))
-    app.add_handler(CommandHandler("translate", translate_cmd))
-    app.add_handler(CommandHandler("lang", lang_cmd))
+    application = Application.builder().token(BOT_TOKEN).build()
 
-    app.add_handler(CallbackQueryHandler(on_button))
-    app.add_handler(CallbackQueryHandler(on_convert_buttons, pattern="^conv_"))
+    # تسجيل الأوامر
+    register_handlers(application)
+    register_additional_handlers(application)
 
-    app.add_handler(MessageHandler((filters.VOICE | filters.AUDIO), on_voice_or_audio))
-    app.add_handler(MessageHandler(filters.PHOTO, on_photo))
+    # بدء التشغيل
+    application.run_polling()
 
-    # Specific text routes first (image_ai/vnum), then general guard
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, extra_text_router))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, guard_messages))
-
-    app.add_error_handler(on_error)
-    app.run_polling()
-
-if __name__=="__main__":
+if __name__ == "__main__":
     main()
 
 
