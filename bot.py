@@ -104,7 +104,7 @@ def db() -> sqlite3.Connection:
     return con
 
 def db_init():
-    """ترحيل تلقائي للجداول لتفادي 'no column named user_id'."""
+    """ترحيل تلقائي للجداول لتفادي 'no column named ...'، مع دعم إعادة تهيئة عبر DB_RESET=1."""
     reset = os.getenv("DB_RESET", "").strip() == "1"
 
     def has_table(con, name: str) -> bool:
@@ -364,6 +364,16 @@ async def safe_answer_callback(query):
             return
         raise
 
+async def safe_edit(msg, text, **kwargs):
+    """حاول تعديل الرسالة؛ لو فشل (قديم/غير معدل) ابعث رسالة جديدة كفال-باك."""
+    try:
+        await msg.edit_text(text, **kwargs)
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            return
+        with suppress(Exception):
+            await msg.reply_text(text, **kwargs)
+
 def get_ctx_message(update: Update):
     if update and update.message:
         return update.message
@@ -444,6 +454,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_text(update, context, f"🛠️ {t(uid,'app_title')}\n\n{t(uid,'welcome')}")
     await send_text(update, context, "اختر من القائمة:", reply_markup=main_menu(uid))
 
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    await send_text(update, context,
+        "الأقسام: تحديد العناوين / أدوات PDF / تنزيل وسائط / الأمن السيبراني / توليد الصور / الترجمة.\n"
+        "استخدم الأزرار للتنقّل. للأوامر:\n"
+        "/start — القائمة الرئيسية\n/lang — تبديل اللغة\n/status — حالة VIP",
+        reply_markup=main_menu(uid)
+    )
+
+async def lang_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    new_lang = "en" if user_lang(uid) == "ar" else "ar"
+    set_user_lang(uid, new_lang)
+    await send_text(update, context, t(uid,"lang_switched"), reply_markup=main_menu(uid))
+
 async def cb_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     if not q:
@@ -457,39 +482,36 @@ async def cb_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop(k, None)
 
     if data == "menu:back":
-        await q.message.edit_text(f"🛠️ {t(uid,'app_title')}\n\n{t(uid,'welcome')}", reply_markup=main_menu(uid)); return
+        await safe_edit(q.message, f"🛠️ {t(uid,'app_title')}\n\n{t(uid,'welcome')}", reply_markup=main_menu(uid)); return
     if data == "menu:address":
         context.user_data["await"] = "address_location"
-        await q.message.edit_text(t(uid,"send_location"), reply_markup=main_menu(uid)); return
+        await safe_edit(q.message, t(uid,"send_location"), reply_markup=main_menu(uid)); return
     if data == "menu:pdf":
-        await q.message.edit_text(t(uid,"pdf_title"), reply_markup=pdf_menu(uid)); return
+        await safe_edit(q.message, t(uid,"pdf_title"), reply_markup=pdf_menu(uid)); return
     if data == "menu:media":
         context.user_data["await"] = "media_url"
-        await q.message.edit_text(t(uid,"media_hint"), reply_markup=main_menu(uid)); return
+        await safe_edit(q.message, t(uid,"media_hint"), reply_markup=main_menu(uid)); return
     if data == "menu:security":
-        await q.message.edit_text(t(uid,"security_title"), reply_markup=security_menu(uid)); return
+        await safe_edit(q.message, t(uid,"security_title"), reply_markup=security_menu(uid)); return
     if data == "menu:imggen":
-        # إن بغيت تقفلها على VIP فعل السطرين:
-        # if not is_vip(uid):
-        #     await q.message.reply_text("هذه الميزة للـ VIP فقط.", reply_markup=vip_menu(uid)); return
         context.user_data["await"] = "imggen_prompt"
-        await q.message.edit_text(t(uid,"imggen_hint"), reply_markup=main_menu(uid)); return
+        await safe_edit(q.message, t(uid,"imggen_hint"), reply_markup=main_menu(uid)); return
     if data == "menu:translate":
-        await q.message.edit_text(t(uid,"translate_choose"), reply_markup=translate_menu(uid,"choose_from")); return
+        await safe_edit(q.message, t(uid,"translate_choose"), reply_markup=translate_menu(uid,"choose_from")); return
     if data == "lang:toggle":
         new_lang = "en" if user_lang(uid) == "ar" else "ar"
         set_user_lang(uid, new_lang)
-        await q.message.edit_text(t(uid,"lang_switched"), reply_markup=main_menu(uid)); return
+        await safe_edit(q.message, t(uid,"lang_switched"), reply_markup=main_menu(uid)); return
 
     # PDF
     if data.startswith("pdf:"):
         op = data.split(":")[1]
         if op == "tojpg":
             context.user_data["await"] = "pdf_to_jpg"
-            await q.message.edit_text(t(uid,"pdf_send_file"), reply_markup=pdf_menu(uid))
+            await safe_edit(q.message, t(uid,"pdf_send_file"), reply_markup=pdf_menu(uid))
         elif op == "jpg2pdf":
             context.user_data["await"] = "jpg2pdf_collect"; context.user_data["jpg2pdf_list"]=[]
-            await q.message.edit_text(t(uid,"jpg_send_images"), reply_markup=pdf_menu(uid))
+            await safe_edit(q.message, t(uid,"jpg_send_images"), reply_markup=pdf_menu(uid))
         elif op == "jpg2pdf_finish":
             imgs = context.user_data.get("jpg2pdf_list") or []
             if not imgs:
@@ -499,43 +521,43 @@ async def cb_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data["jpg2pdf_list"]=[]
         elif op == "merge":
             context.user_data["await"]="pdf_merge_first"
-            await q.message.edit_text(t(uid,"merge_step1"), reply_markup=pdf_menu(uid))
+            await safe_edit(q.message, t(uid,"merge_step1"), reply_markup=pdf_menu(uid))
         elif op == "split":
             context.user_data["await"]="pdf_split_file"
-            await q.message.edit_text(t(uid,"split_ask_range"), reply_markup=pdf_menu(uid))
+            await safe_edit(q.message, t(uid,"split_ask_range"), reply_markup=pdf_menu(uid))
         elif op == "compress":
             context.user_data["await"]="pdf_compress_file"
-            await q.message.edit_text(t(uid,"compress_hint"), reply_markup=pdf_menu(uid))
+            await safe_edit(q.message, t(uid,"compress_hint"), reply_markup=pdf_menu(uid))
         elif op == "extract":
             context.user_data["await"]="pdf_extract_file"
-            await q.message.edit_text(t(uid,"extract_hint"), reply_markup=pdf_menu(uid))
+            await safe_edit(q.message, t(uid,"extract_hint"), reply_markup=pdf_menu(uid))
         return
 
     # Security
     if data == "sec:url":
         context.user_data["await"]="sec_url"
-        await q.message.edit_text(t(uid,"ask_url"), reply_markup=security_menu(uid)); return
+        await safe_edit(q.message, t(uid,"ask_url"), reply_markup=security_menu(uid)); return
     if data == "sec:ip":
         context.user_data["await"]="sec_ip"
-        await q.message.edit_text(t(uid,"ask_ip"), reply_markup=security_menu(uid)); return
+        await safe_edit(q.message, t(uid,"ask_ip"), reply_markup=security_menu(uid)); return
     if data == "sec:email":
         context.user_data["await"]="sec_email"
-        await q.message.edit_text(t(uid,"ask_email"), reply_markup=security_menu(uid)); return
+        await safe_edit(q.message, t(uid,"ask_email"), reply_markup=security_menu(uid)); return
 
     # Translate flow
     if data.startswith("tr_from:"):
         code = data.split(":")[1]
         context.user_data["tr_from"]=code
-        await q.message.edit_text(t(uid,"translate_choose"), reply_markup=translate_menu(uid,"choose_to")); return
+        await safe_edit(q.message, t(uid,"translate_choose"), reply_markup=translate_menu(uid,"choose_to")); return
     if data.startswith("tr_to:"):
         code = data.split(":")[1]
         context.user_data["tr_to"]=code
         context.user_data["await"]="translate_text"
-        await q.message.edit_text(t(uid,"translate_now"), reply_markup=main_menu(uid)); return
+        await safe_edit(q.message, t(uid,"translate_now"), reply_markup=main_menu(uid)); return
 
     # Extras
     if data == "menu:extras":
-        await q.message.edit_text("اختر من الإضافات:", reply_markup=extras_menu(uid)); return
+        await safe_edit(q.message, "اختر من الإضافات:", reply_markup=extras_menu(uid)); return
     if data == "ex:smm":
         links = [
             ("zyadat.com", "https://zyadat.com/"),
@@ -548,33 +570,33 @@ async def cb_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         rows = [[InlineKeyboardButton(name, url=url)] for name, url in links]
         rows.append([InlineKeyboardButton(LOCALES[user_lang(uid)]["back"], callback_data="menu:back")])
-        await q.message.edit_text("🚀 مواقع الرشق:", reply_markup=InlineKeyboardMarkup(rows)); return
+        await safe_edit(q.message, "🚀 مواقع الرشق:", reply_markup=InlineKeyboardMarkup(rows)); return
     if data == "ex:epic":
         txt = ("Hello Epicgames, I am the dad of (اسمك), so my son was on an app called Discord and fell for a phishing site, "
                "logged in with his Epicgames information and someone got into his account. The hacker linked his PSN account so "
                "my son cannot link his own PSN account. I managed to change everything and got the phishing site deleted. "
                "Please unlink the hacker’s PSN from my son’s Epic account so he can play again. Thanks.")
-        await q.message.edit_text("✉️ انسخ الرسالة وعدّل الاسم:\n\n" + txt, reply_markup=extras_menu(uid)); return
+        await safe_edit(q.message, "✉️ انسخ الرسالة وعدّل الاسم:\n\n" + txt, reply_markup=extras_menu(uid)); return
 
     # VIP
     if data == "menu:vip":
-        await q.message.edit_text("⭐ VIP & التحقق", reply_markup=vip_menu(uid)); return
+        await safe_edit(q.message, "⭐ VIP & التحقق", reply_markup=vip_menu(uid)); return
     if data == "vip:verify":
         ok, missing = await check_required_memberships(context, uid)
         set_verified(uid, ok)
         if ok:
-            await q.message.edit_text("✅ تم التحقق: أنت عضو في كل القنوات.", reply_markup=vip_menu(uid))
+            await safe_edit(q.message, "✅ تم التحقق: أنت عضو في كل القنوات.", reply_markup=vip_menu(uid))
         else:
             btns = []
             for cid in missing:
                 btns.append([InlineKeyboardButton(f"فتح القناة {cid}", url=f"https://t.me/c/{str(cid).replace('-100','')}")])
             btns.append([InlineKeyboardButton(LOCALES[user_lang(uid)]["back"], callback_data="menu:back")])
-            await q.message.edit_text("❌ لست عضوًا في كل القنوات المطلوبة. انضم ثم اضغط تحقق مجددًا.",
-                                      reply_markup=InlineKeyboardMarkup(btns))
+            await safe_edit(q.message, "❌ لست عضوًا في كل القنوات المطلوبة. انضم ثم اضغط تحقق مجددًا.",
+                            reply_markup=InlineKeyboardMarkup(btns))
         return
     if data == "vip:status":
-        await q.message.edit_text(f"⭐ VIP: {'✅' if is_vip(uid) else '❌'}\n🔒 Verified: {'✅' if is_verified(uid) else '❌'}",
-                                  reply_markup=vip_menu(uid)); return
+        await safe_edit(q.message, f"⭐ VIP: {'✅' if is_vip(uid) else '❌'}\n🔒 Verified: {'✅' if is_verified(uid) else '❌'}",
+                        reply_markup=vip_menu(uid)); return
 
 # ========= الموقع =========
 async def on_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -853,9 +875,21 @@ async def do_media_download_and_send(update: Update, context: ContextTypes.DEFAU
         if not file_path or not Path(file_path).exists():
             await send_text(update, context, "تعذر التنزيل.", reply_markup=main_menu(uid)); return
         size = Path(file_path).stat().st_size
-        if size > 1_900_000_000:
-            await send_text(update, context, t(uid,"too_large").format(url=url), reply_markup=main_menu(uid)); return
-        await send_document(update, context, file_path, caption=t(uid,"media_done"), reply_markup=main_menu(uid))
+        # لو mp4 وحجم مناسب حاول إرسال فيديو (مش مستند) لراحة المستخدم
+        ext = Path(file_path).suffix.lower()
+        try:
+            if ext in (".mp4", ".mov", ".m4v") and size <= 49 * 1024 * 1024:
+                with open(file_path, "rb") as f:
+                    await context.bot.send_video(chat_id=update.effective_chat.id, video=f, caption=t(uid,"media_done"))
+            else:
+                if size > 1_900_000_000:
+                    await send_text(update, context, t(uid,"too_large").format(url=url), reply_markup=main_menu(uid)); return
+                await send_document(update, context, file_path, caption=t(uid,"media_done"), reply_markup=main_menu(uid))
+        except Exception:
+            # فال-باك كمستند
+            if size > 1_900_000_000:
+                await send_text(update, context, t(uid,"too_large").format(url=url), reply_markup=main_menu(uid)); return
+            await send_document(update, context, file_path, caption=t(uid,"media_done"), reply_markup=main_menu(uid))
     except Exception as e:
         log.exception(e); await send_text(update, context, t(uid,"error"), reply_markup=main_menu(uid))
 
@@ -1005,6 +1039,8 @@ async def amain():
 
     tg = Application.builder().token(BOT_TOKEN).build()
     tg.add_handler(CommandHandler(["start","menu"], start))
+    tg.add_handler(CommandHandler("help", help_cmd))
+    tg.add_handler(CommandHandler("lang", lang_cmd))
     tg.add_handler(CallbackQueryHandler(cb_nav))
     tg.add_handler(MessageHandler(filters.LOCATION, on_location))
     tg.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, on_message))
