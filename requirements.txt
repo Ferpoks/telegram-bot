@@ -1,12 +1,20 @@
-python-telegram-bot==21.7
-aiohttp==3.9.5
-python-dotenv==1.0.1
-openai==1.43.0
-httpx==0.27.2
-yt-dlp==2024.8.6
-dnspython==2.6.1
-Pillow==10.4.0
-python-whois==0.9.4
+python-telegram-bot==21.7         # تشغيل البوت
+aiohttp==3.9.5                    # طلبات HTTP غير متزامنة
+python-dotenv==1.0.1              # تحميل .env
+openai==1.43.0                    # API ChatGPT / توليد نصوص وصور
+httpx==0.27.2                     # بديل طلبات سريع وداعم لـ async
+yt-dlp==2024.8.6                  # تحميل فيديو وصوت
+dnspython==2.6.1                  # فحص DNS / روابط
+Pillow==10.4.0                    # تعديل وتحويل الصور
+python-whois==0.9.4               # استعلام WHOIS
+validators==0.28.1                # للتحقق من صحة الروابط والإيميلات
+langdetect==1.0.9                 # لاكتشاف اللغة للنصوص (للمترجم)
+deep-translator==1.11.4           # ترجمة متعددة المزودين (Google / Libre / إلخ)
+pydub==0.25.1                     # لتحويل الصوتيات (صوت → نص أو تحويل MP3/WAV)
+speechrecognition==3.10.4         # تحويل الصوت إلى نص (مع Google API المجاني)
+email-validator==2.2.0            # فحص الإيميلات بشكل احترافي
+beautifulsoup4==4.12.3            # استخراج نصوص/روابط من صفحات HTML
+
 
 
 
