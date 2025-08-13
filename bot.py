@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import os, re, io, sys, time, zipfile, tempfile, logging, socket, asyncio, base64
+import os, re, io, sys, time, zipfile, tempfile, logging, socket, asyncio, base64, signal
 import sqlite3
 from pathlib import Path
 from contextlib import closing, suppress
@@ -73,7 +73,7 @@ URLSCAN_API_KEY = os.getenv("URLSCAN_API_KEY", "").strip()
 DB_PATH = os.getenv("DB_PATH", "/var/data/bot.db")
 Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 
-# ========= إعدادات إضافية (VIP/تحقق/صورة ترحيب) =========
+# ========= إعدادات إضافية (VIP/Verify/صورة ترحيب) =========
 def _env_id_list(name: str) -> list[int]:
     raw = os.getenv(name, "").strip()
     ids = []
@@ -87,24 +87,21 @@ def _env_id_list(name: str) -> list[int]:
             pass
     return ids
 
-ADMIN_IDS = _env_id_list("ADMIN_IDS")                 # مثال: "6468743821,123456"
-VERIFY_CHANNEL_IDS = _env_id_list("VERIFY_CHANNEL_IDS")# مثال: "-1002840134926,-1001122334455"
+ADMIN_IDS = _env_id_list("ADMIN_IDS")
+VERIFY_CHANNEL_IDS = _env_id_list("VERIFY_CHANNEL_IDS")
 WELCOME_IMAGE_PATH = os.getenv("WELCOME_IMAGE_PATH", "").strip()
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
-# ========= قاعدة البيانات =========
+# ========= قاعدة البيانات + ترحيل =========
 def db() -> sqlite3.Connection:
     con = sqlite3.connect(DB_PATH)
     con.row_factory = sqlite3.Row
     return con
 
 def db_init():
-    """
-    ترحيل تلقائي للجداول (users/kv) لتفادي أخطاء:
-    sqlite3.OperationalError: table users has no column named user_id
-    """
+    """ترحيل تلقائي للجداول لتفادي 'no column named user_id'."""
     reset = os.getenv("DB_RESET", "").strip() == "1"
 
     def has_table(con, name: str) -> bool:
@@ -125,7 +122,7 @@ def db_init():
             con.execute("DROP TABLE IF EXISTS kv")
             con.execute("DROP TABLE IF EXISTS users")
 
-        # --- users table ---
+        # users
         need_create_users = True
         if has_table(con, "users"):
             c = cols_of(con, "users")
@@ -159,7 +156,7 @@ def db_init():
                     """)
                 con.execute("DROP TABLE users_old")
 
-        # --- kv table ---
+        # kv
         need_create_kv = True
         if has_table(con, "kv"):
             c = cols_of(con, "kv")
@@ -225,140 +222,55 @@ def is_verified(uid: int) -> bool:
 # ========= التعريب =========
 LOCALES = {
     "ar": {
-        "app_title": "لوحة التحكّم",
-        "welcome": "مرحبًا! اختر من القائمة ↓",
-        "menu_address": "📍 تحديد العناوين",
-        "menu_pdf": "📄 أدوات PDF",
-        "menu_media": "🎬 تنزيل الوسائط",
-        "menu_security": "🛡️ الأمن السيبراني & فحوصات",
-        "menu_imggen": "🖼️ توليد الصور (AI)",
-        "menu_translate": "🌐 الترجمة",
-        "menu_lang": "🌐 اللغة: عربي/English",
-        "back": "↩️ رجوع",
-
+        "app_title": "لوحة التحكّم","welcome": "مرحبًا! اختر من القائمة ↓",
+        "menu_address": "📍 تحديد العناوين","menu_pdf": "📄 أدوات PDF","menu_media": "🎬 تنزيل الوسائط",
+        "menu_security": "🛡️ الأمن السيبراني & فحوصات","menu_imggen": "🖼️ توليد الصور (AI)",
+        "menu_translate": "🌐 الترجمة","menu_lang": "🌐 اللغة: عربي/English","back": "↩️ رجوع",
         "send_location": "أرسل موقعك (📎 → Location) لتحديد العنوان.",
         "address_result": "العنوان المحتمل:\n{addr}\n\nالإحداثيات: {lat}, {lon}",
-
-        "pdf_title": "اختر أداة PDF:",
-        "pdf_to_jpg": "PDF → JPG (ZIP)",
-        "jpg_to_pdf": "JPG → PDF (متعدد)",
-        "pdf_merge": "دمج PDF (ملفان)",
-        "pdf_split": "تقسيم PDF (مدى صفحات)",
-        "pdf_compress": "ضغط PDF",
-        "pdf_extract": "استخراج نص",
-
-        "pdf_send_file": "أرسل ملف PDF الآن.",
-        "jpg_send_images": "أرسل صور JPG/PNG (أكثر من صورة)، ثم اضغط: ✅ إنهاء التحويل",
-        "finish_jpg_to_pdf": "✅ إنهاء التحويل",
-        "merge_step1": "أرسل **الملف الأول (PDF)**.",
-        "merge_step2": "جيد! الآن أرسل **الملف الثاني (PDF)**.",
-        "split_ask_range": "أرسل ملف PDF ثم اكتب مدى الصفحات مثل: 1-3 أو 2-2.",
-        "compress_hint": "أرسل PDF وسأعيد ضغطه (جودة 60-95).",
-        "extract_hint": "أرسل ملف PDF لاستخراج النص منه.",
-        "enter_quality": "أدخل جودة الصور (60-95). الافتراضي: 80",
+        "pdf_title": "اختر أداة PDF:","pdf_to_jpg": "PDF → JPG (ZIP)","jpg_to_pdf": "JPG → PDF (متعدد)",
+        "pdf_merge": "دمج PDF (ملفان)","pdf_split": "تقسيم PDF (مدى صفحات)","pdf_compress": "ضغط PDF","pdf_extract": "استخراج نص",
+        "pdf_send_file": "أرسل ملف PDF الآن.","jpg_send_images": "أرسل صور JPG/PNG (أكثر من صورة)، ثم اضغط: ✅ إنهاء التحويل",
+        "finish_jpg_to_pdf": "✅ إنهاء التحويل","merge_step1": "أرسل **الملف الأول (PDF)**.","merge_step2": "جيد! الآن أرسل **الملف الثاني (PDF)**.",
+        "split_ask_range": "أرسل ملف PDF ثم اكتب مدى الصفحات مثل: 1-3 أو 2-2.","compress_hint": "أرسل PDF وسأعيد ضغطه (جودة 60-95).",
+        "extract_hint": "أرسل ملف PDF لاستخراج النص منه.","enter_quality": "أدخل جودة الصور (60-95). الافتراضي: 80",
         "enter_pages_range": "اكتب مدى الصفحات الآن (مثال: 1-3).",
-
         "media_hint": "أرسل رابط الفيديو/الصوت (YouTube, Twitter, Instagram…)\nسأحمّله بأفضل جودة (حد تيليجرام ~2GB).",
-        "downloading": "⏳ جاري التنزيل…",
-        "too_large": "⚠️ الملف أكبر من حد تيليجرام. رابط مباشر:\n{url}",
-        "media_done": "✅ تم تحميل الوسائط وإرسالها.",
-
-        "security_title": "اختر أداة الفحص:",
-        "check_url": "🔗 فحص رابط",
-        "ip_lookup": "📡 IP Lookup",
-        "email_check": "✉️ Email Checker",
-
-        "ask_url": "أرسل الرابط الآن.",
-        "ask_ip": "أرسل IP أو اسم النطاق.",
-        "ask_email": "أرسل البريد الإلكتروني للتحقق.",
-
+        "downloading": "⏳ جاري التنزيل…","too_large": "⚠️ الملف أكبر من حد تيليجرام. رابط مباشر:\n{url}","media_done": "✅ تم تحميل الوسائط وإرسالها.",
+        "security_title": "اختر أداة الفحص:","check_url": "🔗 فحص رابط","ip_lookup": "📡 IP Lookup","email_check": "✉️ Email Checker",
+        "ask_url": "أرسل الرابط الآن.","ask_ip": "أرسل IP أو اسم النطاق.","ask_email": "أرسل البريد الإلكتروني للتحقق.",
         "url_report": "نتيجة فحص الرابط:\n- الحالة: {status}\n- الوجهة النهائية: {final}\n- الدومين: {host}\n- IP: {ip}\n{extra}",
         "ip_report": "IP Lookup:\n- IP: {ip}\n- الدولة: {country}\n- المدينة: {city}\n- الشركة: {org}\n- ASN: {asn}",
-        "email_ok": "✅ البريد يبدو صالحًا وبسجلات MX.",
-        "email_bad": "❌ البريد غير صالح أو لا يوجد سجلات MX.",
-        "email_warn": "⚠️ تحقق من الصيغة/النطاق، تعذر فحص MX.",
-
-        "imggen_hint": "اكتب وصف الصورة التي تريد توليدها.",
-        "imggen_no_key": "⚠️ يلزم OPENAI_API_KEY لتوليد الصور.",
-        "imggen_done": "✅ تم توليد الصورة.",
-
-        "translate_choose": "اختر لغة المصدر والوجهة:",
-        "translate_from": "من (Source)",
-        "translate_to": "إلى (Target)",
-        "translate_now": "أرسل النص المراد ترجمته.",
-        "translate_done": "✅ الترجمة:",
-        "need_text": "أرسل نصًا من فضلك.",
-
-        "lang_switched": "تم تغيير اللغة.",
-        "error": "حدث خطأ غير متوقع. حاول مجددًا.",
+        "email_ok": "✅ البريد يبدو صالحًا وبسجلات MX.","email_bad": "❌ البريد غير صالح أو لا يوجد سجلات MX.","email_warn": "⚠️ تحقق من الصيغة/النطاق، تعذر فحص MX.",
+        "imggen_hint": "اكتب وصف الصورة التي تريد توليدها.","imggen_no_key": "⚠️ يلزم OPENAI_API_KEY لتوليد الصور.","imggen_done": "✅ تم توليد الصورة.",
+        "translate_choose": "اختر لغة المصدر والوجهة:","translate_from": "من (Source)","translate_to": "إلى (Target)",
+        "translate_now": "أرسل النص المراد ترجمته.","translate_done": "✅ الترجمة:","need_text": "أرسل نصًا من فضلك.",
+        "lang_switched": "تم تغيير اللغة.","error": "حدث خطأ غير متوقع. حاول مجددًا.",
     },
     "en": {
-        "app_title": "Control Panel",
-        "welcome": "Welcome! Choose from the menu ↓",
-        "menu_address": "📍 Address Finder",
-        "menu_pdf": "📄 PDF Tools",
-        "menu_media": "🎬 Media Downloader",
-        "menu_security": "🛡️ Cybersecurity & Checks",
-        "menu_imggen": "🖼️ Image Generation (AI)",
-        "menu_translate": "🌐 Translate",
-        "menu_lang": "🌐 Language: عربي/English",
-        "back": "↩️ Back",
-
+        "app_title": "Control Panel","welcome": "Welcome! Choose from the menu ↓",
+        "menu_address": "📍 Address Finder","menu_pdf": "📄 PDF Tools","menu_media": "🎬 Media Downloader",
+        "menu_security": "🛡️ Cybersecurity & Checks","menu_imggen": "🖼️ Image Generation (AI)",
+        "menu_translate": "🌐 Translate","menu_lang": "🌐 Language: عربي/English","back": "↩️ Back",
         "send_location": "Send your location (📎 → Location) for reverse-geocoding.",
         "address_result": "Possible address:\n{addr}\n\nCoords: {lat}, {lon}",
-
-        "pdf_title": "Pick a PDF tool:",
-        "pdf_to_jpg": "PDF → JPG (ZIP)",
-        "jpg_to_pdf": "JPG → PDF (multi)",
-        "pdf_merge": "Merge PDFs (2 files)",
-        "pdf_split": "Split PDF (range)",
-        "pdf_compress": "Compress PDF",
-        "pdf_extract": "Extract Text",
-
-        "pdf_send_file": "Send a PDF file now.",
-        "jpg_send_images": "Send JPG/PNG images, then press: ✅ Finish",
-        "finish_jpg_to_pdf": "✅ Finish",
-        "merge_step1": "Send the **first PDF**.",
-        "merge_step2": "Now send the **second PDF**.",
-        "split_ask_range": "Send a PDF then type a range like: 1-3 or 2-2.",
-        "compress_hint": "Send a PDF; I’ll recompress it (quality 60-95).",
-        "extract_hint": "Send a PDF to extract its text.",
-        "enter_quality": "Enter image quality (60-95). Default: 80",
-        "enter_pages_range": "Type the pages range (e.g., 1-3).",
-
+        "pdf_title": "Pick a PDF tool:","pdf_to_jpg": "PDF → JPG (ZIP)","jpg_to_pdf": "JPG → PDF (multi)",
+        "pdf_merge": "Merge PDFs (2 files)","pdf_split": "Split PDF (range)","pdf_compress": "Compress PDF","pdf_extract": "Extract Text",
+        "pdf_send_file": "Send a PDF file now.","jpg_send_images": "Send JPG/PNG images, then press: ✅ Finish",
+        "finish_jpg_to_pdf": "✅ Finish","merge_step1": "Send the **first PDF**.","merge_step2": "Now send the **second PDF**.",
+        "split_ask_range": "Send a PDF then type a range like: 1-3 or 2-2.","compress_hint": "Send a PDF; I’ll recompress it (quality 60-95).",
+        "extract_hint": "Send a PDF to extract its text.","enter_quality": "Enter image quality (60-95). Default: 80","enter_pages_range": "Type the pages range (e.g., 1-3).",
         "media_hint": "Send a video/audio URL (YouTube, Twitter, Instagram…)\nBest quality (Telegram limit ~2GB).",
-        "downloading": "⏳ Downloading…",
-        "too_large": "⚠️ File exceeds Telegram limit. Direct link:\n{url}",
-        "media_done": "✅ Media downloaded & sent.",
-
-        "security_title": "Pick a check:",
-        "check_url": "🔗 Check URL",
-        "ip_lookup": "📡 IP Lookup",
-        "email_check": "✉️ Email Checker",
-
-        "ask_url": "Send the URL now.",
-        "ask_ip": "Send an IP or domain name.",
-        "ask_email": "Send the email to check.",
-
+        "downloading": "⏳ Downloading…","too_large": "⚠️ File exceeds Telegram limit. Direct link:\n{url}","media_done": "✅ Media downloaded & sent.",
+        "security_title": "Pick a check:","check_url": "🔗 Check URL","ip_lookup": "📡 IP Lookup","email_check": "✉️ Email Checker",
+        "ask_url": "Send the URL now.","ask_ip": "Send an IP or domain name.","ask_email": "Send the email to check.",
         "url_report": "URL Check:\n- Status: {status}\n- Final: {final}\n- Host: {host}\n- IP: {ip}\n{extra}",
         "ip_report": "IP Lookup:\n- IP: {ip}\n- Country: {country}\n- City: {city}\n- Org: {org}\n- ASN: {asn}",
-        "email_ok": "✅ Email seems valid with active MX.",
-        "email_bad": "❌ Invalid email or no MX records.",
-        "email_warn": "⚠️ Check syntax/domain; MX check failed.",
-
-        "imggen_hint": "Type a prompt to generate an image.",
-        "imggen_no_key": "⚠️ Image generation requires OPENAI_API_KEY.",
-        "imggen_done": "✅ Image generated.",
-
-        "translate_choose": "Choose source and target languages:",
-        "translate_from": "From (Source)",
-        "translate_to": "To (Target)",
-        "translate_now": "Send the text to translate.",
-        "translate_done": "✅ Translation:",
-        "need_text": "Please send text.",
-
-        "lang_switched": "Language switched.",
-        "error": "Unexpected error. Please try again.",
+        "email_ok": "✅ Email seems valid with active MX.","email_bad": "❌ Invalid email or no MX records.","email_warn": "⚠️ Check syntax/domain; MX check failed.",
+        "imggen_hint": "Type a prompt to generate an image.","imggen_no_key": "⚠️ Image generation requires OPENAI_API_KEY.","imggen_done": "✅ Image generated.",
+        "translate_choose": "Choose source and target languages:","translate_from": "From (Source)","translate_to": "To (Target)",
+        "translate_now": "Send the text to translate.","translate_done": "✅ Translation:","need_text": "Please send text.",
+        "lang_switched": "Language switched.","error": "Unexpected error. Please try again.",
     }
 }
 
@@ -482,7 +394,7 @@ async def send_photo(update: Update, context: ContextTypes.DEFAULT_TYPE, file_ob
     if chat_id:
         return await context.bot.send_photo(chat_id, photo=photo, caption=caption, **kwargs)
 
-# ========= التحقق من العضوية المطلوبة =========
+# ========= التحقق من العضوية =========
 async def check_required_memberships(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> tuple[bool, list[int]]:
     missing = []
     for cid in VERIFY_CHANNEL_IDS:
@@ -499,7 +411,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     with closing(db()) as con, con:
         con.execute("INSERT OR IGNORE INTO users(user_id) VALUES(?)", (uid,))
-    # صورة ترحيب اختيارية
+    # صورة ترحيب
     if WELCOME_IMAGE_PATH and Path(WELCOME_IMAGE_PATH).exists():
         try:
             with open(WELCOME_IMAGE_PATH, "rb") as f:
@@ -535,7 +447,7 @@ async def cb_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "menu:security":
         await q.message.edit_text(t(uid,"security_title"), reply_markup=security_menu(uid)); return
     if data == "menu:imggen":
-        # لو تبغى الذكاء للـ VIP فقط، فعّل السطرين التاليين:
+        # إن بغيت تقفلها على VIP فعل السطرين:
         # if not is_vip(uid):
         #     await q.message.reply_text("هذه الميزة للـ VIP فقط.", reply_markup=vip_menu(uid)); return
         context.user_data["await"] = "imggen_prompt"
@@ -859,7 +771,6 @@ async def do_pdf_compress_and_send(update: Update, context: ContextTypes.DEFAULT
     try:
         doc = fitz.open(p)
         out = os.path.join(tempfile.gettempdir(), f"compress_{quality}_{int(time.time())}.pdf")
-        # إعادة ترميز الصور المضمنة
         for page in doc:
             for img in page.get_images(full=True):
                 xref = img[0]
@@ -870,8 +781,7 @@ async def do_pdf_compress_and_send(update: Update, context: ContextTypes.DEFAULT
                 bio = io.BytesIO()
                 pil_img.save(bio, format="JPEG", quality=quality)
                 doc.update_stream(xref, bio.getvalue())
-        doc.save(out)
-        doc.close()
+        doc.save(out); doc.close()
         await send_document(update, context, out, caption=f"✅ Compress Done (q={quality})", filename=f"compressed_q{quality}.pdf", reply_markup=pdf_menu(uid))
     except Exception as e:
         log.exception(e); await send_text(update, context, t(uid,"error"))
@@ -1021,7 +931,7 @@ async def grant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(uid):
         await send_text(update, context, "غير مصرح."); return
     target = None
-    if update.message.reply_to_message:
+    if update.message and update.message.reply_to_message:
         target = update.message.reply_to_message.from_user.id
     elif context.args and context.args[0].isdigit():
         target = int(context.args[0])
@@ -1035,7 +945,7 @@ async def revoke_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(uid):
         await send_text(update, context, "غير مصرح."); return
     target = None
-    if update.message.reply_to_message:
+    if update.message and update.message.reply_to_message:
         target = update.message.reply_to_message.from_user.id
     elif context.args and context.args[0].isdigit():
         target = int(context.args[0])
@@ -1081,16 +991,30 @@ async def amain():
     tg.add_handler(CommandHandler("status", status_cmd))
     tg.add_error_handler(errors)
 
-    await _start_http_server()  # افتح المنفذ قبل فحص Render
+    # افتح المنفذ قبل فحص Render
+    await _start_http_server()
 
+    # شغّل تيليجرام يدويًا
     await tg.initialize()
     await tg.start()
     await tg.updater.start_polling(drop_pending_updates=True)
     log.info("✅ Bot started.")
 
-    await tg.updater.wait_until_closed()
-    await tg.stop()
-    await tg.shutdown()
+    # انتظر إشارة إيقاف (بديل wait_until_closed غير المتوفرة)
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        with suppress(NotImplementedError):
+            loop.add_signal_handler(sig, stop_event.set)
+    await stop_event.wait()
+
+    # إيقاف منظّم
+    with suppress(Exception):
+        await tg.updater.stop()
+    with suppress(Exception):
+        await tg.stop()
+    with suppress(Exception):
+        await tg.shutdown()
 
 if __name__ == "__main__":
     asyncio.run(amain())
