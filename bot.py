@@ -1,8 +1,5 @@
 # -*- coding: utf-8 -*-
-# ------------------------------------------------------------
-# FerpoKS Telegram Bot (organized menus, real integrations)
-# python-telegram-bot v21.x (async) + health server for Render
-# ------------------------------------------------------------
+# FerpoKS Bot – tidy menus, VIP gates, real integrations, health server for Render
 import os, sqlite3, threading, time, asyncio, re, json, logging, base64, socket, tempfile
 from pathlib import Path
 from io import BytesIO
@@ -11,7 +8,6 @@ from dotenv import load_dotenv
 import aiohttp
 from PIL import Image
 
-# Telegram
 from telegram import (
     Update, InlineKeyboardMarkup, InlineKeyboardButton,
     InputFile, BotCommand, BotCommandScopeDefault, BotCommandScopeChat
@@ -49,8 +45,8 @@ if not BOT_TOKEN: raise RuntimeError("BOT_TOKEN is missing")
 OWNER_ID          = int(os.getenv("OWNER_ID", "0") or "0")
 OWNER_USERNAME    = os.getenv("OWNER_USERNAME", "").strip().lstrip("@")
 MAIN_CHANNELS     = [u.strip().lstrip("@") for u in (os.getenv("MAIN_CHANNELS","").split(",")) if u.strip()]
+
 WELCOME_PHOTO     = os.getenv("WELCOME_PHOTO","assets/ferpoks.jpg")
-PUBLIC_BASE_URL   = (os.getenv("PUBLIC_BASE_URL") or "").rstrip("/")
 DB_PATH           = os.getenv("DB_PATH", "/var/data/bot.db")
 TMP_DIR           = Path(os.getenv("TMP_DIR", "/tmp"))
 
@@ -58,16 +54,17 @@ TMP_DIR           = Path(os.getenv("TMP_DIR", "/tmp"))
 OPENAI_API_KEY    = (os.getenv("OPENAI_API_KEY") or "").strip()
 OPENAI_CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
 OPENAI_VISION     = os.getenv("OPENAI_VISION", "0") == "1"
+
 IPINFO_TOKEN      = (os.getenv("IPINFO_TOKEN") or "").strip()
 KICKBOX_API_KEY   = (os.getenv("KICKBOX_API_KEY") or "").strip()
 URLSCAN_API_KEY   = (os.getenv("URLSCAN_API_KEY") or "").strip()
 
-# External links
-NUMBERS_URL       = os.getenv("NUMBERS_URL", "").strip()     # خدمة الأرقام المؤقتة (رابط خارجي)
-VCC_URL           = os.getenv("VCC_URL", "").strip()         # فيزا افتراضية (رابط خارجي)
-SMM_PANEL_URL     = os.getenv("SMM_PANEL_URL", "").strip()   # لوحة رشق/متابعين (رابط خارجي)
+# External links (تظهر دائمًا – لو فاضي يوجّه للإدارة)
+NUMBERS_URL       = os.getenv("NUMBERS_URL", "").strip()
+VCC_URL           = os.getenv("VCC_URL", "").strip()
+SMM_PANEL_URL     = os.getenv("SMM_PANEL_URL", "").strip()
 
-# Courses (روابطك)
+# Courses (تظهر دائمًا)
 COURSE_PYTHON_URL = os.getenv("COURSE_PYTHON_URL", "").strip()
 COURSE_CYBER_URL  = os.getenv("COURSE_CYBER_URL", "").strip()
 COURSE_EHACK_URL  = os.getenv("COURSE_EHACK_URL", "").strip()
@@ -96,7 +93,7 @@ CHANNEL_ID         = None
 
 # ============ tiny HTTP server (/health) ============
 def _run_health_server():
-    if not (SERVE_HEALTH and AIOHTTP_AVAILABLE): 
+    if not (SERVE_HEALTH and AIOHTTP_AVAILABLE):
         log.info("[health] disabled or aiohttp missing")
         return
 
@@ -154,7 +151,6 @@ def migrate_db():
           vip_since INTEGER DEFAULT 0,
           pref_lang TEXT DEFAULT 'ar'
         );""")
-        # sanity for users.id
         c.execute("PRAGMA table_info(users)")
         cols = {r["name"] for r in c.fetchall()}
         if "id" not in cols:
@@ -241,6 +237,7 @@ LOCALE = {
  "btn_vip_badge":"⭐ حسابك VIP",
  "btn_back":"↩️ رجوع",
  "btn_lang_ar":"🇸🇦 العربية", "btn_lang_en":"🇺🇸 English",
+ "lang_title":"🌐 اختر اللغة",
  "myinfo":"👤 الاسم: {name}\n🆔 المعرّف: {id}\n🌐 اللغة: {lang}",
  "vip_on":"⭐ حسابك VIP (مدى الحياة).",
  "vip_off":"هذه الميزة خاصة بـ VIP.",
@@ -255,6 +252,7 @@ LOCALE = {
  "done":"تم.",
  "sections_title":"اختر قسماً:",
  "sec_ai":"🤖 أدوات الذكاء الاصطناعي",
+ "sec_darkgpt":"🌑 Dark GPT (VIP)",
  "sec_security":"🛡️ أمن وحماية",
  "sec_media":"🎬 تحميل وسائط",
  "sec_files":"🗜️ أدوات ملفات",
@@ -267,7 +265,6 @@ LOCALE = {
  "ai_txi":"🖼️ نص → صورة (AI)",
  "ai_trans":"🌐 مترجم (نص/صورة)",
  "ai_chat":"🤖 AI Chat (VIP)",
- "ai_dark":"🌑 Dark GPT (VIP)",
  "security_ip":"🛰️ IP Lookup (IPinfo)",
  "security_email":"✉️ Email Checker (Kickbox)",
  "security_link":"🔗 فحص الروابط (urlscan)",
@@ -308,6 +305,7 @@ LOCALE = {
  "btn_vip_badge":"⭐ VIP Account",
  "btn_back":"↩️ Back",
  "btn_lang_ar":"🇸🇦 Arabic", "btn_lang_en":"🇺🇸 English",
+ "lang_title":"🌐 Choose your language",
  "myinfo":"👤 Name: {name}\n🆔 ID: {id}\n🌐 Language: {lang}",
  "vip_on":"⭐ Your account is VIP (lifetime).",
  "vip_off":"This feature is VIP-only.",
@@ -322,6 +320,7 @@ LOCALE = {
  "done":"Done.",
  "sections_title":"Choose a section:",
  "sec_ai":"🤖 AI Tools",
+ "sec_darkgpt":"🌑 Dark GPT (VIP)",
  "sec_security":"🛡️ Security",
  "sec_media":"🎬 Media Downloader",
  "sec_files":"🗜️ File Tools",
@@ -334,7 +333,6 @@ LOCALE = {
  "ai_txi":"🖼️ Text → Image (AI)",
  "ai_trans":"🌐 Translator (Text/Image)",
  "ai_chat":"🤖 AI Chat (VIP)",
- "ai_dark":"🌑 Dark GPT (VIP)",
  "security_ip":"🛰️ IP Lookup (IPinfo)",
  "security_email":"✉️ Email Checker (Kickbox)",
  "security_link":"🔗 URL Scan (urlscan)",
@@ -351,10 +349,6 @@ LOCALE = {
  "unban_fb":"Facebook Appeal",
  "unban_tg":"Telegram Support",
  "unban_epic":"Epic Games Support",
- "unban_text_ig":"Explain the account was restricted by mistake. Provide ID if requested. Be polite and concise.",
- "unban_text_fb":"Request a review for disabled account. Attach required docs. Keep it short & clear.",
- "unban_text_tg":"Contact Telegram support with phone number and issue details.",
- "unban_text_epic":"Open a ticket, describe the restriction and your Epic account email.",
  "img_trans_fail":"⚠️ Could not read text from image.",
  "pdf_ready":"✅ PDF created.",
  "compress_ok":"✅ Image compressed.",
@@ -437,16 +431,17 @@ def sections_root_kb(uid:int):
         [InlineKeyboardButton(T(uid,"sec_smm"), callback_data="sec_smm"),
          InlineKeyboardButton(T(uid,"sec_nums"), callback_data="sec_nums")],
         [InlineKeyboardButton(T(uid,"sec_vcc"), callback_data="sec_vcc")],
+        [InlineKeyboardButton(T(uid,"sec_darkgpt"), callback_data="sec_darkgpt")],  # Dark GPT قسم مستقل (VIP)
         [InlineKeyboardButton(T(uid,"btn_back"), callback_data="back_home")]
     ])
 
 def sec_ai_kb(uid:int):
+    # أبقيت الأدوات كما طلبت (بدون Dark GPT هنا)
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(T(uid,"ai_stt"), callback_data="ai_stt"),
          InlineKeyboardButton(T(uid,"ai_trans"), callback_data="ai_trans")],
         [InlineKeyboardButton(T(uid,"ai_txi"), callback_data="ai_txi")],
         [InlineKeyboardButton(T(uid,"ai_chat"), callback_data="ai_chat")],
-        [InlineKeyboardButton(T(uid,"ai_dark"), callback_data="ai_dark")],  # VIP-gated link screen
         [InlineKeyboardButton(T(uid,"btn_back"), callback_data="back_sections")]
     ])
 
@@ -471,13 +466,17 @@ def sec_files_kb(uid:int):
         [InlineKeyboardButton(T(uid,"btn_back"), callback_data="back_sections")]
     ])
 
+def _link_or_admin(url:str)->str:
+    return url if url else admin_button_url()
+
 def sec_courses_kb(uid:int):
-    rows = []
-    if COURSE_PYTHON_URL: rows.append([InlineKeyboardButton(T(uid,"courses_python"), url=COURSE_PYTHON_URL)])
-    if COURSE_CYBER_URL:  rows.append([InlineKeyboardButton(T(uid,"courses_cyber"),  url=COURSE_CYBER_URL)])
-    if COURSE_EHACK_URL:  rows.append([InlineKeyboardButton(T(uid,"courses_ehack"),  url=COURSE_EHACK_URL)])
-    rows.append([InlineKeyboardButton(T(uid,"btn_back"), callback_data="back_sections")])
-    return InlineKeyboardMarkup(rows)
+    # تظهر الأزرار دائمًا؛ لو ما في رابط → تواصل مع الإدارة
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(T(uid,"courses_python"), url=_link_or_admin(COURSE_PYTHON_URL))],
+        [InlineKeyboardButton(T(uid,"courses_cyber"),  url=_link_or_admin(COURSE_CYBER_URL))],
+        [InlineKeyboardButton(T(uid,"courses_ehack"),  url=_link_or_admin(COURSE_EHACK_URL))],
+        [InlineKeyboardButton(T(uid,"btn_back"), callback_data="back_sections")]
+    ])
 
 def sec_unban_kb(uid:int):
     return InlineKeyboardMarkup([
@@ -489,16 +488,20 @@ def sec_unban_kb(uid:int):
     ])
 
 def sec_links_kb(uid:int, url:str, back="back_sections"):
-    btn = InlineKeyboardButton(url, url=url) if url else InlineKeyboardButton(T(uid,"kb_contact"), url=admin_button_url())
+    # حتى لو الرابط ناقص يوجّه للإدارة وما تختفي الأزرار
+    btn = InlineKeyboardButton(T(uid,"kb_contact"), url=_link_or_admin(url))
     return InlineKeyboardMarkup([[btn],[InlineKeyboardButton(T(uid,"btn_back"), callback_data=back)]])
 
 # safe edit
 async def safe_edit(q, text=None, kb=None):
     try:
-        if text is not None:
+        if text is not None and str(text).strip() != "":
             await q.edit_message_text(text, reply_markup=kb, parse_mode="HTML", disable_web_page_preview=True)
         elif kb is not None:
             await q.edit_message_reply_markup(reply_markup=kb)
+        else:
+            # لا ترسل تعديل بنص فارغ
+            pass
     except BadRequest as e:
         if "message is not modified" in str(e).lower():
             try:
@@ -656,8 +659,8 @@ async def translate_text(text:str, target:str="ar")->str:
     return (r.choices[0].message.content or "").strip()
 
 async def translate_image(path:str, target:str="ar")->str:
-    if not (AI_ENABLED and OPENAI_VISION and client): 
-        return "⚠️ Image translation requires OPENAI_VISION=1 (and a vision-capable model)."
+    if not (AI_ENABLED and OPENAI_VISION and client):
+        return "⚠️ Image translation requires OPENAI_VISION=1 and a vision-capable model."
     try:
         with open(path,"rb") as f: b64=base64.b64encode(f.read()).decode()
         content=[{"type":"text","text":f"Extract the text from the image and translate it into {target}. Return only the translation."},
@@ -667,15 +670,6 @@ async def translate_image(path:str, target:str="ar")->str:
     except Exception as e:
         return f"⚠️ {e}"
 
-async def ai_write(prompt:str)->str:
-    if not AI_ENABLED or client is None: return LOCALE["ar"]["ai_disabled"]
-    r,err=_chat([
-        {"role":"system","content":"اكتب نصًا عربيًا إعلانيًا جذابًا ومختصرًا بعناوين قصيرة وCTA واضح."},
-        {"role":"user","content":prompt}
-    ])
-    if err: return f"⚠️ {err}"
-    return (r.choices[0].message.content or "").strip()
-
 async def ai_image(prompt:str)->bytes|None:
     if not AI_ENABLED or client is None: return None
     try:
@@ -684,16 +678,15 @@ async def ai_image(prompt:str)->bytes|None:
     except Exception as e:
         log.error("image gen: %s", e); return None
 
-# ============ Media Downloader (force MP4 where possible) ============
+# ============ Media Downloader (prefer MP4) ============
 async def download_media(url:str)->Path|None:
     if yt_dlp is None: 
         log.error("yt_dlp not installed"); return None
     TMP_DIR.mkdir(parents=True, exist_ok=True)
     outtmpl=str(TMP_DIR / "%(title).80s.%(id)s.%(ext)s")
-    # نحاول اختيار صيغ MP4 مباشرة لتجنب الحاجة لـ ffmpeg
     ydl_opts={
         "outtmpl": outtmpl,
-        "format": "best[ext=mp4]/bestvideo[ext=mp4]/b[ext=mp4]/b",  # يفضّل mp4
+        "format": "best[ext=mp4]/bestvideo[ext=mp4]/b[ext=mp4]/b",
         "retries": 2,
         "noplaylist": True,
         "quiet": True,
@@ -704,13 +697,10 @@ async def download_media(url:str)->Path|None:
             info=ydl.extract_info(url, download=True)
             fname=ydl.prepare_filename(info)
             base, _ = os.path.splitext(fname)
-            # ابحث عن فيديو mp4
             for ext in (".mp4",".m4v",".mov"):
                 p=Path(base+ext)
-                if p.exists() and p.is_file():
-                    if p.stat().st_size<=MAX_UPLOAD_BYTES: 
-                        return p
-            # fallback: لو ما قدر يجيب mp4، جرّب أقرب ملف
+                if p.exists() and p.is_file() and p.stat().st_size<=MAX_UPLOAD_BYTES:
+                    return p
             for ext in (".webm",".mkv",".mp4"):
                 p=Path(base+ext)
                 if p.exists() and p.is_file() and p.stat().st_size<=MAX_UPLOAD_BYTES:
@@ -755,7 +745,6 @@ async def start(update:Update, context:ContextTypes.DEFAULT_TYPE):
     uid=update.effective_user.id; chat_id=update.effective_chat.id
     user_get(uid)
 
-    # Welcome
     try:
         if Path(WELCOME_PHOTO).exists():
             with open(WELCOME_PHOTO,"rb") as f:
@@ -813,7 +802,7 @@ async def on_button(update:Update, context:ContextTypes.DEFAULT_TYPE):
 
     # Language
     if q.data=="menu_lang":
-        await safe_edit(q, " ", lang_kb(uid)); return
+        await safe_edit(q, T(uid,"lang_title"), lang_kb(uid)); return
     if q.data in ("lang_ar","lang_en"):
         prefs_set_lang(uid, "ar" if q.data=="lang_ar" else "en")
         await safe_edit(q, T(uid,"menu_main"), main_menu_kb(uid)); return
@@ -850,9 +839,17 @@ async def on_button(update:Update, context:ContextTypes.DEFAULT_TYPE):
         await safe_edit(q, T(uid,"nums_open"), sec_links_kb(uid, NUMBERS_URL)); return
     if q.data=="sec_vcc":
         await safe_edit(q, T(uid,"vcc_open"), sec_links_kb(uid, VCC_URL)); return
+    if q.data=="sec_darkgpt":
+        if not user_is_premium(uid):
+            await safe_edit(q, T(uid,"vip_off"), sections_root_kb(uid)); return
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Open Dark GPT", url="https://flowgpt.com/chat/M0GRwnsc2MY0DdXPPmF4X")],
+            [InlineKeyboardButton(T(uid,"btn_back"), callback_data="back_sections")]
+        ])
+        await safe_edit(q, T(uid,"sec_darkgpt"), kb); return
 
     # AI items (VIP-gated)
-    if q.data in ("ai_chat","ai_txi","ai_trans","ai_stt","ai_dark"):
+    if q.data in ("ai_chat","ai_txi","ai_trans","ai_stt"):
         if not user_is_premium(uid):
             await safe_edit(q, T(uid,"vip_off"), sec_ai_kb(uid)); return
         if q.data=="ai_chat":
@@ -867,21 +864,6 @@ async def on_button(update:Update, context:ContextTypes.DEFAULT_TYPE):
         if q.data=="ai_stt":
             ai_set_mode(uid, "ai_stt", {})
             await safe_edit(q, T(uid,"send_voice"), sec_ai_kb(uid)); return
-        if q.data=="ai_dark":
-            # لا نغيّر مكانه – نظهر رابط فتح بعد التأكد من VIP
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("Open Dark GPT", url="https://flowgpt.com/chat/M0GRwnsc2MY0DdXPPmF4X")],
-                [InlineKeyboardButton(T(uid,"btn_back"), callback_data="back_sections")]
-            ])
-            await safe_edit(q, T(uid,"ai_dark"), kb); return
-
-    # Media / Files
-    if q.data=="media_dl":
-        ai_set_mode(uid, "media_dl", {}); await safe_edit(q, T(uid,"send_media_url"), sec_media_kb(uid)); return
-    if q.data=="file_img2pdf":
-        ai_set_mode(uid, "file_img2pdf", {"paths":[]}); await safe_edit(q, T(uid,"send_image"), sec_files_kb(uid)); return
-    if q.data=="file_compress":
-        ai_set_mode(uid, "file_compress", {}); await safe_edit(q, T(uid,"send_image"), sec_files_kb(uid)); return
 
 # ============ Messages ============
 async def guard_messages(update:Update, context:ContextTypes.DEFAULT_TYPE):
@@ -987,7 +969,7 @@ async def guard_messages(update:Update, context:ContextTypes.DEFAULT_TYPE):
             if out and out.exists():
                 await msg.reply_document(InputFile(str(out))); await msg.reply_text(T(uid,"compress_ok"))
             else:
-                await msg.reply_text("⚠️ Failed."); 
+                await msg.reply_text("⚠️ Failed.")
             return
 
     # documents (images as files)
@@ -1053,7 +1035,6 @@ async def on_startup(app:Application):
             CHANNEL_ID=chat.id; log.info("[startup] @%s -> %s", u, CHANNEL_ID); break
         except Exception as e:
             log.warning("get_chat @%s: %s", u, e)
-    # Commands
     try:
         await app.bot.set_my_commands(
             [BotCommand("start","Start"), BotCommand("help","Help"), BotCommand("makepdf","Export PDF"), BotCommand("setlang","Set language")],
@@ -1073,24 +1054,19 @@ def main():
          .post_init(on_startup)
          .concurrent_updates(True)
          .build())
-    # commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("setlang", setlang_cmd))
     app.add_handler(CommandHandler("makepdf", makepdf_cmd))
     app.add_handler(CommandHandler("id", cmd_id))
     app.add_handler(CommandHandler("grant", grant))
-    # buttons
     app.add_handler(CallbackQueryHandler(on_button))
-    # messages
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, guard_messages))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, guard_messages))
     app.add_handler(MessageHandler(filters.PHOTO, guard_messages))
     app.add_handler(MessageHandler(filters.Document.ALL, guard_messages))
-    # errors
     app.add_error_handler(on_error)
     app.run_polling()
 
 if __name__=="__main__":
     main()
-
