@@ -67,21 +67,21 @@ client = OpenAI(api_key=OPENAI_API_KEY) if AI_ENABLED else None
 OWNER_ID = int(os.getenv("OWNER_ID", "6468743821"))
 OWNER_USERNAME = os.getenv("OWNER_USERNAME", "ferpo_ksa").strip().lstrip("@")
 
-MAX_UPLOAD_MB = 47
+MAX_UPLOAD_MB = 47  # حد الحجم لإرسال الملفات عبر البوت
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 
 def admin_button_url() -> str:
     return f"tg://resolve?domain={OWNER_USERNAME}" if OWNER_USERNAME else f"tg://user?id={OWNER_ID}"
 
 # قناة الاشتراك
-MAIN_CHANNEL_USERNAMES = (os.getenv("MAIN_CHANNELS", "ferpokss,Ferp0ks").split(","))
+MAIN_CHANNEL_USERNAMES = (os.getenv("MAIN_CHANNELS","ferpokss,Ferp0ks").split(","))
 MAIN_CHANNEL_USERNAMES = [u.strip().lstrip("@") for u in MAIN_CHANNEL_USERNAMES if u.strip()]
 MAIN_CHANNEL_LINK = f"https://t.me/{MAIN_CHANNEL_USERNAMES[0]}"
 
 def need_admin_text() -> str:
     return f"⚠️ لو ما اشتغل التحقق: تأكّد أن البوت **مشرف** في @{MAIN_CHANNEL_USERNAMES[0]}."
 
-WELCOME_PHOTO = os.getenv("WELCOME_PHOTO", "assets/ferpoks.jpg")
+WELCOME_PHOTO = os.getenv("WELCOME_PHOTO","assets/ferpoks.jpg")
 WELCOME_TEXT_AR = (
     "مرحباً بك في بوت فيربوكس 🔥\n"
     "كل الأدوات هنا تتم داخل تيليجرام: ذكاء اصطناعي، فحص روابط، تحميل وسائط، تحويل صوت لنص، توليد صور، وأكثر.\n"
@@ -92,7 +92,7 @@ CHANNEL_ID = None  # سيُحل عند الإقلاع
 
 # ==== إعدادات الدفع (Paylink) ====
 PAY_WEBHOOK_ENABLE = os.getenv("PAY_WEBHOOK_ENABLE", "1") == "1"
-PAY_WEBHOOK_SECRET = (os.getenv("PAY_WEBHOOK_SECRET") or "").strip()
+PAY_WEBHOOK_SECRET = os.getenv("PAY_WEBHOOK_SECRET", "").strip()
 PAYLINK_API_BASE   = os.getenv("PAYLINK_API_BASE", "https://restapi.paylink.sa/api").rstrip("/")
 PAYLINK_API_ID     = (os.getenv("PAYLINK_API_ID") or "").strip()
 PAYLINK_API_SECRET = (os.getenv("PAYLINK_API_SECRET") or "").strip()
@@ -102,10 +102,10 @@ USE_PAYLINK_API        = os.getenv("USE_PAYLINK_API", "1") == "1"
 PAYLINK_CHECKOUT_BASE  = (os.getenv("PAYLINK_CHECKOUT_BASE") or "").strip()
 
 # ==== أرقام مؤقتة (VIP/اختياري) ====
-FIVESIM_API_KEY = os.getenv("FIVESIM_API_KEY", "").strip()
+FIVESIM_API_KEY = os.getenv("FIVESIM_API_KEY", "").strip()  # لو تركته فاضي: الميزة تظهر رسالة إعداد
 
 # ==== خادِم ويب (Webhook + Health) ====
-SERVE_HEALTH = os.getenv("SERVE_HEALTH", "0") == "1" or PAY_WEBHOOK_ENABLE
+SERVE_HEALTH = os.getenv("SERVE_HEALTH", "1") == "1" or PAY_WEBHOOK_ENABLE
 try:
     from aiohttp import web, ClientSession
     AIOHTTP_AVAILABLE = True
@@ -187,21 +187,15 @@ def _run_http_server():
 
     async def _make_app():
         app = web.Application()
-
-        async def _favicon(_):
-            return web.Response(status=204)
+        async def _favicon(_): return web.Response(status=204)
         app.router.add_get("/favicon.ico", _favicon)
-
         if SERVE_HEALTH:
-            async def _health(_):
-                return web.json_response({"ok": True})
-            app.router.add_get("/", _health)        # لسهولة الفحص
-            app.router.add_get("/health", _health)  # يدعم Render
-
+            async def _health(_): return web.json_response({"ok": True})
+            app.router.add_get("/", _health)
+            app.router.add_get("/health", _health)  # نوفّر /health أيضًا
         if PAY_WEBHOOK_ENABLE:
             app.router.add_post("/payhook", _payhook)
-            async def _payhook_get(_):
-                return web.json_response({"ok": True})
+            async def _payhook_get(_): return web.json_response({"ok": True})
             app.router.add_get("/payhook", _payhook_get)
         return app
 
@@ -215,8 +209,7 @@ def _run_http_server():
             port = int(os.getenv("PORT", "10000"))
             site = web.TCPSite(runner, "0.0.0.0", port)
             await site.start()
-            log.info("[http] serving on 0.0.0.0:%d (webhook=%s health=%s)",
-                     port, "ON" if PAY_WEBHOOK_ENABLE else "OFF", "ON" if SERVE_HEALTH else "OFF")
+            log.info("[http] serving on 0.0.0.0:%d (webhook=%s health=%s)", port, "ON" if PAY_WEBHOOK_ENABLE else "OFF", "ON" if SERVE_HEALTH else "OFF")
 
         loop.run_until_complete(_start())
         try:
@@ -248,7 +241,7 @@ async def on_startup(app: Application):
     if CHANNEL_ID is None:
         log.error("[startup] ❌ could not resolve channel id; fallback to @username checks")
 
-    # أوامر عامة
+    # أوامر عامة للمستخدمين
     try:
         await app.bot.set_my_commands(
             [
@@ -259,12 +252,13 @@ async def on_startup(app: Application):
                 BotCommand("write","كتابة محتوى"),
                 BotCommand("stt","تحويل صوت لنص"),
                 BotCommand("tr","ترجمة فورية"),
+                BotCommand("setlang","تغيير لغة الترجمة"),
                 BotCommand("scan","فحص رابط"),
                 BotCommand("email","Email Checker"),
                 BotCommand("dl","تحميل وسائط"),
                 BotCommand("img","توليد صورة AI"),
                 BotCommand("file","أداة ملفات"),
-                BotCommand("makepdf","إخراج PDF بعد رفع الصور")
+                BotCommand("makepdf","إخراج PDF")
             ],
             scope=BotCommandScopeDefault()
         )
@@ -300,8 +294,7 @@ _conn_lock = threading.RLock()
 
 def _db():
     conn = getattr(_db, "_conn", None)
-    if conn is not None:
-        return conn
+    if conn is not None: return conn
     path = DB_PATH
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -319,13 +312,24 @@ def _db():
         _db._conn = conn
         return conn
 
-def migrate_db():
-    with _conn_lock:
-        c = _db().cursor()
+def _rebuild_users_table(existing_cols: set):
+    """
+    يعيد بناء جدول users بالهيكل الصحيح وينسخ البيانات قدر الإمكان.
+    """
+    def col_expr(name: str, default_sql: str):
+        return name if name in existing_cols else default_sql
 
-        # users table (إنشاء أولي)
-        _db().execute("""
-        CREATE TABLE IF NOT EXISTS users (
+    id_src = None
+    for cand in ("id", "user_id", "uid", "telegram_id"):
+        if cand in existing_cols:
+            id_src = cand
+            break
+    id_sql = f"COALESCE(CAST({id_src} AS TEXT), CAST(rowid AS TEXT))" if id_src else "CAST(rowid AS TEXT)"
+
+    conn = _db()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS users_new (
           id TEXT PRIMARY KEY,
           premium INTEGER DEFAULT 0,
           verified_ok INTEGER DEFAULT 0,
@@ -333,80 +337,83 @@ def migrate_db():
           vip_forever INTEGER DEFAULT 0,
           vip_since INTEGER DEFAULT 0,
           pref_lang TEXT DEFAULT 'ar'
-        );""")
+        );
+    """)
+    try:
+        cur.execute(f"""
+            INSERT OR IGNORE INTO users_new (id, premium, verified_ok, verified_at, vip_forever, vip_since, pref_lang)
+            SELECT
+              {id_sql}                                         AS id,
+              COALESCE({col_expr('premium', '0')}, 0)          AS premium,
+              COALESCE({col_expr('verified_ok', '0')}, 0)      AS verified_ok,
+              COALESCE({col_expr('verified_at', '0')}, 0)      AS verified_at,
+              COALESCE({col_expr('vip_forever', '0')}, 0)      AS vip_forever,
+              COALESCE({col_expr('vip_since', '0')}, 0)        AS vip_since,
+              COALESCE({col_expr('pref_lang', "'ar'")}, 'ar')  AS pref_lang
+            FROM users;
+        """)
+    except Exception as e:
+        log.warning("[db-migrate] copy from old users failed (maybe empty/absent): %s", e)
 
-        # فحص الأعمدة
-        c.execute("PRAGMA table_info(users)")
-        cols = {row["name"] for row in c.fetchall()}
+    cur.execute("DROP TABLE IF EXISTS users;")
+    cur.execute("ALTER TABLE users_new RENAME TO users;")
+    conn.commit()
+    log.info("[db-migrate] users table rebuilt successfully with correct schema.")
 
-        # إصلاح جذري لو عمود id مفقود
-        if "id" not in cols:
-            log.warning("[db-migrate] users table missing 'id'; rebuilding table with correct schema")
-            _db().execute("ALTER TABLE users RENAME TO users_old;")
-            _db().execute("""
-            CREATE TABLE users (
-              id TEXT PRIMARY KEY,
-              premium INTEGER DEFAULT 0,
-              verified_ok INTEGER DEFAULT 0,
-              verified_at INTEGER DEFAULT 0,
-              vip_forever INTEGER DEFAULT 0,
-              vip_since INTEGER DEFAULT 0,
-              pref_lang TEXT DEFAULT 'ar'
-            );""")
-            # محاولة نقل البيانات
-            try:
-                c.execute("PRAGMA table_info(users_old)")
-                old_cols = {row["name"] for row in c.fetchall()}
-                src_id = None
-                for cand in ("user_id","uid","telegram_id","tg_id","id"):
-                    if cand in old_cols:
-                        src_id = cand; break
-                if src_id:
-                    exprs = [
-                        f"CAST({src_id} AS TEXT)",
-                        "COALESCE(premium,0)"     if "premium"     in old_cols else "0",
-                        "COALESCE(verified_ok,0)" if "verified_ok" in old_cols else "0",
-                        "COALESCE(verified_at,0)" if "verified_at" in old_cols else "0",
-                        "COALESCE(vip_forever,0)" if "vip_forever" in old_cols else "0",
-                        "COALESCE(vip_since,0)"   if "vip_since"   in old_cols else "0",
-                        "COALESCE(pref_lang,'ar')"if "pref_lang"   in old_cols else "'ar'",
-                    ]
-                    _db().execute(
-                        "INSERT INTO users (id, premium, verified_ok, verified_at, vip_forever, vip_since, pref_lang) "
-                        "SELECT " + ", ".join(exprs) + " FROM users_old;"
-                    )
-                    log.info("[db-migrate] migrated rows from users_old -> users (src_id=%s)", src_id)
-                else:
-                    log.warning("[db-migrate] no source id column in users_old; starting fresh users table")
-            except Exception as e:
-                log.warning("[db-migrate] copy rows failed: %s (continuing with empty users)", e)
-            _db().execute("DROP TABLE IF EXISTS users_old;")
-            _db().commit()
-            c = _db().cursor()
+def migrate_db():
+    """
+    يضمن وجود الجداول ويصحّح users تلقائيًا إن كان ناقص عمود id أو غيره.
+    يدعم تهيئة كاملة عند ضبط RESET_DB=1.
+    """
+    with _conn_lock:
+        conn = _db()
+        c = conn.cursor()
+
+        if os.getenv("RESET_DB", "0") == "1":
+            log.warning("[db-migrate] RESET_DB=1 → dropping all known tables…")
+            for t in ("users", "ai_state", "payments"):
+                try:
+                    c.execute(f"DROP TABLE IF EXISTS {t};")
+                except Exception as e:
+                    log.warning("[db-migrate] drop %s failed: %s", t, e)
+            conn.commit()
+
+        # users
+        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users';")
+        has_users = c.fetchone() is not None
+        if not has_users:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                  id TEXT PRIMARY KEY,
+                  premium INTEGER DEFAULT 0,
+                  verified_ok INTEGER DEFAULT 0,
+                  verified_at INTEGER DEFAULT 0,
+                  vip_forever INTEGER DEFAULT 0,
+                  vip_since INTEGER DEFAULT 0,
+                  pref_lang TEXT DEFAULT 'ar'
+                );
+            """)
+            conn.commit()
+            log.info("[db-migrate] created users table fresh.")
+        else:
             c.execute("PRAGMA table_info(users)")
-            cols = {row["name"] for row in c.fetchall()}
+            cols = {row[1] for row in c.fetchall()}
+            needed = {"id", "premium", "verified_ok", "verified_at", "vip_forever", "vip_since", "pref_lang"}
+            if not needed.issubset(cols) or ("id" not in cols):
+                log.warning("[db-migrate] users table missing columns; rebuilding table with correct schema")
+                _rebuild_users_table(cols)
 
-        # إضافة أعمدة ناقصة لو وجدت
-        if "verified_ok" not in cols:
-            _db().execute("ALTER TABLE users ADD COLUMN verified_ok INTEGER DEFAULT 0;")
-        if "verified_at" not in cols:
-            _db().execute("ALTER TABLE users ADD COLUMN verified_at INTEGER DEFAULT 0;")
-        if "vip_forever" not in cols:
-            _db().execute("ALTER TABLE users ADD COLUMN vip_forever INTEGER DEFAULT 0;")
-        if "vip_since" not in cols:
-            _db().execute("ALTER TABLE users ADD COLUMN vip_since INTEGER DEFAULT 0;")
-        if "pref_lang" not in cols:
-            _db().execute("ALTER TABLE users ADD COLUMN pref_lang TEXT DEFAULT 'ar';")
-
-        # باقي الجداول
-        _db().execute("""
+        # ai_state
+        c.execute("""
         CREATE TABLE IF NOT EXISTS ai_state (
           user_id TEXT PRIMARY KEY,
           mode TEXT DEFAULT NULL,
           extra TEXT DEFAULT NULL,
           updated_at INTEGER
         );""")
-        _db().execute("""
+
+        # payments
+        c.execute("""
         CREATE TABLE IF NOT EXISTS payments (
             ref TEXT PRIMARY KEY,
             user_id TEXT,
@@ -417,7 +424,8 @@ def migrate_db():
             paid_at INTEGER,
             raw TEXT
         );""")
-        _db().commit()
+
+        conn.commit()
 
 def init_db():
     migrate_db()
@@ -717,11 +725,12 @@ def _chat_with_fallback(messages):
     fallbacks = [m for m in [primary, "gpt-4o-mini", "gpt-4.1-mini", "gpt-4o", "gpt-4.1", "gpt-3.5-turbo"] if m]
     seen = set(); ordered = []
     for m in fallbacks:
-        if m not in seen: ordered.append(m); seen.add(m)
+        if m not in seen:
+            ordered.append(m); seen.add(m)
     last_err = None
     for model in ordered:
         try:
-            r = client.chat.completions.create(model=model, messages=messages, temperature=0.7, timeout=60)
+            r = client.chat.completions.create(model=model, messages=messages, temperature=0.7)
             return r, None
         except Exception as e:
             msg = str(e); last_err = msg
@@ -801,7 +810,7 @@ async def http_head(url: str) -> int|None:
 def resolve_ip(host: str) -> str|None:
     try:
         infos = socket.getaddrinfo(host, None)
-        for fam, _, _, _, sockaddr in infos:
+        for _, _, _, _, sockaddr in infos:
             ip = sockaddr[0]
             if ":" not in ip: return ip
         return infos[0][4][0] if infos else None
@@ -825,7 +834,7 @@ def whois_domain(domain: str) -> dict|None:
 
 async def osint_email(email: str) -> str:
     if not is_valid_email(email): return "⚠️ صيغة الإيميل غير صحيحة."
-    local, domain = email.split("@", 1)
+    _, domain = email.split("@", 1)
     # MX
     mx_txt = "❓ غير متاح"
     if dnsresolver:
@@ -874,7 +883,6 @@ async def osint_username(name: str) -> str:
     uname = re.sub(r"[^\w\-.]+", "", name.strip())
     if not uname or len(uname) < 3:
         return "⚠️ أدخل اسم/يوزر صالح (٣ أحرف على الأقل)."
-    # GitHub probe
     gh_line = "GitHub: لم يتم الفحص"
     try:
         async with aiohttp.ClientSession() as s:
@@ -888,7 +896,7 @@ async def osint_username(name: str) -> str:
                     gh_line = f"GitHub: حالة غير متوقعة {r.status}"
     except Exception as e:
         gh_line = f"GitHub: خطأ شبكة ({e})"
-    return f"👤 البحث عن: <code>{uname}</code>\n{gh_line}\n\nℹ️ فحوص أخرى ممكن إضافتها لاحقًا."
+    return f"👤 البحث عن: <code>{uname}</code>\n{gh_line}\n\nℹ️ فحوص أخرى ممكن إضافتها لاحقًا (تويتر/انستغرام عبر APIs)."
 
 def classify_url(u: str) -> dict:
     try:
@@ -948,7 +956,7 @@ async def tts_whisper_from_file(filepath: str) -> str:
         return getattr(resp, "text", "").strip() or "⚠️ لم أستطع استخراج النص."
     except Exception as e:
         log.error("[whisper] %s", e)
-        return "⚠️ تعذّر التحويل. أعد الإرسال كـ (ملف صوت) بدل Voice، أو جرّب mp3/m4a/wav."
+        return "⚠️ تعذّر التحويل. أعد الإرسال كـ (ملف صوت) بدل Voice، أو جرّب صيغة mp3/m4a/wav."
 
 async def translate_text(text: str, target_lang: str="ar") -> str:
     if not AI_ENABLED or client is None:
@@ -967,13 +975,13 @@ async def translate_image_file(path: str, target_lang: str="ar") -> str:
     try:
         with open(path, "rb") as f:
             b64 = base64.b64encode(f.read()).decode()
-        content = [
+        messages = [
             {"role":"user","content":[
-                {"type":"input_text","text": f"Extract the text from the image and translate it into {target_lang}. Return only the translation."},
-                {"type":"input_image","image_url":{"url": f"data:image/jpeg;base64,{b64}"}}
+                {"type":"text","text": f"Extract the text from this image and translate it into {target_lang}. Return only the translation."},
+                {"type":"image_url","image_url":{"url": f"data:image/jpeg;base64,{b64}"}}
             ]}
         ]
-        r = client.chat.completions.create(model=OPENAI_CHAT_MODEL, messages=content, temperature=0)
+        r = client.chat.completions.create(model=OPENAI_CHAT_MODEL, messages=messages, temperature=0)
         return (r.choices[0].message.content or "").strip()
     except Exception as e:
         log.error("[vision-translate] %s", e)
@@ -1037,9 +1045,14 @@ async def download_media(url: str) -> Path|None:
         return None
     return None
 
-# ==== رسائل أساسية / أوامر ====
+# ==== رسائل أساسية ====
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📜 الأوامر:\n/start – بدء\n/help – مساعدة\n/geo – IP Lookup\n/osint – بحث ذكي\n/write – كتابة محتوى\n/stt – تحويل صوت لنص\n/tr – ترجمة\n/scan – فحص رابط\n/email – Email Checker\n/dl – تحميل وسائط\n/img – صورة AI\n/file – أداة ملفات\n/makepdf – إخراج PDF")
+    await update.message.reply_text(
+        "📜 الأوامر:\n"
+        "/start – بدء\n/help – مساعدة\n/geo – IP Lookup\n/osint – بحث ذكي\n/write – كتابة محتوى\n"
+        "/stt – تحويل صوت لنص\n/tr – ترجمة\n/setlang – تغيير لغة الترجمة\n"
+        "/scan – فحص رابط\n/email – Email Checker\n/dl – تحميل وسائط\n/img – صورة AI\n/file – أداة ملفات\n/makepdf – إخراج PDF"
+    )
 
 async def geo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -1214,39 +1227,40 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if key == "geolocation":
             ai_set_mode(uid, "geo_ip")
             await safe_edit(q, "📍 أرسل IP أو دومين الآن…", kb=section_back_kb()); return
-        elif key == "osint":
+        if key == "osint":
             ai_set_mode(uid, "osint")
             await safe_edit(q, "🔎 أرسل **اسم/يوزر** أو **إيميل** للفحص.", kb=section_back_kb()); return
-        elif key == "writer":
+        if key == "writer":
             ai_set_mode(uid, "writer")
             await safe_edit(q, "✍️ اكتب وصفًا قصيرًا لما تريد كتابته.", kb=section_back_kb()); return
-        elif key == "stt":
+        if key == "stt":
             ai_set_mode(uid, "stt")
             await safe_edit(q, "🎙️ أرسل Voice أو ملف صوت.", kb=section_back_kb()); return
-        elif key == "translate":
+        if key == "translate":
             u = user_get(uid)
             ai_set_mode(uid, "translate", {"to": u.get("pref_lang","ar")})
             await safe_edit(q, f"🌐 أرسل نصًّا{' أو صورة' if OPENAI_VISION else ''} للترجمة → {u.get('pref_lang','ar').upper()}.", kb=section_back_kb()); return
-        elif key == "link_scan":
+        if key == "link_scan":
             ai_set_mode(uid, "link_scan")
             await safe_edit(q, "🛡️ أرسل الرابط للفحص.", kb=section_back_kb()); return
-        elif key == "email_checker":
+        if key == "email_checker":
             ai_set_mode(uid, "email_check")
             await safe_edit(q, "✉️ أرسل الإيميل للفحص.", kb=section_back_kb()); return
-        elif key == "media_dl":
+        if key == "media_dl":
             ai_set_mode(uid, "media_dl")
-            await safe_edit(q, "⬇️ أرسل رابط فيديو/صوت.", kb=section_back_kb()); return
-        elif key == "numbers":
+            await safe_edit(q, "🎬 أرسل رابط الفيديو أو الصوت للتحميل.", kb=section_back_kb()); return
+        if key == "numbers":
             ai_set_mode(uid, "numbers")
             await safe_edit(q, "☎️ خدمة الأرقام المؤقتة تتطلب ربط API.\nأرسل اسم الخدمة (مثال: Telegram / WhatsApp) وسأحاول تجهيز رقم.\n(لو ما ربطت API راح يوصلك تنبيه بالإعداد)", kb=section_back_kb()); return
-        elif key == "file_tools":
+        if key == "file_tools":
             ai_set_mode(uid, "file_tools_menu")
             await safe_edit(q, "🗜️ اختر أداة الملفات:", kb=file_tools_kb()); return
-        elif key == "image_ai":
+        if key == "image_ai":
             ai_set_mode(uid, "image_ai")
             await safe_edit(q, "🖼️ اكتب وصف الصورة المراد توليدها.", kb=section_back_kb()); return
-        else:
-            await safe_edit(q, f"{sec['title']}\n\n{sec.get('desc','')}", kb=section_back_kb()); return
+
+        # الافتراضي
+        await safe_edit(q, f"{sec['title']}\n\n{sec.get('desc','')}", kb=section_back_kb()); return
 
     # أزرار أدوات الملفات
     if q.data == "file_pdf":
@@ -1260,16 +1274,20 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "ai_chat":
         if not AI_ENABLED or client is None:
             await safe_edit(q, tr("ai_disabled"), kb=sections_list_kb())
-            try: await q.message.reply_text(tr("ai_disabled"), reply_markup=sections_list_kb())
-            except Exception: pass
+            try:
+                await q.message.reply_text(tr("ai_disabled"), reply_markup=sections_list_kb())
+            except Exception:
+                pass
             return
         ai_set_mode(uid, "ai_chat")
         await safe_edit(q, "🤖 وضع الدردشة مفعّل. أرسل سؤالك الآن.", kb=ai_stop_kb()); return
     if q.data == "ai_stop":
         ai_set_mode(uid, None)
         await safe_edit(q, "🔚 تم إنهاء وضع الذكاء الاصطناعي.", kb=sections_list_kb())
-        try: await q.message.reply_text("تم إيقاف وضع الذكاء الاصطناعي.", reply_markup=sections_list_kb())
-        except Exception: pass
+        try:
+            await q.message.reply_text("تم إيقاف وضع الذكاء الاصطناعي.", reply_markup=sections_list_kb())
+        except Exception:
+            pass
         return
 
 # ==== تنزيل ملف من تيليجرام إلى مسار محلي ====
@@ -1308,22 +1326,24 @@ def compress_image(image_path: Path, quality: int = 70) -> Path|None:
         log.error("[compress] %s", e)
         return None
 
-# ==== VIP: أرقام مؤقتة (Placeholder) ====
+# ==== VIP: أرقام مؤقتة (Placeholder بسيط إن ما وُجد API) ====
 async def get_temp_number(service: str) -> str:
     if not FIVESIM_API_KEY:
         return "ℹ️ لم يتم ضبط مفتاح API لخدمة الأرقام المؤقتة.\nأضف FIVESIM_API_KEY في البيئة لتفعيل الميزة."
-    return f"✅ (تجريبي) رقم جاهز لخدمة: {service}\n(اربط API الحقيقي لاستلام الرسائل)."
+    return f"✅ (تجريبي) رقم جاهز لخدمة: {service}\n(اربط API الحقيقي لاستلام الرسائل وإدارة الجلسة)"
 
 # ==== Handlers عامة للرسائل ====
 async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     user_get(uid)
 
+    # تحقّق الانضمام (VIP/مالك bypass)
     if not await must_be_member_or_vip(context, uid):
         await update.message.reply_text("🔐 انضم للقناة لاستخدام البوت:", reply_markup=gate_kb()); return
 
     mode, extra = ai_get_mode(uid)
 
+    # إذا ما في وضع خاص: أعرض القائمة
     if not mode:
         await update.message.reply_text("👇 القائمة:", reply_markup=bottom_menu_kb(uid))
         await update.message.reply_text("📂 الأقسام:", reply_markup=sections_list_kb())
@@ -1331,7 +1351,7 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = update.message
 
-    # نصوص
+    # أوضاع نصية
     if msg.text and not msg.text.startswith("/"):
         text = msg.text.strip()
 
@@ -1408,7 +1428,7 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if mode in ("file_img_to_pdf", "file_img_compress"):
             await update.message.reply_text("📌 أرسل صورة (أو أكثر لـ PDF)."); return
 
-    # صوت/ملفات صوتية
+    # أوضاع استقبال ملفات/صور/صوت
     if msg.voice or msg.audio:
         if mode == "stt":
             file_id = msg.voice.file_id if msg.voice else msg.audio.file_id
@@ -1417,7 +1437,6 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(out)
             return
 
-    # صور
     if msg.photo:
         photo = msg.photo[-1]
         p = await tg_download_to_path(context.bot, photo.file_id, suffix=".jpg")
@@ -1440,7 +1459,6 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"✅ تم إضافة صورة ({len(st_paths)}). أرسل /makepdf للإخراج أو أرسل صورًا إضافية.")
             return
 
-    # مستندات
     if msg.document:
         if mode in ("file_img_to_pdf", "file_img_compress"):
             p = await tg_download_to_path(context.bot, msg.document.file_id, suffix=f"_{msg.document.file_name or ''}")
@@ -1458,6 +1476,7 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"✅ تم إضافة ملف صورة ({len(st_paths)}). أرسل /makepdf للإخراج أو أرسل صورًا إضافية.")
                 return
 
+    # لو ما تطابقت أي حالة:
     await update.message.reply_text("🤖 جاهز. اختر ميزة من /help أو من الأزرار.", reply_markup=bottom_menu_kb(uid))
 
 # ==== أوامر إضافية مرتبطة بأوضاع الملفات ====
@@ -1480,7 +1499,8 @@ async def makepdf_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ==== أوامر المالك والصيانة ====
 async def help_cmd_owner(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID: return
+    if update.effective_user.id != OWNER_ID:
+        return
     await update.message.reply_text("أوامر المالك: /id /grant /revoke /vipinfo /refreshcmds /aidiag /libdiag /paylist /debugverify (/dv) /restart")
 
 async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1506,7 +1526,7 @@ async def vipinfo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = user_get(context.args[0])
     await update.message.reply_text(json.dumps(u, ensure_ascii=False, indent=2))
 
-async def refresh_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def refreshcmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
     await on_startup(context.application); await update.message.reply_text("✅ تم تحديث قائمة الأوامر.")
 
@@ -1588,20 +1608,20 @@ def main():
     app.add_handler(CommandHandler("write", write_cmd))
     app.add_handler(CommandHandler("stt", stt_cmd))
     app.add_handler(CommandHandler("tr", translate_cmd))
+    app.add_handler(CommandHandler("setlang", setlang_cmd))
     app.add_handler(CommandHandler("scan", scan_cmd))
     app.add_handler(CommandHandler("email", email_cmd))
     app.add_handler(CommandHandler("dl", dl_cmd))
     app.add_handler(CommandHandler("img", img_cmd))
     app.add_handler(CommandHandler("file", file_cmd))
     app.add_handler(CommandHandler("makepdf", makepdf_cmd))
-    app.add_handler(CommandHandler("setlang", setlang_cmd))
 
     # أوامر المالك
     app.add_handler(CommandHandler("id", cmd_id))
     app.add_handler(CommandHandler("grant", grant))
     app.add_handler(CommandHandler("revoke", revoke))
     app.add_handler(CommandHandler("vipinfo", vipinfo))
-    app.add_handler(CommandHandler("refreshcmds", refresh_cmds))
+    app.add_handler(CommandHandler("refreshcmds", refreshcmds))
     app.add_handler(CommandHandler("aidiag", aidiag))
     app.add_handler(CommandHandler("libdiag", libdiag))
     app.add_handler(CommandHandler("paylist", paylist))
@@ -1613,7 +1633,7 @@ def main():
     # أزرار
     app.add_handler(CallbackQueryHandler(on_button))
 
-    # رسائل
+    # رسائل (نص/صوت/صور/مستندات) — بعد الأوامر
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, guard_messages))
     app.add_handler(MessageHandler(filters.VOICE, guard_messages))
     app.add_handler(MessageHandler(filters.AUDIO, guard_messages))
@@ -1625,5 +1645,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
