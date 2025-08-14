@@ -1,22 +1,13 @@
 # -*- coding: utf-8 -*-
 # ------------------------------------------------------------
 # FerpoKS Telegram Bot (organized menus, real integrations)
-# python-telegram-bot v21.x (async)
+# python-telegram-bot v21.x (async) + health server for Render
 # ------------------------------------------------------------
-import os, sqlite3, threading, time, asyncio, re, json, logging, base64, hashlib, socket, tempfile
+import os, sqlite3, threading, time, asyncio, re, json, logging, base64, socket, tempfile
 from pathlib import Path
 from io import BytesIO
+
 from dotenv import load_dotenv
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-log = logging.getLogger("bot")
-
-# ==== Third-party clients ====
-try:
-    from openai import OpenAI
-except Exception:
-    OpenAI = None
-
 import aiohttp
 from PIL import Image
 
@@ -32,23 +23,25 @@ from telegram.ext import (
 from telegram.constants import ChatMemberStatus, ChatAction
 from telegram.error import BadRequest
 
-# yt_dlp (video)
+# OpenAI
+try:
+    from openai import OpenAI
+except Exception:
+    OpenAI = None
+
+# yt-dlp
 try:
     import yt_dlp
 except Exception:
     yt_dlp = None
 
-# DNS (اختياري لتحسين فحص الإيميل)
-try:
-    import dns.resolver as dnsresolver
-    import dns.exception as dnsexception
-except Exception:
-    dnsresolver = None
-
 # ====== ENV ======
 ENV_PATH = Path(".env")
 if ENV_PATH.exists() and not os.getenv("RENDER"):
     load_dotenv(ENV_PATH, override=True)
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+log = logging.getLogger("bot")
 
 BOT_TOKEN         = os.getenv("BOT_TOKEN") or ""
 if not BOT_TOKEN: raise RuntimeError("BOT_TOKEN is missing")
@@ -69,28 +62,72 @@ IPINFO_TOKEN      = (os.getenv("IPINFO_TOKEN") or "").strip()
 KICKBOX_API_KEY   = (os.getenv("KICKBOX_API_KEY") or "").strip()
 URLSCAN_API_KEY   = (os.getenv("URLSCAN_API_KEY") or "").strip()
 
-# External links (optional)
-NUMBERS_URL       = os.getenv("NUMBERS_URL", "").strip()     # خدمة الأرقام المؤقتة
-VCC_URL           = os.getenv("VCC_URL", "").strip()         # فيزا افتراضية
-SMM_PANEL_URL     = os.getenv("SMM_PANEL_URL", "").strip()   # لوحة رشق/متابعين
+# External links
+NUMBERS_URL       = os.getenv("NUMBERS_URL", "").strip()     # خدمة الأرقام المؤقتة (رابط خارجي)
+VCC_URL           = os.getenv("VCC_URL", "").strip()         # فيزا افتراضية (رابط خارجي)
+SMM_PANEL_URL     = os.getenv("SMM_PANEL_URL", "").strip()   # لوحة رشق/متابعين (رابط خارجي)
 
-# Unban support links (يمكنك ضبطها من البيئة)
+# Courses (روابطك)
+COURSE_PYTHON_URL = os.getenv("COURSE_PYTHON_URL", "").strip()
+COURSE_CYBER_URL  = os.getenv("COURSE_CYBER_URL", "").strip()
+COURSE_EHACK_URL  = os.getenv("COURSE_EHACK_URL", "").strip()
+
+# Unban links
 UNBAN_INSTAGRAM_URL = os.getenv("UNBAN_INSTAGRAM_URL", "https://help.instagram.com/")
 UNBAN_FACEBOOK_URL  = os.getenv("UNBAN_FACEBOOK_URL", "https://www.facebook.com/help/")
 UNBAN_TELEGRAM_URL  = os.getenv("UNBAN_TELEGRAM_URL", "https://telegram.org/support")
 UNBAN_EPIC_URL      = os.getenv("UNBAN_EPIC_URL", "https://www.epicgames.com/help/en-US/")
 
-# Courses (روابطك المباشرة)
-COURSE_PYTHON_URL = os.getenv("COURSE_PYTHON_URL", "https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/Y8WctvBLiA6u6AASeZX2IUfDQAolTJ4QFGx9WRCu.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250814%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250814T023808Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=d75356d7e59f7c55d29c07f605699f0348e5f078b6ceb421107c9f3202f545b1")
-COURSE_CYBER_URL  = os.getenv("COURSE_CYBER_URL",  "https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/pZ0spOmm1K0dA2qAzUuWUb4CcMMjUPTbn7WMRwAc.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250814%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250814T023837Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=137e2e87efb7f47e5c5f07c949a7ed7a90e392b3b4c2338e536b416cf23e1ac2")
-COURSE_EHACK_URL  = os.getenv("COURSE_EHACK_URL",  "https://www.mediafire.com/folder/r26pp5mpduvnx/%D8%AF%D9%88%D8%B1%D8%A9_%D8%A7%D9%84%D9%87%D8%A7%D9%83%D8%B1_%D8%A7%D9%84%D8%A7%D8%AE%D9%84%D8%A7%D9%82%D9%8A_%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D8%B1%D8%AD%D9%85%D9%86_%D9%88%D8%B5%D9%81%D9%8A")
+# Health server for Render
+SERVE_HEALTH = os.getenv("SERVE_HEALTH", "1") == "1"
+try:
+    from aiohttp import web
+    AIOHTTP_AVAILABLE = True
+except Exception:
+    AIOHTTP_AVAILABLE = False
 
+# OpenAI client
 AI_ENABLED = bool(OPENAI_API_KEY) and (OpenAI is not None)
 client = OpenAI(api_key=OPENAI_API_KEY) if AI_ENABLED else None
 
 MAX_UPLOAD_MB      = 47
 MAX_UPLOAD_BYTES   = MAX_UPLOAD_MB * 1024 * 1024
 CHANNEL_ID         = None
+
+# ============ tiny HTTP server (/health) ============
+def _run_health_server():
+    if not (SERVE_HEALTH and AIOHTTP_AVAILABLE): 
+        log.info("[health] disabled or aiohttp missing")
+        return
+
+    async def make_app():
+        app = web.Application()
+        async def _index(_): return web.json_response({"ok": True, "bot": "FerpoKS"})
+        async def _health(_): return web.json_response({"ok": True, "ts": int(time.time())})
+        app.router.add_get("/", _index)
+        app.router.add_get("/health", _health)
+        return app
+
+    def _thread():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        async def _start():
+            app = await make_app()
+            runner = web.AppRunner(app)
+            await runner.setup()
+            port = int(os.getenv("PORT","10000"))
+            site = web.TCPSite(runner, "0.0.0.0", port)
+            await site.start()
+            log.info("[health] serving on 0.0.0.0:%d", port)
+        loop.run_until_complete(_start())
+        try:
+            loop.run_forever()
+        finally:
+            loop.stop(); loop.close()
+
+    threading.Thread(target=_thread, daemon=True).start()
+
+_run_health_server()
 
 # ============ DB ============
 _conn_lock = threading.RLock()
@@ -121,7 +158,7 @@ def migrate_db():
         c.execute("PRAGMA table_info(users)")
         cols = {r["name"] for r in c.fetchall()}
         if "id" not in cols:
-            log.warning("[db-migrate] users table missing 'id'; rebuilding")
+            log.warning("[db-migrate] users missing id - rebuilding")
             _db().execute("ALTER TABLE users RENAME TO users_old;")
             _db().execute("""
               CREATE TABLE users(
@@ -146,7 +183,6 @@ def migrate_db():
             _db().execute("ALTER TABLE ai_state ADD COLUMN extra TEXT DEFAULT '{}';")
         if "updated_at" not in cols:
             _db().execute("ALTER TABLE ai_state ADD COLUMN updated_at INTEGER;")
-
         _db().commit()
 
 def init_db(): migrate_db()
@@ -204,7 +240,6 @@ LOCALE = {
  "btn_vip":"⚡ ترقية VIP",
  "btn_vip_badge":"⭐ حسابك VIP",
  "btn_back":"↩️ رجوع",
- "btn_prev":"⬅️ السابق", "btn_next":"➡️ التالي",
  "btn_lang_ar":"🇸🇦 العربية", "btn_lang_en":"🇺🇸 English",
  "myinfo":"👤 الاسم: {name}\n🆔 المعرّف: {id}\n🌐 اللغة: {lang}",
  "vip_on":"⭐ حسابك VIP (مدى الحياة).",
@@ -218,6 +253,7 @@ LOCALE = {
  "send_voice":"🎙️ أرسل Voice أو ملف صوت (mp3/m4a/wav).",
  "send_image":"📷 أرسل صورة.",
  "done":"تم.",
+ "sections_title":"اختر قسماً:",
  "sec_ai":"🤖 أدوات الذكاء الاصطناعي",
  "sec_security":"🛡️ أمن وحماية",
  "sec_media":"🎬 تحميل وسائط",
@@ -258,7 +294,6 @@ LOCALE = {
  "download_fail":"⚠️ تعذر تنزيل/إرسال الملف. جرّب رابطاً آخر.",
  "http_status":"🔎 حالة HTTP: {code}",
  "kb_contact":"تواصل مع الإدارة",
- "sections_title":"اختر قسماً:",
 },
 "en":{
  "welcome":"Welcome to FerpoKS Bot 👋\nEverything works inside Telegram.\nPick from the menu below.",
@@ -272,7 +307,6 @@ LOCALE = {
  "btn_vip":"⚡ Upgrade to VIP",
  "btn_vip_badge":"⭐ VIP Account",
  "btn_back":"↩️ Back",
- "btn_prev":"⬅️ Prev", "btn_next":"➡️ Next",
  "btn_lang_ar":"🇸🇦 Arabic", "btn_lang_en":"🇺🇸 English",
  "myinfo":"👤 Name: {name}\n🆔 ID: {id}\n🌐 Language: {lang}",
  "vip_on":"⭐ Your account is VIP (lifetime).",
@@ -286,6 +320,7 @@ LOCALE = {
  "send_voice":"🎙️ Send a Voice note or audio file (mp3/m4a/wav).",
  "send_image":"📷 Send an image.",
  "done":"Done.",
+ "sections_title":"Choose a section:",
  "sec_ai":"🤖 AI Tools",
  "sec_security":"🛡️ Security",
  "sec_media":"🎬 Media Downloader",
@@ -326,7 +361,6 @@ LOCALE = {
  "download_fail":"⚠️ Couldn’t download/send the file. Try another URL.",
  "http_status":"🔎 HTTP status: {code}",
  "kb_contact":"Contact Admin",
- "sections_title":"Choose a section:",
 }
 }
 
@@ -361,7 +395,7 @@ async def is_member(context, user_id:int, force=False, retries=3, backoff=0.7)->
                 cm=await context.bot.get_chat_member(t, user_id)
                 ok=getattr(cm,"status",None) in ALLOWED_STATUSES
                 if ok:
-                    _member_cache[user_id]=(True, now+60); return True
+                    _member_cache[user_id]=(True, now+180); return True
             except Exception as e:
                 log.warning("[is_member] #%d %s err=%s", attempt, t, e)
         if attempt<retries: await asyncio.sleep(backoff*attempt)
@@ -373,7 +407,6 @@ def admin_button_url()->str:
 
 # ============ Keyboards ============
 def main_menu_kb(uid:int):
-    l=lang_of(uid)
     rows=[
         [InlineKeyboardButton(T(uid,"btn_sections"), callback_data="menu_sections")],
         [InlineKeyboardButton(T(uid,"btn_lang"), callback_data="menu_lang")],
@@ -413,7 +446,7 @@ def sec_ai_kb(uid:int):
          InlineKeyboardButton(T(uid,"ai_trans"), callback_data="ai_trans")],
         [InlineKeyboardButton(T(uid,"ai_txi"), callback_data="ai_txi")],
         [InlineKeyboardButton(T(uid,"ai_chat"), callback_data="ai_chat")],
-        [InlineKeyboardButton(T(uid,"ai_dark"), url="https://flowgpt.com/chat/M0GRwnsc2MY0DdXPPmF4X")],
+        [InlineKeyboardButton(T(uid,"ai_dark"), callback_data="ai_dark")],  # VIP-gated link screen
         [InlineKeyboardButton(T(uid,"btn_back"), callback_data="back_sections")]
     ])
 
@@ -439,12 +472,12 @@ def sec_files_kb(uid:int):
     ])
 
 def sec_courses_kb(uid:int):
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(T(uid,"courses_python"), url=COURSE_PYTHON_URL)],
-        [InlineKeyboardButton(T(uid,"courses_cyber"),  url=COURSE_CYBER_URL)],
-        [InlineKeyboardButton(T(uid,"courses_ehack"),  url=COURSE_EHACK_URL)],
-        [InlineKeyboardButton(T(uid,"btn_back"), callback_data="back_sections")]
-    ])
+    rows = []
+    if COURSE_PYTHON_URL: rows.append([InlineKeyboardButton(T(uid,"courses_python"), url=COURSE_PYTHON_URL)])
+    if COURSE_CYBER_URL:  rows.append([InlineKeyboardButton(T(uid,"courses_cyber"),  url=COURSE_CYBER_URL)])
+    if COURSE_EHACK_URL:  rows.append([InlineKeyboardButton(T(uid,"courses_ehack"),  url=COURSE_EHACK_URL)])
+    rows.append([InlineKeyboardButton(T(uid,"btn_back"), callback_data="back_sections")])
+    return InlineKeyboardMarkup(rows)
 
 def sec_unban_kb(uid:int):
     return InlineKeyboardMarkup([
@@ -456,7 +489,7 @@ def sec_unban_kb(uid:int):
     ])
 
 def sec_links_kb(uid:int, url:str, back="back_sections"):
-    btn = InlineKeyboardButton(url, url=url) if url else InlineKeyboardButton("—", callback_data="noop")
+    btn = InlineKeyboardButton(url, url=url) if url else InlineKeyboardButton(T(uid,"kb_contact"), url=admin_button_url())
     return InlineKeyboardMarkup([[btn],[InlineKeyboardButton(T(uid,"btn_back"), callback_data=back)]])
 
 # safe edit
@@ -497,7 +530,6 @@ async def http_head(url:str)->int|None:
 
 # ============ Integrations ============
 async def ipinfo_lookup(query:str)->dict:
-    # resolve domain → ip if needed
     ip = query
     if _HOST_RE.match(query): 
         ip = resolve_ip(query) or query
@@ -510,7 +542,6 @@ async def ipinfo_lookup(query:str)->dict:
             async with s.get(url, timeout=20) as r:
                 data=await r.json(content_type=None)
                 if r.status>=400: return {"error": f"ipinfo error {r.status}: {data}"}
-                # enrich ASN if exists
                 return data
     except Exception as e:
         return {"error": f"network error: {e}"}
@@ -583,17 +614,16 @@ def fmt_urlscan(uid:int, head_status:int|None, meta:dict|None, result:dict|None)
     lines=[]
     if head_status is not None:
         lines.append(T(uid,"http_status", code=head_status))
-    if meta and "submission" in meta:
+    if meta and "uuid" in meta:
         lines.append(f"🧾 urlscan uuid: <code>{meta.get('uuid','')}</code>")
     if result and isinstance(result, dict):
-        t = result.get("task",{})
         page = result.get("page",{})
         verdicts = result.get("verdicts",{}).get("overall",{})
         if page:
             lines.append(f"🌍 host: {page.get('domain','?')} — country: {page.get('country','?')}")
             lines.append(f"ℹ️ server: {page.get('server','?')}")
         if verdicts:
-            lines.append(f"🛡️ verdict: {verdicts.get('score','?')} | {verdicts.get('malicious','?')=}")
+            lines.append(f"🛡️ verdict score: {verdicts.get('score','?')}  malicious={verdicts.get('malicious','?')}")
     if not lines:
         lines.append("ℹ️ Scan submitted. Use uuid above to query later.")
     return "\n".join(lines)
@@ -626,7 +656,8 @@ async def translate_text(text:str, target:str="ar")->str:
     return (r.choices[0].message.content or "").strip()
 
 async def translate_image(path:str, target:str="ar")->str:
-    if not (AI_ENABLED and OPENAI_VISION and client): return LOCALE["ar"]["ai_disabled"]
+    if not (AI_ENABLED and OPENAI_VISION and client): 
+        return "⚠️ Image translation requires OPENAI_VISION=1 (and a vision-capable model)."
     try:
         with open(path,"rb") as f: b64=base64.b64encode(f.read()).decode()
         content=[{"type":"text","text":f"Extract the text from the image and translate it into {target}. Return only the translation."},
@@ -653,43 +684,37 @@ async def ai_image(prompt:str)->bytes|None:
     except Exception as e:
         log.error("image gen: %s", e); return None
 
-# ============ Media Downloader (MP4) ============
+# ============ Media Downloader (force MP4 where possible) ============
 async def download_media(url:str)->Path|None:
     if yt_dlp is None: 
         log.error("yt_dlp not installed"); return None
     TMP_DIR.mkdir(parents=True, exist_ok=True)
     outtmpl=str(TMP_DIR / "%(title).80s.%(id)s.%(ext)s")
+    # نحاول اختيار صيغ MP4 مباشرة لتجنب الحاجة لـ ffmpeg
     ydl_opts={
         "outtmpl": outtmpl,
-        "format": "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b",
-        "merge_output_format": "mp4",
-        "postprocessors": [{"key":"FFmpegVideoConvertor","preferedformat":"mp4"}],
-        "concurrent_fragment_downloads": 4,
+        "format": "best[ext=mp4]/bestvideo[ext=mp4]/b[ext=mp4]/b",  # يفضّل mp4
         "retries": 2,
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
-        "compat_opts": ["prefer-ffmpeg"],
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info=ydl.extract_info(url, download=True)
             fname=ydl.prepare_filename(info)
             base, _ = os.path.splitext(fname)
-            # prefer mp4
+            # ابحث عن فيديو mp4
             for ext in (".mp4",".m4v",".mov"):
                 p=Path(base+ext)
                 if p.exists() and p.is_file():
-                    if p.stat().st_size<=MAX_UPLOAD_BYTES: return p
-            # fallback: audio-only smaller
-            ydl_opts_aud={**ydl_opts, "format":"bestaudio[ext=m4a]/bestaudio", "postprocessors":[{"key":"FFmpegExtractAudio","preferredcodec":"m4a"}]}
-            with yt_dlp.YoutubeDL(ydl_opts_aud) as y2:
-                info2=y2.extract_info(url, download=True)
-                fname2=y2.prepare_filename(info2)
-                for ext in (".m4a",".mp3",".webm"):
-                    p2=Path(os.path.splitext(fname2)[0]+ext)
-                    if p2.exists() and p2.is_file() and p2.stat().st_size<=MAX_UPLOAD_BYTES:
-                        return p2
+                    if p.stat().st_size<=MAX_UPLOAD_BYTES: 
+                        return p
+            # fallback: لو ما قدر يجيب mp4، جرّب أقرب ملف
+            for ext in (".webm",".mkv",".mp4"):
+                p=Path(base+ext)
+                if p.exists() and p.is_file() and p.stat().st_size<=MAX_UPLOAD_BYTES:
+                    return p
     except Exception as e:
         log.error("ydl: %s", e)
         return None
@@ -742,7 +767,6 @@ async def start(update:Update, context:ContextTypes.DEFAULT_TYPE):
 
     ok = await is_member(context, uid, force=True)
     if not ok:
-        # للمستخدم العادي لا نعرض ملاحظة المشرف
         rows=[[InlineKeyboardButton("📣 Join", url=f"https://t.me/{MAIN_CHANNELS[0]}")],
               [InlineKeyboardButton("✅ Verify", callback_data="verify")]]
         await context.bot.send_message(chat_id, T(uid,"join_gate"), reply_markup=InlineKeyboardMarkup(rows))
@@ -800,7 +824,9 @@ async def on_button(update:Update, context:ContextTypes.DEFAULT_TYPE):
     if q.data=="menu_vip":
         await safe_edit(q, T(uid,"vip_on"), main_menu_kb(uid)); return
     if q.data=="menu_vip_up":
-        await safe_edit(q, "💳 VIP is lifetime. Contact admin to activate.", InlineKeyboardMarkup([[InlineKeyboardButton(T(uid,"kb_contact"), url=admin_button_url())],[InlineKeyboardButton(T(uid,"btn_back"), callback_data="back_home")]])); return
+        await safe_edit(q, "💳 VIP is lifetime. Contact admin to activate.", 
+                        InlineKeyboardMarkup([[InlineKeyboardButton(T(uid,"kb_contact"), url=admin_button_url())],
+                                              [InlineKeyboardButton(T(uid,"btn_back"), callback_data="back_home")]])); return
 
     # Sections
     if q.data=="back_sections":
@@ -819,14 +845,14 @@ async def on_button(update:Update, context:ContextTypes.DEFAULT_TYPE):
         txt = f"IG:\n{T(uid,'unban_text_ig')}\n\nFB:\n{T(uid,'unban_text_fb')}\n\nTG:\n{T(uid,'unban_text_tg')}\n\nEpic:\n{T(uid,'unban_text_epic')}"
         await safe_edit(q, txt, sec_unban_kb(uid)); return
     if q.data=="sec_smm":
-        await safe_edit(q, T(uid,"smm_open"), sec_links_kb(uid, SMM_PANEL_URL or admin_button_url())); return
+        await safe_edit(q, T(uid,"smm_open"), sec_links_kb(uid, SMM_PANEL_URL)); return
     if q.data=="sec_nums":
-        await safe_edit(q, T(uid,"nums_open"), sec_links_kb(uid, NUMBERS_URL or admin_button_url())); return
+        await safe_edit(q, T(uid,"nums_open"), sec_links_kb(uid, NUMBERS_URL)); return
     if q.data=="sec_vcc":
-        await safe_edit(q, T(uid,"vcc_open"), sec_links_kb(uid, VCC_URL or admin_button_url())); return
+        await safe_edit(q, T(uid,"vcc_open"), sec_links_kb(uid, VCC_URL)); return
 
     # AI items (VIP-gated)
-    if q.data in ("ai_chat","ai_txi","ai_trans","ai_stt"):
+    if q.data in ("ai_chat","ai_txi","ai_trans","ai_stt","ai_dark"):
         if not user_is_premium(uid):
             await safe_edit(q, T(uid,"vip_off"), sec_ai_kb(uid)); return
         if q.data=="ai_chat":
@@ -841,14 +867,13 @@ async def on_button(update:Update, context:ContextTypes.DEFAULT_TYPE):
         if q.data=="ai_stt":
             ai_set_mode(uid, "ai_stt", {})
             await safe_edit(q, T(uid,"send_voice"), sec_ai_kb(uid)); return
-
-    # Security items
-    if q.data=="security_ip":
-        ai_set_mode(uid, "security_ip", {}); await safe_edit(q, T(uid,"send_ip"), sec_security_kb(uid)); return
-    if q.data=="security_email":
-        ai_set_mode(uid, "security_email", {}); await safe_edit(q, T(uid,"send_email"), sec_security_kb(uid)); return
-    if q.data=="security_link":
-        ai_set_mode(uid, "security_link", {}); await safe_edit(q, T(uid,"send_url"), sec_security_kb(uid)); return
+        if q.data=="ai_dark":
+            # لا نغيّر مكانه – نظهر رابط فتح بعد التأكد من VIP
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("Open Dark GPT", url="https://flowgpt.com/chat/M0GRwnsc2MY0DdXPPmF4X")],
+                [InlineKeyboardButton(T(uid,"btn_back"), callback_data="back_sections")]
+            ])
+            await safe_edit(q, T(uid,"ai_dark"), kb); return
 
     # Media / Files
     if q.data=="media_dl":
@@ -910,7 +935,6 @@ async def guard_messages(update:Update, context:ContextTypes.DEFAULT_TYPE):
             meta = await urlscan_submit(text) if URLSCAN_API_KEY and _URL_RE.search(text) else None
             res  = None
             if meta and isinstance(meta, dict) and meta.get("uuid"):
-                # انتظر ثواني بسيطة لجلب نتيجة أولية
                 try:
                     await asyncio.sleep(5)
                     res = await urlscan_result(meta["uuid"])
@@ -1029,15 +1053,14 @@ async def on_startup(app:Application):
             CHANNEL_ID=chat.id; log.info("[startup] @%s -> %s", u, CHANNEL_ID); break
         except Exception as e:
             log.warning("get_chat @%s: %s", u, e)
-    # public commands (user: فقط /start و /help)
+    # Commands
     try:
         await app.bot.set_my_commands(
-            [BotCommand("start","Start"), BotCommand("help","Help"), BotCommand("makepdf","Export PDF")],
+            [BotCommand("start","Start"), BotCommand("help","Help"), BotCommand("makepdf","Export PDF"), BotCommand("setlang","Set language")],
             scope=BotCommandScopeDefault()
         )
-        # owner-only
         await app.bot.set_my_commands(
-            [BotCommand("id","Your ID"), BotCommand("grant","Grant VIP"),],
+            [BotCommand("id","Your ID"), BotCommand("grant","Grant VIP")],
             scope=BotCommandScopeChat(chat_id=OWNER_ID)
         )
     except Exception as e:
