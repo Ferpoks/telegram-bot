@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# FerpoKS Bot – tidy menus, VIP gates, real integrations, health server for Render
+# FerpoKS Bot – tidy menus, VIP gates, real integrations, language onboarding, health server for Render
 import os, sqlite3, threading, time, asyncio, re, json, logging, base64, socket, tempfile
 from pathlib import Path
 from io import BytesIO
@@ -64,10 +64,10 @@ NUMBERS_URL       = os.getenv("NUMBERS_URL", "").strip()
 VCC_URL           = os.getenv("VCC_URL", "").strip()
 SMM_PANEL_URL     = os.getenv("SMM_PANEL_URL", "").strip()
 
-# Courses (تظهر دائمًا)
-COURSE_PYTHON_URL = os.getenv("COURSE_PYTHON_URL", "").strip()
-COURSE_CYBER_URL  = os.getenv("COURSE_CYBER_URL", "").strip()
-COURSE_EHACK_URL  = os.getenv("COURSE_EHACK_URL", "").strip()
+# Courses (افتراضيات من روابطك — تظهر دائمًا)
+COURSE_PYTHON_URL = os.getenv("COURSE_PYTHON_URL", "https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/Y8WctvBLiA6u6AASeZX2IUfDQAolTJ4QFGx9WRCu.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250814%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250814T023808Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=d75356d7e59f7c55d29c07f605699f0348e5f078b6ceb421107c9f3202f545b1").strip()
+COURSE_CYBER_URL  = os.getenv("COURSE_CYBER_URL",  "https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/pZ0spOmm1K0dA2qAzUuWUb4CcMMjUPTbn7WMRwAc.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250814%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250814T023837Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=137e2e87efb7f47e5c5f07c949a7ed7a90e392b3b4c2338e536b416cf23e1ac2").strip()
+COURSE_EHACK_URL  = os.getenv("COURSE_EHACK_URL",  "https://www.mediafire.com/folder/r26pp5mpduvnx/%D8%AF%D9%88%D8%B1%D8%A9_%D8%A7%D9%84%D9%87%D8%A7%D9%83%D8%B1_%D8%A7%D9%84%D8%A7%D8%AE%D9%84%D8%A7%D9%82%D9%8A_%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D8%B1%D8%AD%D9%85%D9%86_%D9%88%D8%B5%D9%81%D9%8A").strip()
 
 # Unban links
 UNBAN_INSTAGRAM_URL = os.getenv("UNBAN_INSTAGRAM_URL", "https://help.instagram.com/")
@@ -149,22 +149,16 @@ def migrate_db():
           verified_at INTEGER DEFAULT 0,
           vip_forever INTEGER DEFAULT 0,
           vip_since INTEGER DEFAULT 0,
-          pref_lang TEXT DEFAULT 'ar'
+          pref_lang TEXT DEFAULT '',
+          lang_set INTEGER DEFAULT 0
         );""")
+        # add missing columns
         c.execute("PRAGMA table_info(users)")
         cols = {r["name"] for r in c.fetchall()}
-        if "id" not in cols:
-            log.warning("[db-migrate] users missing id - rebuilding")
-            _db().execute("ALTER TABLE users RENAME TO users_old;")
-            _db().execute("""
-              CREATE TABLE users(
-                id TEXT PRIMARY KEY, premium INTEGER DEFAULT 0, verified_ok INTEGER DEFAULT 0,
-                verified_at INTEGER DEFAULT 0, vip_forever INTEGER DEFAULT 0, vip_since INTEGER DEFAULT 0,
-                pref_lang TEXT DEFAULT 'ar');""")
-            try:
-                _db().execute("INSERT OR IGNORE INTO users(id) SELECT id FROM users_old;")
-            except Exception: pass
-            _db().execute("DROP TABLE users_old;")
+        if "pref_lang" not in cols:
+            _db().execute("ALTER TABLE users ADD COLUMN pref_lang TEXT DEFAULT '';")
+        if "lang_set" not in cols:
+            _db().execute("ALTER TABLE users ADD COLUMN lang_set INTEGER DEFAULT 0;")
 
         _db().execute("""
         CREATE TABLE IF NOT EXISTS ai_state(
@@ -190,8 +184,8 @@ def user_get(uid:int|str)->dict:
         c.execute("SELECT * FROM users WHERE id=?",(uid,))
         r=c.fetchone()
         if not r:
-            _db().execute("INSERT INTO users(id) VALUES (?)",(uid,)); _db().commit()
-            return {"id":uid,"premium":0,"verified_ok":0,"verified_at":0,"vip_forever":0,"vip_since":0,"pref_lang":"ar"}
+            _db().execute("INSERT INTO users(id, pref_lang, lang_set) VALUES (?,?,?)",(uid,'',0)); _db().commit()
+            return {"id":uid,"premium":0,"verified_ok":0,"verified_at":0,"vip_forever":0,"vip_since":0,"pref_lang":"", "lang_set":0}
         return dict(r)
 
 def user_is_premium(uid): 
@@ -203,7 +197,10 @@ def user_grant(uid):
         _db().execute("UPDATE users SET premium=1, vip_forever=1, vip_since=COALESCE(NULLIF(vip_since,0),?) WHERE id=?",(now,str(uid))); _db().commit()
 
 def prefs_set_lang(uid, lang):
-    with _conn_lock: _db().execute("UPDATE users SET pref_lang=? WHERE id=?",(lang,str(uid))); _db().commit()
+    with _conn_lock: _db().execute("UPDATE users SET pref_lang=?, lang_set=1 WHERE id=?",(lang,str(uid))); _db().commit()
+
+def mark_lang_set(uid:int, v:int=1):
+    with _conn_lock: _db().execute("UPDATE users SET lang_set=? WHERE id=?",(int(bool(v)), str(uid))); _db().commit()
 
 def ai_set_mode(uid, mode:str|None, extra:dict|None=None):
     with _conn_lock:
@@ -226,6 +223,7 @@ def ai_get_mode(uid):
 LOCALE = {
 "ar":{
  "welcome":"مرحباً بك في بوت فيربوكس 👋\nكل الخدمات تعمل داخل تيليجرام.\nاختر من القائمة بالأسفل.",
+ "choose_lang":"🌐 اختر اللغة:",
  "join_gate":"🔐 بعد الانضمام للقناة سيعمل البوت تلقائياً:",
  "admin_note":"⚠️ لو ما اشتغل التحقق: تأكّد أن البوت **مشرف** في @{channel}.",
  "menu_main":"👇 القائمة الرئيسية",
@@ -237,7 +235,6 @@ LOCALE = {
  "btn_vip_badge":"⭐ حسابك VIP",
  "btn_back":"↩️ رجوع",
  "btn_lang_ar":"🇸🇦 العربية", "btn_lang_en":"🇺🇸 English",
- "lang_title":"🌐 اختر اللغة",
  "myinfo":"👤 الاسم: {name}\n🆔 المعرّف: {id}\n🌐 اللغة: {lang}",
  "vip_on":"⭐ حسابك VIP (مدى الحياة).",
  "vip_off":"هذه الميزة خاصة بـ VIP.",
@@ -294,6 +291,7 @@ LOCALE = {
 },
 "en":{
  "welcome":"Welcome to FerpoKS Bot 👋\nEverything works inside Telegram.\nPick from the menu below.",
+ "choose_lang":"🌐 Choose your language:",
  "join_gate":"🔐 Join the channel and the bot will work automatically:",
  "admin_note":"⚠️ If verification fails, ensure the bot is **admin** in @{channel}.",
  "menu_main":"👇 Main Menu",
@@ -305,7 +303,6 @@ LOCALE = {
  "btn_vip_badge":"⭐ VIP Account",
  "btn_back":"↩️ Back",
  "btn_lang_ar":"🇸🇦 Arabic", "btn_lang_en":"🇺🇸 English",
- "lang_title":"🌐 Choose your language",
  "myinfo":"👤 Name: {name}\n🆔 ID: {id}\n🌐 Language: {lang}",
  "vip_on":"⭐ Your account is VIP (lifetime).",
  "vip_off":"This feature is VIP-only.",
@@ -359,8 +356,11 @@ LOCALE = {
 }
 
 def lang_of(uid)->str:
-    try: return user_get(uid).get("pref_lang","ar") if uid else "ar"
-    except Exception: return "ar"
+    try:
+        u = user_get(uid)
+        return (u.get("pref_lang") or "ar") if u else "ar"
+    except Exception:
+        return "ar"
 
 def T(uid, key, **kw):
     l=lang_of(uid); m=LOCALE.get(l,LOCALE["ar"])
@@ -436,7 +436,7 @@ def sections_root_kb(uid:int):
     ])
 
 def sec_ai_kb(uid:int):
-    # أبقيت الأدوات كما طلبت (بدون Dark GPT هنا)
+    # 4 أدوات كما طلبت
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(T(uid,"ai_stt"), callback_data="ai_stt"),
          InlineKeyboardButton(T(uid,"ai_trans"), callback_data="ai_trans")],
@@ -470,7 +470,6 @@ def _link_or_admin(url:str)->str:
     return url if url else admin_button_url()
 
 def sec_courses_kb(uid:int):
-    # تظهر الأزرار دائمًا؛ لو ما في رابط → تواصل مع الإدارة
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(T(uid,"courses_python"), url=_link_or_admin(COURSE_PYTHON_URL))],
         [InlineKeyboardButton(T(uid,"courses_cyber"),  url=_link_or_admin(COURSE_CYBER_URL))],
@@ -488,7 +487,6 @@ def sec_unban_kb(uid:int):
     ])
 
 def sec_links_kb(uid:int, url:str, back="back_sections"):
-    # حتى لو الرابط ناقص يوجّه للإدارة وما تختفي الأزرار
     btn = InlineKeyboardButton(T(uid,"kb_contact"), url=_link_or_admin(url))
     return InlineKeyboardMarkup([[btn],[InlineKeyboardButton(T(uid,"btn_back"), callback_data=back)]])
 
@@ -499,9 +497,6 @@ async def safe_edit(q, text=None, kb=None):
             await q.edit_message_text(text, reply_markup=kb, parse_mode="HTML", disable_web_page_preview=True)
         elif kb is not None:
             await q.edit_message_reply_markup(reply_markup=kb)
-        else:
-            # لا ترسل تعديل بنص فارغ
-            pass
     except BadRequest as e:
         if "message is not modified" in str(e).lower():
             try:
@@ -743,8 +738,16 @@ def compress_image(image_path:Path, quality:int=70)->Path|None:
 async def start(update:Update, context:ContextTypes.DEFAULT_TYPE):
     init_db()
     uid=update.effective_user.id; chat_id=update.effective_chat.id
-    user_get(uid)
+    u = user_get(uid)
 
+    # 1) لغة أولاً إن ما اختار قبل
+    if not u.get("lang_set"):
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton(LOCALE["ar"]["btn_lang_ar"], callback_data="lang_ar"),
+                                    InlineKeyboardButton(LOCALE["en"]["btn_lang_en"], callback_data="lang_en")]])
+        await context.bot.send_message(chat_id, LOCALE["ar"]["choose_lang"], reply_markup=kb)
+        return
+
+    # 2) رسالة ترحيب (باللغة المختارة)
     try:
         if Path(WELCOME_PHOTO).exists():
             with open(WELCOME_PHOTO,"rb") as f:
@@ -754,6 +757,7 @@ async def start(update:Update, context:ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         log.warning("welcome send: %s", e)
 
+    # 3) بوابة الانضمام
     ok = await is_member(context, uid, force=True)
     if not ok:
         rows=[[InlineKeyboardButton("📣 Join", url=f"https://t.me/{MAIN_CHANNELS[0]}")],
@@ -763,6 +767,7 @@ async def start(update:Update, context:ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id, T(uid,"admin_note", channel=MAIN_CHANNELS[0]))
         return
 
+    # 4) قائمة + أقسام
     await context.bot.send_message(chat_id, T(uid,"menu_main"), reply_markup=main_menu_kb(uid))
     await context.bot.send_message(chat_id, T(uid,"sections_title"), reply_markup=sections_root_kb(uid))
 
@@ -783,6 +788,32 @@ async def on_button(update:Update, context:ContextTypes.DEFAULT_TYPE):
     q=update.callback_query; uid=q.from_user.id
     await q.answer()
 
+    # معالجة اختيار اللغة أثناء الإعداد الأول
+    if q.data in ("lang_ar","lang_en"):
+        prefs_set_lang(uid, "ar" if q.data=="lang_ar" else "en")
+        # بعد اختيار اللغة مباشرة نكمل تدفق start (بدون طلب /start مرة ثانية)
+        chat_id = q.message.chat_id
+        try:
+            if Path(WELCOME_PHOTO).exists():
+                with open(WELCOME_PHOTO,"rb") as f:
+                    await context.bot.send_photo(chat_id, InputFile(f), caption=T(uid,"welcome"))
+            else:
+                await context.bot.send_message(chat_id, T(uid,"welcome"))
+        except Exception as e:
+            log.warning("welcome send: %s", e)
+        ok = await is_member(context, uid, force=True)
+        if not ok:
+            rows=[[InlineKeyboardButton("📣 Join", url=f"https://t.me/{MAIN_CHANNELS[0]}")],
+                  [InlineKeyboardButton("✅ Verify", callback_data="verify")]]
+            await safe_edit(q, T(uid,"join_gate"), InlineKeyboardMarkup(rows))
+            if uid==OWNER_ID and MAIN_CHANNELS:
+                await context.bot.send_message(chat_id, T(uid,"admin_note", channel=MAIN_CHANNELS[0]))
+            return
+        await safe_edit(q, T(uid,"menu_main"), main_menu_kb(uid))
+        try: await q.message.reply_text(T(uid,"sections_title"), reply_markup=sections_root_kb(uid))
+        except: pass
+        return
+
     if q.data=="verify":
         if await is_member(context, uid, force=True):
             await safe_edit(q, T(uid,"menu_main"), main_menu_kb(uid))
@@ -802,10 +833,7 @@ async def on_button(update:Update, context:ContextTypes.DEFAULT_TYPE):
 
     # Language
     if q.data=="menu_lang":
-        await safe_edit(q, T(uid,"lang_title"), lang_kb(uid)); return
-    if q.data in ("lang_ar","lang_en"):
-        prefs_set_lang(uid, "ar" if q.data=="lang_ar" else "en")
-        await safe_edit(q, T(uid,"menu_main"), main_menu_kb(uid)); return
+        await safe_edit(q, T(uid,"choose_lang"), lang_kb(uid)); return
 
     # Info/VIP
     if q.data=="menu_me":
@@ -865,10 +893,34 @@ async def on_button(update:Update, context:ContextTypes.DEFAULT_TYPE):
             ai_set_mode(uid, "ai_stt", {})
             await safe_edit(q, T(uid,"send_voice"), sec_ai_kb(uid)); return
 
+    # Security items (حقيقية – بدون VIP)
+    if q.data=="security_ip":
+        ai_set_mode(uid, "security_ip", {}); await safe_edit(q, T(uid,"send_ip"), sec_security_kb(uid)); return
+    if q.data=="security_email":
+        ai_set_mode(uid, "security_email", {}); await safe_edit(q, T(uid,"send_email"), sec_security_kb(uid)); return
+    if q.data=="security_link":
+        ai_set_mode(uid, "security_link", {}); await safe_edit(q, T(uid,"send_url"), sec_security_kb(uid)); return
+
+    # Media / Files
+    if q.data=="media_dl":
+        ai_set_mode(uid, "media_dl", {}); await safe_edit(q, T(uid,"send_media_url"), sec_media_kb(uid)); return
+    if q.data=="file_img2pdf":
+        ai_set_mode(uid, "file_img2pdf", {"paths":[]}); await safe_edit(q, T(uid,"send_image"), sec_files_kb(uid)); return
+    if q.data=="file_compress":
+        ai_set_mode(uid, "file_compress", {}); await safe_edit(q, T(uid,"send_image"), sec_files_kb(uid)); return
+
 # ============ Messages ============
 async def guard_messages(update:Update, context:ContextTypes.DEFAULT_TYPE):
     uid=update.effective_user.id
-    user_get(uid)
+    u = user_get(uid)
+
+    # لو لسه ما اختار لغة: رجّعه لاختيار اللغة مباشرة
+    if not u.get("lang_set"):
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton(LOCALE["ar"]["btn_lang_ar"], callback_data="lang_ar"),
+                                    InlineKeyboardButton(LOCALE["en"]["btn_lang_en"], callback_data="lang_en")]])
+        await update.message.reply_text(LOCALE["ar"]["choose_lang"], reply_markup=kb)
+        return
+
     if not await is_member(context, uid):
         rows=[[InlineKeyboardButton("📣 Join", url=f"https://t.me/{MAIN_CHANNELS[0]}")],
               [InlineKeyboardButton("✅ Verify", callback_data="verify")]]
