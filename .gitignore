@@ -4,27 +4,5 @@ venv/
 __pycache__/
 *.pyc
 *.log
-
-# قاعدة البيانات والملفات المحلية
-bot.db
-*.db
-*.sqlite*
-/var/data/
-tmp/
-tmp/**/
-/tmp/**/
-
-# وسائط يتم تنزيلها مؤقتًا
-*.mp4
-*.m4a
-*.webm
-*.mp3
-
-# كاش أدوات بايثون
-.mypy_cache/
-.pytest_cache/
-
-# بيئات المحرر
-.vscode/
-.idea/
-.DS_Store
+/var/data/*.db
+/tmp/*
