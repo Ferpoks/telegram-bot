@@ -425,7 +425,6 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "page_boost": "📈 Followers:",
     }
 
-    # توافق نداءات قديمة: T("ar","key")
     if key in ("ar", "en") and (lang is not None and lang not in ("ar", "en")):
         key, lang = lang, key
     if lang not in ("ar","en"):
@@ -680,7 +679,10 @@ async def paylink_create_invoice(order_number: str, amount: float, client_name: 
 _IP_RE = re.compile(r"\b(?:(?:[0-9]{1,3}\.){3}[0-9]{1,3})\b")
 _HOST_RE = re.compile(r"^[a-zA-Z0-9.-]{1,253}\.[A-Za-z]{2,63}$")
 _URL_RE = re.compile(r"https?://[^\s]+")
-DISPOSABLE_DOMAINS = {"mailinator.com","tempmail.com","10minutemail.com","yopmail.com","guerrillamail.com","trashmail.com"}
+DISPOSABLE_DOMAINS = {
+    "mailinator.com","tempmail.com","10minutemail.com","yopmail.com","guerrillamail.com","trashmail.com",
+    "tempmailo.com","moakt.com","fakemail.net","dispostable.com","maildrop.cc","getnada.com","mytemp.email"
+}
 
 async def fetch_geo(query: str) -> dict|None:
     url = f"http://ip-api.com/json/{query}?fields=status,message,country,regionName,city,isp,org,as,query,lat,lon,timezone,zip,reverse"
@@ -717,7 +719,6 @@ def md5_hex(s: str) -> str:
     return hashlib.md5(s.strip().lower().encode()).hexdigest()
 
 async def http_head(url: str) -> int|None:
-    # للإبقاء على التوافق مع الاستدعاءات القديمة (Gravatar)
     try:
         async with aiohttp.ClientSession() as s:
             async with s.head(url, allow_redirects=True, timeout=15) as r:
@@ -726,7 +727,6 @@ async def http_head(url: str) -> int|None:
         return None
 
 async def http_head_details(url: str):
-    """يرجع (status, headers_dict)"""
     try:
         async with aiohttp.ClientSession() as s:
             async with s.head(url, allow_redirects=True, timeout=15) as r:
@@ -740,7 +740,6 @@ def _detect_charset_from_ct(ct: str|None) -> str:
     return (m.group(1) if m else "utf-8").strip().lower()
 
 async def http_get_title(url: str, max_bytes: int = 131072) -> tuple[str|None, int|None]:
-    """يحاول قراءة عنوان الصفحة <title> مع حد تحميل صغير"""
     try:
         async with aiohttp.ClientSession() as s:
             async with s.get(url, allow_redirects=True, timeout=20) as r:
@@ -775,24 +774,113 @@ def resolve_ip(host: str) -> str|None:
     except Exception:
         return None
 
+def _norm_date(val):
+    # يطبع تاريخ whois بشكل نظيف حتى لو كان قائمة/مجموعة
+    if not val:
+        return "-"
+    try:
+        # python-whois قد يعيد قائمة تواريخ
+        if isinstance(val, (list, tuple, set)):
+            val = list(val)
+            val = [x for x in val if x]
+            if not val: return "-"
+            # خذ الأقدم للإنشاء، والأحدث للانتهاء غالبًا
+            val = min(val)
+        from datetime import datetime, date
+        if isinstance(val, (datetime, )):
+            return val.strftime("%Y-%m-%d %H:%M")
+        if isinstance(val, (date, )):
+            return val.strftime("%Y-%m-%d")
+        return str(val)
+    except Exception:
+        return str(val)
+
 def whois_domain(domain: str) -> dict|None:
     if pywhois is None:
         return {"error": "python-whois غير مثبت"}
     try:
         w = pywhois.whois(domain)
         return {
-            "domain_name": str(w.domain_name) if hasattr(w, "domain_name") else None,
+            "domain_name": str(getattr(w, "domain_name", None)),
             "registrar": getattr(w, "registrar", None),
-            "creation_date": str(getattr(w, "creation_date", None)),
-            "expiration_date": str(getattr(w, "expiration_date", None)),
+            "creation_date": _norm_date(getattr(w, "creation_date", None)),
+            "expiration_date": _norm_date(getattr(w, "expiration_date", None)),
             "emails": getattr(w, "emails", None)
         }
     except Exception as e:
         return {"error": f"whois error: {e}"}
 
+# ==== DNS Helpers (SPF/DMARC/MX) ====
+def _txt_rr_to_plain(rr):
+    t = rr.to_text()
+    parts = re.findall(r'"([^"]*)"', t)
+    return "".join(parts) if parts else t.strip('"')
+
+def dns_txt_records(name: str) -> list[str] | None:
+    if not dnsresolver:
+        return None
+    try:
+        answers = dnsresolver.resolve(name, "TXT")
+        out = []
+        for rr in answers:
+            out.append(_txt_rr_to_plain(rr))
+        return out
+    except dnsexception.DNSException:
+        return []
+    except Exception:
+        return []
+
+def dns_mx_records(name: str) -> list[str] | None:
+    if not dnsresolver:
+        return None
+    try:
+        answers = dnsresolver.resolve(name, "MX")
+        hosts = [str(r.exchange).rstrip(".") for r in answers]
+        return hosts
+    except dnsexception.DNSException:
+        return []
+    except Exception:
+        return []
+
+def get_spf_record(domain: str) -> str | None:
+    txts = dns_txt_records(domain) or []
+    for t in txts:
+        if t.lower().startswith("v=spf1"):
+            return t
+    return None
+
+def get_dmarc_record(domain: str) -> dict | None:
+    recs = dns_txt_records(f"_dmarc.{domain}") or []
+    for t in recs:
+        if t.lower().startswith("v=dmarc1"):
+            d = {"raw": t}
+            m = re.search(r"\bp=([a-z]+)\b", t, re.I)
+            if m: d["policy"] = m.group(1).lower()
+            m2 = re.search(r"\bruag?=([^;]+)", t, re.I)  # rua / ruag typo guard
+            if m2: d["rua"] = m2.group(1)
+            m3 = re.search(r"\bsp=([a-z]+)\b", t, re.I)
+            if m3: d["subdomain_policy"] = m3.group(1).lower()
+            return d
+    return None
+
+def classify_provider(mx_hosts: list[str]) -> str | None:
+    s = ",".join(mx_hosts).lower()
+    if "google.com" in s or "googlemail.com" in s:
+        return "Google (Gmail / Workspace)"
+    if "protection.outlook.com" in s or "outlook.com" in s or "hotmail.com" in s:
+        return "Microsoft (Outlook/Office365)"
+    if "yahoodns.net" in s or "yahoo.com" in s:
+        return "Yahoo"
+    if "protonmail." in s:
+        return "Proton"
+    if "zoho." in s:
+        return "Zoho"
+    if "messagelabs.com" in s or "proofpoint.com" in s:
+        return "Proofpoint"
+    return None
+
 # ==== urlscan (تحسين) ====
 async def urlscan_lookup(u: str) -> str:
-    """للخلفية فقط (توافق قديم)"""
     if not URLSCAN_API_KEY:
         return "ℹ️ ضع URLSCAN_API_KEY لتفعيل الفحص."
     try:
@@ -811,7 +899,6 @@ async def urlscan_lookup(u: str) -> str:
         return f"urlscan error: {e}"
 
 async def urlscan_submit(u: str) -> dict:
-    """يرسل الفحص ويحاول يجلب ملخص JSON سريعاً"""
     out = {"result_url": None, "uuid": None, "summary": None, "error": None}
     if not URLSCAN_API_KEY:
         out["error"] = "URLSCAN_API_KEY missing"
@@ -824,17 +911,15 @@ async def urlscan_submit(u: str) -> dict:
                 resp = await r.json(content_type=None)
         out["result_url"] = resp.get("result")
         out["uuid"] = resp.get("uuid")
-        # جرّب تجيب JSON النتيجة 3-5 مرات بسرعة
         if out["uuid"]:
             for _ in range(5):
-                await asyncio.sleep(2)  # انتظار المعالجة
+                await asyncio.sleep(2)
                 try:
                     async with aiohttp.ClientSession() as s:
                         api = f"https://urlscan.io/api/v1/result/{out['uuid']}/"
                         async with s.get(api, timeout=15) as r2:
                             if r2.status == 200:
                                 data = await r2.json(content_type=None)
-                                # بناء ملخص آمن
                                 page = data.get("page", {})
                                 verdicts = (data.get("verdicts") or {}).get("overall") or {}
                                 stats = data.get("stats") or {}
@@ -846,7 +931,7 @@ async def urlscan_submit(u: str) -> dict:
                                 if verdicts:
                                     mal = verdicts.get("malicious")
                                     score = verdicts.get("score")
-                                    parts.append(f"🧪 Verdict: {'malicious' if mal else 'clean'} (score={score})" if score is not None else f"🧪 Verdict: {'malicious' if mal else 'clean'}")
+                                    parts.append(f"🧪 Verdict: {'malicious' if mal else 'clean'}" + (f" (score={score})" if score is not None else ""))
                                 if stats:
                                     reqs = stats.get("requests")
                                     uniq_domains = stats.get("uniqDomains")
@@ -890,40 +975,80 @@ async def ipinfo_lookup(query: str) -> str:
 async def osint_email(email: str) -> str:
     if not is_valid_email(email): return "⚠️ صيغة الإيميل غير صحيحة."
     local, domain = email.split("@", 1)
+
+    # Disposable?
+    disposable = "✅ لا" if domain.lower() not in DISPOSABLE_DOMAINS else "❌ نعم (مؤقت)"
+
     # MX
-    mx_txt = "❓"
     if dnsresolver:
         try:
-            answers = dnsresolver.resolve(domain, "MX")
-            mx_hosts = [str(r.exchange).rstrip(".") for r in answers]
+            mx_hosts = dns_mx_records(domain) or []
             mx_txt = ", ".join(mx_hosts[:5]) if mx_hosts else "لا يوجد"
         except dnsexception.DNSException:
+            mx_hosts = []
             mx_txt = "لا يوجد (فشل الاستعلام)"
     else:
+        mx_hosts = []
         mx_txt = "dnspython غير مثبت"
+
+    provider = classify_provider(mx_hosts) if mx_hosts else None
+
+    # SPF / DMARC
+    spf = get_spf_record(domain)
+    dmarc = get_dmarc_record(domain)
+    spf_txt = spf if spf else "لا يوجد"
+    dmarc_txt = (f"policy={dmarc.get('policy','-')}  raw={dmarc.get('raw','')}" if dmarc else "لا يوجد")
+
     # Gravatar
     g_url = f"https://www.gravatar.com/avatar/{md5_hex(email)}?d=404"
     g_st = await http_head(g_url)
     grav = "✅ موجود" if g_st and 200 <= g_st < 300 else "❌ غير موجود"
-    # Resolve + geo
-    ip = resolve_ip(domain)
-    geo_text = fmt_geo(await fetch_geo(ip)) if ip else "⚠️ تعذّر حلّ IP للدومين."
-    # WHOIS
+
+    # WHOIS (للدومين فقط)
     w = whois_domain(domain)
-    w_txt = "WHOIS: غير متاح" if not w else (f"WHOIS: {w['error']}" if w.get("error") else f"WHOIS:\n- Registrar: {w.get('registrar')}\n- Created: {w.get('creation_date')}\n- Expires: {w.get('expiration_date')}")
-    out = [
-        f"📧 {email}",
-        f"📮 MX: {mx_txt}",
-        f"🖼️ Gravatar: {grav}",
-        w_txt,
-        f"\n{geo_text}"
-    ]
+    w_txt = "WHOIS: غير متاح" if not w else (f"WHOIS: {w['error']}" if w.get("error") else f"WHOIS:\n- Registrar: {w.get('registrar','-')}\n- Created: {w.get('creation_date','-')}\n- Expires: {w.get('expiration_date','-')}")
+
+    # Geo: فرّق بين A-record للدومين وMX
+    ip_domain = resolve_ip(domain)
+    geo_domain = await fetch_geo(ip_domain) if ip_domain else None
+
+    ip_mx = None
+    geo_mx = None
+    if mx_hosts:
+        ip_mx = resolve_ip(mx_hosts[0])
+        geo_mx = await fetch_geo(ip_mx) if ip_mx else None
+
+    # Kickbox
     try:
         kb = await kickbox_lookup(email)
-        out.append(kb)
     except Exception:
-        pass
-    return "\n".join(out)
+        kb = None
+
+    lines = []
+    lines.append(f"📧 {email}")
+    lines.append(f"🏢 المزود: {provider or 'غير معروف'}")
+    lines.append(f"⏳ مؤقت/Disposable: {disposable}")
+    lines.append(f"📮 MX: {mx_txt}")
+    lines.append(f"🛡️ SPF: {spf_txt}")
+    lines.append(f"🧾 DMARC: {dmarc_txt}")
+    lines.append(f"🖼️ Gravatar: {grav}")
+    lines.append(w_txt)
+
+    if geo_domain:
+        lines.append("\n🌐 معلومات الدومين (A-record):")
+        lines.append(fmt_geo(geo_domain))
+
+    if geo_mx:
+        lines.append("\n📨 معلومات خادم البريد (MX):")
+        lines.append(fmt_geo(geo_mx))
+
+    # تنويه واضح
+    lines.append("\n🔔 تنويه: الموقع الجغرافي هنا يعكس مواقع خوادم البريد/الدومين (مثل Google/Cloudflare) وليس موقع صاحب البريد.")
+
+    if kb:
+        lines.append(kb)
+
+    return "\n".join(lines)
 
 async def link_scan(u: str) -> str:
     if not _URL_RE.search(u or ""):
@@ -933,18 +1058,15 @@ async def link_scan(u: str) -> str:
     scheme = meta.scheme
     lines = []
 
-    # HTTPS?
     if scheme != "https":
         lines.append("❗️ بدون تشفير HTTPS")
 
-    # HEAD + headers
     status, headers = await http_head_details(u)
     if status is None:
         lines.append("⚠️ فشل الوصول (HEAD)")
         headers = {}
     else:
         lines.append(f"🔎 حالة HTTP: {status}")
-        # أهم الهيدرز
         server = headers.get("Server") or headers.get("server")
         ctype  = headers.get("Content-Type") or headers.get("content-type")
         clen   = headers.get("Content-Length") or headers.get("content-length")
@@ -955,18 +1077,15 @@ async def link_scan(u: str) -> str:
         if header_bits:
             lines.append("🧾 Headers: " + ", ".join(header_bits))
 
-    # Page title (GET محدود)
     title, read_bytes = await http_get_title(u)
     if title:
         lines.append(f"📄 العنوان: {title}")
     if read_bytes:
         lines.append(f"⬇️ تم قراءة ~{read_bytes} بايت لاستخراج العنوان")
 
-    # Resolve + geo
     ip = resolve_ip(host) if host else None
     geo_data = await fetch_geo(ip) if ip else None
 
-    # urlscan submit + quick summary
     if URLSCAN_API_KEY:
         us = await urlscan_submit(u)
         if us.get("result_url"):
@@ -976,14 +1095,12 @@ async def link_scan(u: str) -> str:
         if us.get("error"):
             lines.append(f"urlscan error: {us['error']}")
     else:
-        # احتياطيًا أبقي السلوك القديم لو ما في مفتاح
         try:
             old = await urlscan_lookup(u)
             lines.append(old)
         except Exception:
             pass
 
-    # Geo text + ملاحظة CDN
     note_cdn = ""
     if geo_data and isinstance(geo_data, dict):
         org = (geo_data.get("org") or "").lower()
@@ -992,7 +1109,7 @@ async def link_scan(u: str) -> str:
     geo_txt = fmt_geo(geo_data) if geo_data else "⚠️ تعذّر حلّ IP للمضيف."
     return f"🔗 <code>{u}</code>\nالمضيف: <code>{host}</code>\n" + "\n".join(lines) + f"\n\n{geo_txt}{note_cdn}"
 
-# PDF.co تحويلات PDF↔Word
+# PDF.co
 async def pdfco_convert(endpoint: str, file_bytes: bytes, out_name: str) -> bytes|None:
     if not PDFCO_API_KEY:
         return None
@@ -1478,7 +1595,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "sec_security_geo":
         ai_set_mode(uid, "geo_ip"); await safe_edit(q, T("prompt_send_geo", lang=lang), kb=ai_stop_kb(lang)); return
 
-    # الخدمات (قائمتان داخليًا)
+    # الخدمات
     if q.data == "sec_services":
         await safe_edit(q, T("page_services", lang=lang) + "\n\n" + T("choose_option", lang=lang),
                         kb=InlineKeyboardMarkup([
@@ -1844,6 +1961,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
