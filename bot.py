@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import os, sqlite3, threading, time, asyncio, re, json, logging, base64, hashlib, socket, tempfile
+import os, sqlite3, threading, time, asyncio, re, json, logging, base64, hashlib, socket, tempfile, subprocess, shutil
 from pathlib import Path
 from io import BytesIO
 from dotenv import load_dotenv
@@ -775,16 +775,13 @@ def resolve_ip(host: str) -> str|None:
         return None
 
 def _norm_date(val):
-    # يطبع تاريخ whois بشكل نظيف حتى لو كان قائمة/مجموعة
     if not val:
         return "-"
     try:
-        # python-whois قد يعيد قائمة تواريخ
         if isinstance(val, (list, tuple, set)):
             val = list(val)
             val = [x for x in val if x]
             if not val: return "-"
-            # خذ الأقدم للإنشاء، والأحدث للانتهاء غالبًا
             val = min(val)
         from datetime import datetime, date
         if isinstance(val, (datetime, )):
@@ -856,7 +853,7 @@ def get_dmarc_record(domain: str) -> dict | None:
             d = {"raw": t}
             m = re.search(r"\bp=([a-z]+)\b", t, re.I)
             if m: d["policy"] = m.group(1).lower()
-            m2 = re.search(r"\bruag?=([^;]+)", t, re.I)  # rua / ruag typo guard
+            m2 = re.search(r"\bruag?=([^;]+)", t, re.I)
             if m2: d["rua"] = m2.group(1)
             m3 = re.search(r"\bsp=([a-z]+)\b", t, re.I)
             if m3: d["subdomain_policy"] = m3.group(1).lower()
@@ -1042,13 +1039,99 @@ async def osint_email(email: str) -> str:
         lines.append("\n📨 معلومات خادم البريد (MX):")
         lines.append(fmt_geo(geo_mx))
 
-    # تنويه واضح
     lines.append("\n🔔 تنويه: الموقع الجغرافي هنا يعكس مواقع خوادم البريد/الدومين (مثل Google/Cloudflare) وليس موقع صاحب البريد.")
 
     if kb:
         lines.append(kb)
 
     return "\n".join(lines)
+
+# ==== تنزيل وسائط (محسّن) ====
+async def download_media(url: str) -> Path|None:
+    """
+    يحاول تنزيل ملف فيديو موحّد (single file) بحجم ≤ MAX_UPLOAD_BYTES.
+    يتجنب ملفات الدمج الفارغة. يحاول تصغير الحجم عبر ffmpeg إن وُجد.
+    """
+    if yt_dlp is None:
+        log.warning("yt_dlp غير مثبت")
+        return None
+
+    TMP_DIR.mkdir(parents=True, exist_ok=True)
+    ts = int(time.time() * 1000)
+    prefix = f"dl_{ts}_"
+    outtmpl = str(TMP_DIR / (prefix + "%(title).50s.%(ext)s"))
+
+    # أعطِ أولوية لـ single-file (b) ثم fallback
+    format_str = (
+        "b[ext=mp4][filesize<"+str(MAX_UPLOAD_BYTES)+"]/"
+        "b[filesize<"+str(MAX_UPLOAD_BYTES)+"]/"
+        "b[ext=mp4]/"
+        "b/"
+        "best[ext=mp4][filesize<"+str(MAX_UPLOAD_BYTES)+"]/best"
+    )
+
+    ydl_opts = {
+        "outtmpl": outtmpl,
+        "format": format_str,
+        "merge_output_format": "mp4",   # إن توفر ffmpeg
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "retries": 2,
+        "concurrent_fragments": 1,
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.extract_info(url, download=True)
+    except Exception as e:
+        log.error("[ydl] extract error: %s", e)
+        return None
+
+    # التقط أي ملفات خرجت بهذا الـ prefix وتجاهل .part
+    files = sorted(
+        [p for p in TMP_DIR.glob(prefix + "*") if p.is_file() and not p.name.endswith(".part")],
+        key=lambda p: p.stat().st_mtime,
+        reverse=True
+    )
+
+    if not files:
+        return None
+
+    video_exts = {".mp4", ".mkv", ".webm", ".mov", ".m4v", ".avi", ".ts"}
+    audio_exts = {".m4a", ".mp3", ".webm", ".ogg", ".aac"}
+
+    # 1) فيديو ضمن الحد
+    for p in files:
+        if p.suffix.lower() in video_exts and p.stat().st_size > 0 and p.stat().st_size <= MAX_UPLOAD_BYTES:
+            return p
+
+    # 2) فيديو كبير -> نحاول تصغيره لو ffmpeg موجود
+    if shutil.which("ffmpeg"):
+        for p in files:
+            if p.suffix.lower() in video_exts and p.stat().st_size > MAX_UPLOAD_BYTES:
+                target = TMP_DIR / (p.stem + "_480p.mp4")
+                try:
+                    # 480p تقريبًا، يحافظ على النسبة
+                    cmd = [
+                        "ffmpeg","-y","-i",str(p),
+                        "-vf","scale='min(854,iw)':-2",
+                        "-c:v","libx264","-preset","veryfast","-crf","28",
+                        "-c:a","aac","-b:a","96k",
+                        str(target)
+                    ]
+                    subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    if target.exists() and target.stat().st_size > 0 and target.stat().st_size <= MAX_UPLOAD_BYTES:
+                        return target
+                except Exception as e:
+                    log.error("[ffmpeg] shrink error: %s", e)
+
+    # 3) لا يوجد فيديو صالح → أعد أقرب ملف صوتي ضمن الحد
+    for p in files:
+        if p.suffix.lower() in audio_exts and p.stat().st_size > 0 and p.stat().st_size <= MAX_UPLOAD_BYTES:
+            return p
+
+    return None
 
 async def link_scan(u: str) -> str:
     if not _URL_RE.search(u or ""):
@@ -1268,46 +1351,6 @@ async def ai_write(prompt: str) -> str:
     r, err = _chat_with_fallback([{"role":"system","content":sysmsg},{"role":"user","content":prompt}])
     if err: return "⚠️ تعذّر التوليد حالياً."
     return (r.choices[0].message.content or "").strip()
-
-# ==== تنزيل وسائط ====
-async def download_media(url: str) -> Path|None:
-    if yt_dlp is None:
-        log.warning("yt_dlp غير مثبت")
-        return None
-    TMP_DIR.mkdir(parents=True, exist_ok=True)
-    outtmpl = str(TMP_DIR / "%(title).50s.%(ext)s")
-    ydl_opts = {
-        "outtmpl": outtmpl,
-        "format": "bestvideo[filesize<45M]+bestaudio/best[filesize<45M]/best",
-        "merge_output_format": "mp4",
-        "quiet": True,
-        "no_warnings": True,
-        "retries": 2,
-        "noplaylist": True,
-    }
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            fname = ydl.prepare_filename(info)
-            base, _ = os.path.splitext(fname)
-            for ext in (".mp4",".m4a",".webm",".mp3",".mkv"):
-                p = Path(base + ext)
-                if p.exists() and p.is_file():
-                    if p.stat().st_size > MAX_UPLOAD_BYTES:
-                        ydl_opts_audio = ydl_opts | {"format": "bestaudio[filesize<45M]/bestaudio", "merge_output_format": "m4a"}
-                        with yt_dlp.YoutubeDL(ydl_opts_audio) as y2:
-                            info2 = y2.extract_info(url, download=True)
-                            fname2 = y2.prepare_filename(info2)
-                            for ext2 in (".m4a",".mp3",".webm"):
-                                p2 = Path(os.path.splitext(fname2)[0] + ext2)
-                                if p2.exists() and p2.is_file() and p2.stat().st_size <= MAX_UPLOAD_BYTES:
-                                    return p2
-                        return None
-                    return p
-    except Exception as e:
-        log.error("[ydl] %s", e)
-        return None
-    return None
 
 # ==== Telegram UI ====
 def gate_kb(lang="ar"):
@@ -1740,12 +1783,23 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if mode == "media_dl":
             if not _URL_RE.search(text):
                 await update.message.reply_text("أرسل رابط صالح (http/https)."); return
-            await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_DOCUMENT)
+            # نزّل وأرسل كـ Video/Audio حسب الامتداد
+            await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_VIDEO)
             path = await download_media(text)
-            if path and path.exists() and path.stat().st_size <= MAX_UPLOAD_BYTES:
+            if path and path.exists() and path.stat().st_size > 0 and path.stat().st_size <= MAX_UPLOAD_BYTES:
                 try:
-                    await update.message.reply_document(document=InputFile(str(path)))
-                except Exception:
+                    ext = path.suffix.lower()
+                    video_exts = {".mp4", ".mkv", ".webm", ".mov", ".m4v", ".avi", ".ts"}
+                    audio_exts = {".m4a", ".mp3", ".webm", ".ogg", ".aac"}
+                    if ext in video_exts:
+                        await update.message.reply_video(video=InputFile(str(path)), supports_streaming=True)
+                    elif ext in audio_exts:
+                        await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_AUDIO)
+                        await update.message.reply_audio(audio=InputFile(str(path)))
+                    else:
+                        await update.message.reply_document(document=InputFile(str(path)))
+                except Exception as e:
+                    log.error("send file error: %s", e)
                     await update.message.reply_text("⚠️ تعذّر إرسال الملف.")
             else:
                 await update.message.reply_text("⚠️ تعذّر التحميل أو أن الملف كبير.")
