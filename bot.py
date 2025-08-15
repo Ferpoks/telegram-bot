@@ -65,10 +65,9 @@ client = OpenAI(api_key=OPENAI_API_KEY) if AI_ENABLED else None
 
 # Replicate (مولد صور منخفض التكلفة)
 REPLICATE_API_TOKEN = (os.getenv("REPLICATE_API_TOKEN") or "").strip()
-# يمكنك تحديد موديل/فرجن هنا (افتراضي SDXL سريع)
 REPLICATE_MODEL_OWNER = os.getenv("REPLICATE_MODEL_OWNER", "stability-ai")
 REPLICATE_MODEL_NAME  = os.getenv("REPLICATE_MODEL_NAME",  "stable-diffusion-xl-base-1.0")
-REPLICATE_MODEL_VER   = os.getenv("REPLICATE_MODEL_VER",   "5c7d...")  # اختياري، إن تركته فاضي بستخدم آخر نسخة معلنة
+REPLICATE_MODEL_VER   = os.getenv("REPLICATE_MODEL_VER",   "5c7d...")  # اختياري
 
 OWNER_ID = int(os.getenv("OWNER_ID", "6468743821"))
 OWNER_USERNAME = os.getenv("OWNER_USERNAME", "ferpo_ksa").strip().lstrip("@")
@@ -105,7 +104,7 @@ VIP_PRICE_SAR      = float(os.getenv("VIP_PRICE_SAR", "10"))
 USE_PAYLINK_API        = os.getenv("USE_PAYLINK_API", "1") == "1"
 PAYLINK_CHECKOUT_BASE  = (os.getenv("PAYLINK_CHECKOUT_BASE") or "").strip()
 
-# خدمات الأمن الخارجية (تُستخدم داخل قسم الأمن)
+# خدمات الأمن الخارجية
 URLSCAN_API_KEY = (os.getenv("URLSCAN_API_KEY") or "").strip()
 KICKBOX_API_KEY = (os.getenv("KICKBOX_API_KEY") or "").strip()
 IPINFO_TOKEN    = (os.getenv("IPINFO_TOKEN") or "").strip()
@@ -113,28 +112,32 @@ IPINFO_TOKEN    = (os.getenv("IPINFO_TOKEN") or "").strip()
 # PDF.co لتحويل PDF↔Word
 PDFCO_API_KEY   = (os.getenv("PDFCO_API_KEY") or "").strip()
 
-# روابط الخدمات (تعديلها من Render)
+# ======= روابط حسب طلبك (مع إمكانية التغيير من متغيرات البيئة) =======
+FOLLOWERS_LINKS = [
+    u for u in [
+        os.getenv("FOLLOW_LINK_1","https://smmcpan.com/"),
+        os.getenv("FOLLOW_LINK_2","https://saudifollow.com/"),
+        os.getenv("FOLLOW_LINK_3","https://drd3m.me/"),
+    ] if u
+]
+
+# في نفس قسم "الخدمات": قائمتان منفصلتان (أرقام مؤقتة / فيزا افتراضية)
 SERV_NUMBERS_LINKS = [
     u for u in [
-        os.getenv("NUMBERS_LINK_1",""),
-        os.getenv("NUMBERS_LINK_2",""),
-        os.getenv("NUMBERS_LINK_3",""),
+        os.getenv("NUMBERS_LINK_1","https://txtu.app/"),
     ] if u
 ]
 SERV_VCC_LINKS = [
     u for u in [
-        os.getenv("VCC_LINK_1",""),
-        os.getenv("VCC_LINK_2",""),
-        os.getenv("VCC_LINK_3",""),
+        os.getenv("VCC_LINK_1","https://fake-card.com/virtual-card-mastercard-free-card-bin/228757973743900/"),
     ] if u
 ]
-FOLLOWERS_LINKS = [
-    u for u in [
-        os.getenv("FOLLOW_LINK_1",""),
-        os.getenv("FOLLOW_LINK_2",""),
-        os.getenv("FOLLOW_LINK_3",""),
-    ] if u
-]
+
+# الدورات (عناوين تُعرّب تلقائيًا)
+COURSE_PYTHON_URL = os.getenv("COURSE_PYTHON_URL","https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/Y8WctvBLiA6u6AASeZX2IUfDQAolTJ4QFGx9WRCu.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250815%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250815T021202Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=b7e556dd4c8a23f56f5e7cba1a29eadb6c48fa7c0656f463d47a64cd10ebfa81")
+COURSE_CYBER_URL  = os.getenv("COURSE_CYBER_URL","https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/pZ0spOmm1K0dA2qAzUuWUb4CcMMjUPTbn7WMRwAc.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250815%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250815T021253Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=bc11797f9de3cb6f391937936f73f8f2acded12a7d665c5d82e453241dea50c9")
+COURSE_EH_URL     = os.getenv("COURSE_EH_URL","https://www.mediafire.com/folder/r26pp5mpduvnx/%D8%AF%D9%88%D8%B1%D8%A9_%D8%A7%D9%84%D9%87%D8%A7%D9%83%D8%B1_%D8%A7%D9%84%D8%A7%D8%AE%D9%84%D8%A7%D9%82%D9%8A_%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D8%B1%D8%AD%D9%85%D9%86_%D9%88%D8%B5%D9%81%D9%8A")
+COURSE_ECOM_URL   = os.getenv("COURSE_ECOM_URL","https://drive.google.com/drive/folders/1-UADEMHUswoCyo853FdTu4R4iuUx_f3I?hl=ar")
 
 DARK_GPT_URL = os.getenv("DARK_GPT_URL", "https://flowgpt.com/chat/M0GRwnsc2MY0DdXPPmF4X")
 
@@ -153,7 +156,9 @@ def _clean_base(url: str) -> str:
     return u
 
 def _build_pay_link(ref: str) -> str:
-    base = _clean_base(PAYLINK_CHECKOUT_BASE)
+    base = (PAYLINK_CHECKOUT_BASE or "").strip()
+    if not base:
+        return ""
     if "{ref}" in base:
         return base.format(ref=ref)
     sep = "&" if "?" in base else "?"
@@ -290,7 +295,7 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "ai_chat_on": "🤖 وضع الدردشة مفعّل. أرسل سؤالك الآن.",
         "ai_chat_off": "🔚 تم إنهاء وضع الذكاء الاصطناعي.",
         "security_desc": "أرسل رابط/دومين/إيميل للفحص. (urlscan, kickbox, ipinfo) – يتطلب مفاتيح.",
-        "services_desc": "أرقام مؤقتة وروابط بطاقات افتراضية قانونية.",
+        "services_desc": "اختر خدمة:",
         "files_desc": "تحويلات ملفات: JPG→PDF (محلي)، و PDF↔Word عبر PDF.co إن وُجد المفتاح.",
         "unban_desc": "قوالب جاهزة ورسائل دعم للمنصات.",
         "courses_desc": "دورات مختارة بروابط مباشرة.",
@@ -299,12 +304,37 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "darkgpt_desc": "يفتح الرابط:",
         "choose_lang_done": "✅ تم ضبط اللغة: {chosen}",
         "myinfo": "👤 اسمك: {name}\n🆔 معرفك: {uid}\n🌐 اللغة: {lng}",
-        "page_ai": "🤖 أدوات الذكاء الاصطناعي:\n- دردشة\n- كتابة\n- ترجمة\n- تحويل صوت لنص\n- صور AI",
+
+        # صفحات داخلية مع أزرار ملوّنة باللغة المختارة
+        "page_ai": "🤖 أدوات الذكاء الاصطناعي:",
+        "btn_ai_chat": "🤖 دردشة",
+        "btn_ai_write": "✍️ كتابة",
+        "btn_ai_translate": "🌐 ترجمة",
+        "btn_ai_stt": "🎙️ تحويل صوت لنص",
+        "btn_ai_image": "🖼️ توليد صور",
+
         "page_security": "🛡️ الأمن:",
+        "btn_urlscan": "🔗 فحص رابط",
+        "btn_emailcheck": "📧 فحص إيميل",
+        "btn_geolookup": "🛰️ موقع IP/دومين",
+
         "page_services": "🧰 خدمات:",
-        "page_unban": "🚫 فك الباند:",
+        "btn_numbers": "📱 أرقام مؤقتة",
+        "btn_vcc": "💳 فيزا افتراضية",
+        "services_numbers": "📱 الأرقام المؤقتة (استخدمها بمسؤولية):",
+        "services_vcc": "💳 بطاقات/فيزا افتراضية (قانونية):",
+
         "page_courses": "🎓 الدورات:",
+        "course_python": "بايثون من الصفر",
+        "course_cyber": "الأمن السيبراني من الصفر",
+        "course_eh": "الهكر الأخلاقي",
+        "course_ecom": "التجارة الإلكترونية",
+
         "page_files": "🗂️ أدوات الملفات:",
+        "btn_jpg2pdf": "JPG → PDF",
+        "btn_pdf2word": "PDF → Word",
+        "btn_word2pdf": "Word → PDF",
+
         "page_downloader": "⬇️ تنزيل الفيديو:",
         "page_boost": "📈 رشق متابعين:",
     }
@@ -345,10 +375,8 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "vip_ref": "🔖 Your reference: <code>{ref}</code>",
         "go_pay": "🚀 Go to payment",
         "check_pay": "✅ Verify payment",
-        "ai_chat_on": "🤖 Chat mode enabled. Send your question.",
-        "ai_chat_off": "🔚 AI chat disabled.",
         "security_desc": "Send URL/domain/email to check (urlscan, kickbox, ipinfo) – needs API keys.",
-        "services_desc": "Temporary phone numbers & legal virtual card providers.",
+        "services_desc": "Pick a service:",
         "files_desc": "File conversions: JPG→PDF (local), PDF↔Word via PDF.co if key set.",
         "unban_desc": "Ready-made support templates & links.",
         "courses_desc": "Curated courses (links).",
@@ -357,21 +385,44 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "darkgpt_desc": "Opens:",
         "choose_lang_done": "✅ Language set: {chosen}",
         "myinfo": "👤 Name: {name}\n🆔 ID: {uid}\n🌐 Lang: {lng}",
-        "page_ai": "🤖 AI Tools:\n- Chat\n- Writing\n- Translate\n- Speech-to-Text\n- Image Gen",
+
+        "page_ai": "🤖 AI Tools:",
+        "btn_ai_chat": "🤖 Chat",
+        "btn_ai_write": "✍️ Writing",
+        "btn_ai_translate": "🌐 Translate",
+        "btn_ai_stt": "🎙️ Speech-to-Text",
+        "btn_ai_image": "🖼️ Image Gen",
+
         "page_security": "🛡️ Security:",
+        "btn_urlscan": "🔗 URL Scan",
+        "btn_emailcheck": "📧 Email Check",
+        "btn_geolookup": "🛰️ IP/Domain Geo",
+
         "page_services": "🧰 Services:",
-        "page_unban": "🚫 Unban:",
+        "btn_numbers": "📱 Temporary Numbers",
+        "btn_vcc": "💳 Virtual Card",
+        "services_numbers": "📱 Temporary numbers (use responsibly):",
+        "services_vcc": "💳 Virtual/Prepaid card providers:",
+
         "page_courses": "🎓 Courses:",
+        "course_python": "Python from Zero",
+        "course_cyber": "Cybersecurity from Zero",
+        "course_eh": "Ethical Hacking",
+        "course_ecom": "E-commerce",
+
         "page_files": "🗂️ File Tools:",
+        "btn_jpg2pdf": "JPG → PDF",
+        "btn_pdf2word": "PDF → Word",
+        "btn_word2pdf": "Word → PDF",
+
         "page_downloader": "⬇️ Downloader:",
         "page_boost": "📈 Followers:",
     }
 
-    # توافق للخلف مع النداءات القديمة: T("ar","hello") و T(lang, "key")
+    # توافق نداءات قديمة: T("ar","key")
     if key in ("ar", "en") and (lang is not None and lang not in ("ar", "en")):
         key, lang = lang, key
-
-    if lang not in ("ar", "en"):
+    if lang not in ("ar","en"):
         lang = "ar"
 
     D = AR if lang == "ar" else EN
@@ -397,9 +448,7 @@ def _db():
 def migrate_db():
     with _conn_lock:
         c = _db().cursor()
-        # لا نستخدم users_old بعد اليوم
         _db().execute("DROP TABLE IF EXISTS users_old;")
-        # users بسكيمة نهائية
         _db().execute("""
         CREATE TABLE IF NOT EXISTS users (
           id TEXT PRIMARY KEY,
@@ -442,7 +491,6 @@ def migrate_db():
                 if col not in ucols:
                     _db().execute(f"ALTER TABLE users ADD COLUMN {col} {defn};")
 
-        # ai_state
         _db().execute("""
         CREATE TABLE IF NOT EXISTS ai_state (
           user_id TEXT PRIMARY KEY,
@@ -457,7 +505,6 @@ def migrate_db():
         if "updated_at" not in acols:
             _db().execute("ALTER TABLE ai_state ADD COLUMN updated_at INTEGER;")
 
-        # payments
         _db().execute("""
         CREATE TABLE IF NOT EXISTS payments (
             ref TEXT PRIMARY KEY,
@@ -696,14 +743,13 @@ def whois_domain(domain: str) -> dict|None:
     except Exception as e:
         return {"error": f"whois error: {e}"}
 
-# فحوص الأمن (urlscan + kickbox + ipinfo) — تستخدم عند توفّر المفاتيح
+# فحوص الأمن
 async def urlscan_lookup(u: str) -> str:
     if not URLSCAN_API_KEY:
         return "ℹ️ ضع URLSCAN_API_KEY لتفعيل الفحص."
     try:
         headers = {"API-Key": URLSCAN_API_KEY, "Content-Type": "application/json"}
         async with aiohttp.ClientSession() as s:
-            # طلب مسح جديد (يستغرق ثواني)
             data = {"url": u, "visibility": "unlisted"}
             async with s.post("https://urlscan.io/api/v1/scan/", headers=headers, json=data, timeout=30) as r:
                 resp = await r.json(content_type=None)
@@ -773,7 +819,6 @@ async def osint_email(email: str) -> str:
         w_txt,
         f"\n{geo_text}"
     ]
-    # kickbox
     try:
         kb = await kickbox_lookup(email)
         out.append(kb)
@@ -796,7 +841,6 @@ async def link_scan(u: str) -> str:
         issues.append("⚠️ فشل الوصول (HEAD)")
     else:
         issues.append(f"🔎 حالة HTTP: {status}")
-    # urlscan
     try:
         us = await urlscan_lookup(u)
         issues.append(us)
@@ -804,7 +848,7 @@ async def link_scan(u: str) -> str:
         pass
     return f"🔗 <code>{u}</code>\nالمضيف: <code>{host}</code>\n" + "\n".join(issues) + f"\n\n{geo_txt}"
 
-# PDF.co تحويلات PDF↔Word (اختيارية)
+# PDF.co تحويلات PDF↔Word
 async def pdfco_convert(endpoint: str, file_bytes: bytes, out_name: str) -> bytes|None:
     if not PDFCO_API_KEY:
         return None
@@ -817,7 +861,6 @@ async def pdfco_convert(endpoint: str, file_bytes: bytes, out_name: str) -> byte
     if not data.get("url"):
         log.error("[pdfco] bad response: %s", data)
         return None
-    # حمّل الناتج
     try:
         async with aiohttp.ClientSession() as s:
             async with s.get(data["url"], timeout=120) as r:
@@ -842,20 +885,15 @@ async def replicate_image_generate(prompt: str) -> bytes|None:
     if not REPLICATE_API_TOKEN:
         return None
     try:
-        # إنشاء prediction
         model = f"{REPLICATE_MODEL_OWNER}/{REPLICATE_MODEL_NAME}"
         url = f"https://api.replicate.com/v1/predictions"
         headers = {"Authorization": f"Token {REPLICATE_API_TOKEN}", "Content-Type":"application/json"}
-        payload = {
-            "version": REPLICATE_MODEL_VER or None,  # لو فاضي يستخدم آخر نسخة
-            "input": { "prompt": prompt }
-        }
+        payload = {"version": REPLICATE_MODEL_VER or None, "input": {"prompt": prompt}}
         payload = {k:v for k,v in payload.items() if v is not None}
         async with aiohttp.ClientSession() as s:
             async with s.post(url, headers=headers, json={"version": payload.get("version"), "input": payload["input"]}, timeout=60) as r:
                 pred = await r.json()
             pred_url = pred.get("urls",{}).get("get")
-            # انتظر النتيجة
             for _ in range(40):
                 await asyncio.sleep(2)
                 async with aiohttp.ClientSession() as s:
@@ -866,11 +904,9 @@ async def replicate_image_generate(prompt: str) -> bytes|None:
             if pred.get("status") != "succeeded":
                 log.error("[replicate] status=%s err=%s", pred.get("status"), pred.get("error"))
                 return None
-            # outputs: قائمة روابط صور
             outputs = pred.get("output") or []
             if not outputs:
                 return None
-            # حمل أول صورة
             img_url = outputs[0]
             async with aiohttp.ClientSession() as s:
                 async with s.get(img_url, timeout=60) as r:
@@ -880,12 +916,11 @@ async def replicate_image_generate(prompt: str) -> bytes|None:
         return None
 
 async def ai_image_generate(prompt: str) -> bytes|None:
-    # جرّب Replicate أول (أرخص)، ثم OpenAI كبديل
     img = await replicate_image_generate(prompt)
     if img: return img
     return await openai_image_generate(prompt)
 
-# STT/Translate/Writer عبر OpenAI (مثل ما كانت)
+# STT/Translate/Writer
 def _chat_with_fallback(messages):
     if not AI_ENABLED or client is None:
         return None, "ai_disabled"
@@ -1021,7 +1056,6 @@ def gate_kb(lang="ar"):
     ])
 
 def main_menu_kb(uid: int, lang="ar"):
-    is_vip = (user_is_premium(uid) or uid == OWNER_ID)
     rows = [
         [InlineKeyboardButton(T("btn_myinfo", lang=lang), callback_data="myinfo")],
         [InlineKeyboardButton(T("btn_lang", lang=lang), callback_data="pick_lang")],
@@ -1088,32 +1122,22 @@ async def on_startup(app: Application):
     if CHANNEL_ID is None:
         log.error("[startup] ❌ could not resolve channel id; fallback to @username checks")
 
-    # أوامر للمستخدم العادي
     try:
         await app.bot.set_my_commands(
-            [
-                BotCommand("start","Start"),
-                BotCommand("help","Help"),
-            ],
+            [BotCommand("start","Start"), BotCommand("help","Help")],
             scope=BotCommandScopeDefault()
         )
     except Exception as e:
         log.warning("[startup] set_my_commands default: %s", e)
 
-    # أوامر المالك
     try:
         await app.bot.set_my_commands(
             [
-                BotCommand("start","Start"),
-                BotCommand("help","Help"),
-                BotCommand("id","Your ID"),
-                BotCommand("grant","Grant VIP"),
-                BotCommand("revoke","Revoke VIP"),
-                BotCommand("vipinfo","VIP Info"),
-                BotCommand("refreshcmds","Refresh Commands"),
-                BotCommand("aidiag","AI diag"),
-                BotCommand("libdiag","Lib versions"),
-                BotCommand("paylist","Payments list"),
+                BotCommand("start","Start"), BotCommand("help","Help"),
+                BotCommand("id","Your ID"), BotCommand("grant","Grant VIP"),
+                BotCommand("revoke","Revoke VIP"), BotCommand("vipinfo","VIP Info"),
+                BotCommand("refreshcmds","Refresh Commands"), BotCommand("aidiag","AI diag"),
+                BotCommand("libdiag","Lib versions"), BotCommand("paylist","Payments list"),
                 BotCommand("restart","Restart"),
             ],
             scope=BotCommandScopeChat(chat_id=OWNER_ID)
@@ -1125,7 +1149,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     init_db()
     uid = update.effective_user.id; chat_id = update.effective_chat.id
     u = user_get(uid)
-    # عند /start: نعرض اختيار اللغة دائمًا (ترتيب أفضل)
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton(T("lang_ar", lang="ar"), callback_data="set_lang_ar"),
          InlineKeyboardButton(T("lang_en", lang="ar"), callback_data="set_lang_en")]
@@ -1168,7 +1191,6 @@ async def must_be_member_or_vip(context: ContextTypes.DEFAULT_TYPE, user_id: int
     if user_is_premium(user_id) or user_id == OWNER_ID: return True
     return await is_member(context, user_id, retries=3, backoff=0.7)
 
-# نصوص فك الباند (مختصرة)
 UNBAN_TEMPLATES = {
     "instagram": "Hello Instagram Support,\nMy account was disabled by mistake. I believe I didn’t violate the rules. Kindly review and restore it. Thanks.",
     "facebook": "Hello Facebook Support,\nMy account was restricted/disabled in error. Please review my case and reinstate access. Thank you.",
@@ -1198,7 +1220,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit(q, text, kb=main_menu_kb(uid, new))
         return
 
-    # زر تغيير اللغة دائمًا
+    # زر تغيير اللغة
     if q.data == "pick_lang":
         await safe_edit(q, T("start_pick_lang", lang=lang), kb=InlineKeyboardMarkup([
             [InlineKeyboardButton(T("lang_ar", lang=lang), callback_data="set_lang_ar"),
@@ -1216,7 +1238,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, T("not_verified", lang=lang) + "\n" + need_admin_text(lang), kb=gate_kb(lang))
         return
 
-    # صلاحية الانضمام قبل باقي الأقسام
+    # صلاحية الانضمام
     if not await must_be_member_or_vip(context, uid):
         await safe_edit(q, T("must_join", lang=lang), kb=gate_kb(lang)); return
 
@@ -1238,7 +1260,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pay_url = _build_pay_link(ref)
             txt = T("vip_pay_title", lang=lang, price=VIP_PRICE_SAR) + "\n" + T("vip_ref", lang=lang, ref=ref)
             await safe_edit(q, txt, kb=InlineKeyboardMarkup([
-                [InlineKeyboardButton(T("go_pay", lang=lang), url=pay_url)],
+                [InlineKeyboardButton(T("go_pay", lang=lang), url=pay_url or "https://paylink.sa")],
                 [InlineKeyboardButton(T("check_pay", lang=lang), callback_data=f"verify_pay_{ref}")],
                 [InlineKeyboardButton(T("back", lang=lang), callback_data="back_home")]
             ]))
@@ -1263,15 +1285,15 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "sections":
         await safe_edit(q, T("sections", lang=lang), kb=sections_kb(lang)); return
 
-    # الصفحات الفرعية
+    # AI
     if q.data == "sec_ai":
         await safe_edit(q, T("page_ai", lang=lang) + "\n\n" + T("choose_option", lang=lang),
                         kb=InlineKeyboardMarkup([
-                            [InlineKeyboardButton("🤖 Chat", callback_data="ai_chat")],
-                            [InlineKeyboardButton("✍️ Writing", callback_data="ai_writer")],
-                            [InlineKeyboardButton("🌐 Translate", callback_data="ai_translate")],
-                            [InlineKeyboardButton("🎙️ STT", callback_data="ai_stt")],
-                            [InlineKeyboardButton("🖼️ Image Gen", callback_data="ai_image")],
+                            [InlineKeyboardButton(T("btn_ai_chat", lang=lang), callback_data="ai_chat")],
+                            [InlineKeyboardButton(T("btn_ai_write", lang=lang), callback_data="ai_writer")],
+                            [InlineKeyboardButton(T("btn_ai_translate", lang=lang), callback_data="ai_translate")],
+                            [InlineKeyboardButton(T("btn_ai_stt", lang=lang), callback_data="ai_stt")],
+                            [InlineKeyboardButton(T("btn_ai_image", lang=lang), callback_data="ai_image")],
                             [InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]
                         ])); return
 
@@ -1296,11 +1318,12 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ai_set_mode(uid, "image_ai")
         await safe_edit(q, T("send_text", lang=lang), kb=ai_stop_kb(lang)); return
 
+    # الأمن
     if q.data == "sec_security":
-        await safe_edit(q, T("security_desc", lang=lang), kb=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔗 URL Scan", callback_data="sec_security_url")],
-            [InlineKeyboardButton("📧 Email Check", callback_data="sec_security_email")],
-            [InlineKeyboardButton("🛰️ IP/Domain Geo", callback_data="sec_security_geo")],
+        await safe_edit(q, T("page_security", lang=lang) + "\n\n" + T("choose_option", lang=lang), kb=InlineKeyboardMarkup([
+            [InlineKeyboardButton(T("btn_urlscan", lang=lang), callback_data="sec_security_url")],
+            [InlineKeyboardButton(T("btn_emailcheck", lang=lang), callback_data="sec_security_email")],
+            [InlineKeyboardButton(T("btn_geolookup", lang=lang), callback_data="sec_security_geo")],
             [InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]
         ])); return
 
@@ -1311,12 +1334,28 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "sec_security_geo":
         ai_set_mode(uid, "geo_ip"); await safe_edit(q, "📍 أرسل IP أو دومين.", kb=ai_stop_kb(lang)); return
 
+    # الخدمات (قائمتان داخليًا)
     if q.data == "sec_services":
-        nums = SERV_NUMBERS_LINKS or ["https://5sim.net","https://sms-activate.org"]
-        vcc  = SERV_VCC_LINKS or ["https://wise.com","https://privacy.com"]
-        txt = T("services_desc", lang=lang) + "\n\n" + "Numbers:\n" + "\n".join(nums) + "\n\nVCC:\n" + "\n".join(vcc) + "\n\n(استخدم خدمات قانونية فقط)"
-        await safe_edit(q, txt, kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]])); return
+        await safe_edit(q, T("page_services", lang=lang) + "\n\n" + T("choose_option", lang=lang),
+                        kb=InlineKeyboardMarkup([
+                            [InlineKeyboardButton(T("btn_numbers", lang=lang), callback_data="serv_numbers")],
+                            [InlineKeyboardButton(T("btn_vcc", lang=lang), callback_data="serv_vcc")],
+                            [InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]
+                        ])); return
 
+    if q.data == "serv_numbers":
+        nums = SERV_NUMBERS_LINKS or ["https://txtu.app/"]
+        rows = [[InlineKeyboardButton(u, url=u)] for u in nums]
+        rows.append([InlineKeyboardButton(T("back", lang=lang), callback_data="sec_services")])
+        await safe_edit(q, T("services_numbers", lang=lang), kb=InlineKeyboardMarkup(rows)); return
+
+    if q.data == "serv_vcc":
+        vcc  = SERV_VCC_LINKS or ["https://fake-card.com/virtual-card-mastercard-free-card-bin/228757973743900/"]
+        rows = [[InlineKeyboardButton(u, url=u)] for u in vcc]
+        rows.append([InlineKeyboardButton(T("back", lang=lang), callback_data="sec_services")])
+        await safe_edit(q, T("services_vcc", lang=lang), kb=InlineKeyboardMarkup(rows)); return
+
+    # فك الباند
     if q.data == "sec_unban":
         await safe_edit(q, T("unban_desc", lang=lang), kb=InlineKeyboardMarkup([
             [InlineKeyboardButton("Instagram", callback_data="unban_instagram")],
@@ -1334,21 +1373,24 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton(T("back", lang=lang), callback_data="sec_unban")]
         ])); return
 
+    # الدورات
     if q.data == "sec_courses":
         courses = [
-            ("Python from Zero", os.getenv("COURSE_PYTHON_URL","https://example.com/python")),
-            ("Cybersecurity from Zero", os.getenv("COURSE_CYBER_URL","https://example.com/cyber")),
-            ("Ethical Hacking", os.getenv("COURSE_EH_URL","https://example.com/eh")),
+            (T("course_python", lang=lang), COURSE_PYTHON_URL),
+            (T("course_cyber", lang=lang),  COURSE_CYBER_URL),
+            (T("course_eh", lang=lang),     COURSE_EH_URL),
+            (T("course_ecom", lang=lang),   COURSE_ECOM_URL),
         ]
         rows = [[InlineKeyboardButton(title, url=url)] for title,url in courses]
         rows.append([InlineKeyboardButton(T("back", lang=lang), callback_data="sections")])
-        await safe_edit(q, T("courses_desc", lang=lang), kb=InlineKeyboardMarkup(rows)); return
+        await safe_edit(q, T("page_courses", lang=lang), kb=InlineKeyboardMarkup(rows)); return
 
+    # الملفات
     if q.data == "sec_files":
-        await safe_edit(q, T("files_desc", lang=lang), kb=InlineKeyboardMarkup([
-            [InlineKeyboardButton("JPG → PDF", callback_data="file_jpg2pdf")],
-            [InlineKeyboardButton("PDF → Word", callback_data="file_pdf2word")],
-            [InlineKeyboardButton("Word → PDF", callback_data="file_word2pdf")],
+        await safe_edit(q, T("page_files", lang=lang) + "\n" + T("files_desc", lang=lang), kb=InlineKeyboardMarkup([
+            [InlineKeyboardButton(T("btn_jpg2pdf", lang=lang), callback_data="file_jpg2pdf")],
+            [InlineKeyboardButton(T("btn_pdf2word", lang=lang), callback_data="file_pdf2word")],
+            [InlineKeyboardButton(T("btn_word2pdf", lang=lang), callback_data="file_word2pdf")],
             [InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]
         ])); return
 
@@ -1362,15 +1404,17 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ai_set_mode(uid, "file_word2pdf")
         await safe_edit(q, "📌 أرسل ملف DOC أو DOCX وسيُحوّل إلى PDF (PDF.co).", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
 
+    # تنزيل الفيديو
     if q.data == "sec_downloader":
         ai_set_mode(uid, "media_dl")
-        await safe_edit(q, T("downloader_desc", lang=lang), kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]])); return
+        await safe_edit(q, T("page_downloader", lang=lang) + "\n" + T("downloader_desc", lang=lang), kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]])); return
 
+    # الرشق
     if q.data == "sec_boost":
-        links = FOLLOWERS_LINKS or ["https://example.com/boost1","https://example.com/boost2","https://example.com/boost3"]
-        rows = [[InlineKeyboardButton(f"🔗 {i+1}", url=links[i])] for i in range(len(links))]
+        links = FOLLOWERS_LINKS or ["https://smmcpan.com/","https://saudifollow.com/","https://drd3m.me/"]
+        rows = [[InlineKeyboardButton(u.replace("https://","").rstrip("/"), url=u)] for u in links]
         rows.append([InlineKeyboardButton(T("back", lang=lang), callback_data="sections")])
-        await safe_edit(q, T("boost_desc", lang=lang), kb=InlineKeyboardMarkup(rows)); return
+        await safe_edit(q, T("page_boost", lang=lang) + "\n" + T("boost_desc", lang=lang), kb=InlineKeyboardMarkup(rows)); return
 
 # ==== تنزيل ملف من تيليجرام ====
 async def tg_download_to_path(bot, file_id: str, suffix: str = "") -> Path:
@@ -1510,7 +1554,6 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("⚠️ فشل التحويل (Word → PDF).")
             return
 
-    # بدون وضع مفعّل: رجّع القائمة
     if not mode:
         await update.message.reply_text(T("main_menu", lang=lang), reply_markup=main_menu_kb(uid, lang))
 
@@ -1597,7 +1640,7 @@ async def libdiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"libdiag error: {e}")
 
-async def paylist(update: Update, ContextTypes=ContextTypes):
+async def paylist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
     rows = payments_last(15)
     if not rows:
@@ -1657,6 +1700,5 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
 
