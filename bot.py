@@ -112,7 +112,7 @@ IPINFO_TOKEN    = (os.getenv("IPINFO_TOKEN") or "").strip()
 # PDF.co لتحويل PDF↔Word
 PDFCO_API_KEY   = (os.getenv("PDFCO_API_KEY") or "").strip()
 
-# ======= روابط حسب طلبك (مع إمكانية التغيير من متغيرات البيئة) =======
+# ======= روابط حسب طلبك =======
 FOLLOWERS_LINKS = [
     u for u in [
         os.getenv("FOLLOW_LINK_1","https://smmcpan.com/"),
@@ -133,7 +133,7 @@ SERV_VCC_LINKS = [
     ] if u
 ]
 
-# الدورات (عناوين تُعرّب تلقائيًا)
+# الدورات
 COURSE_PYTHON_URL = os.getenv("COURSE_PYTHON_URL","https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/Y8WctvBLiA6u6AASeZX2IUfDQAolTJ4QFGx9WRCu.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250815%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250815T021202Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=b7e556dd4c8a23f56f5e7cba1a29eadb6c48fa7c0656f463d47a64cd10ebfa81")
 COURSE_CYBER_URL  = os.getenv("COURSE_CYBER_URL","https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/pZ0spOmm1K0dA2qAzUuWUb4CcMMjUPTbn7WMRwAc.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250815%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250815T021253Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=bc11797f9de3cb6f391937936f73f8f2acded12a7d665c5d82e453241dea50c9")
 COURSE_EH_URL     = os.getenv("COURSE_EH_URL","https://www.mediafire.com/folder/r26pp5mpduvnx/%D8%AF%D9%88%D8%B1%D8%A9_%D8%A7%D9%84%D9%87%D8%A7%D9%83%D8%B1_%D8%A7%D9%84%D8%A7%D8%AE%D9%84%D8%A7%D9%82%D9%8A_%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D8%B1%D8%AD%D9%85%D9%86_%D9%88%D8%B5%D9%81%D9%8A")
@@ -305,7 +305,7 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "choose_lang_done": "✅ تم ضبط اللغة: {chosen}",
         "myinfo": "👤 اسمك: {name}\n🆔 معرفك: {uid}\n🌐 اللغة: {lng}",
 
-        # صفحات داخلية مع أزرار ملوّنة باللغة المختارة
+        # صفحات داخلية وأزرارها
         "page_ai": "🤖 أدوات الذكاء الاصطناعي:",
         "btn_ai_chat": "🤖 دردشة",
         "btn_ai_write": "✍️ كتابة",
@@ -317,6 +317,9 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "btn_urlscan": "🔗 فحص رابط",
         "btn_emailcheck": "📧 فحص إيميل",
         "btn_geolookup": "🛰️ موقع IP/دومين",
+        "prompt_send_url": "🛡️ أرسل الرابط للفحص.",
+        "prompt_send_email": "✉️ أرسل الإيميل للفحص.",
+        "prompt_send_geo": "📍 أرسل IP أو دومين.",
 
         "page_services": "🧰 خدمات:",
         "btn_numbers": "📱 أرقام مؤقتة",
@@ -397,6 +400,9 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "btn_urlscan": "🔗 URL Scan",
         "btn_emailcheck": "📧 Email Check",
         "btn_geolookup": "🛰️ IP/Domain Geo",
+        "prompt_send_url": "🛡️ Send the URL to scan.",
+        "prompt_send_email": "✉️ Send the email to check.",
+        "prompt_send_geo": "📍 Send an IP or a domain.",
 
         "page_services": "🧰 Services:",
         "btn_numbers": "📱 Temporary Numbers",
@@ -676,35 +682,7 @@ _HOST_RE = re.compile(r"^[a-zA-Z0-9.-]{1,253}\.[A-Za-z]{2,63}$")
 _URL_RE = re.compile(r"https?://[^\s]+")
 DISPOSABLE_DOMAINS = {"mailinator.com","tempmail.com","10minutemail.com","yopmail.com","guerrillamail.com","trashmail.com"}
 
-# >>>>>>> تعديل: fetch_geo يستخدم ipinfo أولاً ثم ip-api كبديل <<<<<<<
 async def fetch_geo(query: str) -> dict|None:
-    # استخدم ipinfo إن وُجد توكن
-    if IPINFO_TOKEN:
-        try:
-            async with aiohttp.ClientSession() as s:
-                async with s.get(f"https://ipinfo.io/{query}?token={IPINFO_TOKEN}", timeout=15) as r:
-                    d = await r.json(content_type=None)
-            lat, lon = None, None
-            if isinstance(d.get("loc"), str) and "," in d["loc"]:
-                lat, lon = d["loc"].split(",", 1)
-            return {
-                "status": "success",
-                "query": d.get("ip", query),
-                "country": d.get("country"),
-                "regionName": d.get("region"),
-                "city": d.get("city"),
-                "zip": d.get("postal"),
-                "timezone": d.get("timezone"),
-                "isp": d.get("org"),
-                "org": d.get("org"),
-                "as": d.get("asn", {}).get("asn") if isinstance(d.get("asn"), dict) else d.get("asn"),
-                "lat": lat, "lon": lon,
-                "reverse": d.get("hostname"),
-            }
-        except Exception:
-            pass  # نرجع لـ ip-api أدناه
-
-    # بديل ip-api (بدون مفاتيح)
     url = f"http://ip-api.com/json/{query}?fields=status,message,country,regionName,city,isp,org,as,query,lat,lon,timezone,zip,reverse"
     try:
         async with aiohttp.ClientSession() as s:
@@ -739,12 +717,53 @@ def md5_hex(s: str) -> str:
     return hashlib.md5(s.strip().lower().encode()).hexdigest()
 
 async def http_head(url: str) -> int|None:
+    # للإبقاء على التوافق مع الاستدعاءات القديمة (Gravatar)
     try:
         async with aiohttp.ClientSession() as s:
             async with s.head(url, allow_redirects=True, timeout=15) as r:
                 return r.status
     except Exception:
         return None
+
+async def http_head_details(url: str):
+    """يرجع (status, headers_dict)"""
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.head(url, allow_redirects=True, timeout=15) as r:
+                return r.status, dict(r.headers)
+    except Exception:
+        return None, {}
+
+def _detect_charset_from_ct(ct: str|None) -> str:
+    if not ct: return "utf-8"
+    m = re.search(r"charset=([\w\-\d]+)", ct, re.I)
+    return (m.group(1) if m else "utf-8").strip().lower()
+
+async def http_get_title(url: str, max_bytes: int = 131072) -> tuple[str|None, int|None]:
+    """يحاول قراءة عنوان الصفحة <title> مع حد تحميل صغير"""
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(url, allow_redirects=True, timeout=20) as r:
+                ct = r.headers.get("content-type","")
+                charset = _detect_charset_from_ct(ct)
+                total = 0
+                buf = bytearray()
+                async for chunk in r.content.iter_chunked(4096):
+                    buf += chunk
+                    total += len(chunk)
+                    if total >= max_bytes:
+                        break
+                    if b"</title>" in buf.lower():
+                        break
+                try:
+                    text = buf.decode(charset, errors="ignore")
+                except Exception:
+                    text = buf.decode("utf-8", errors="ignore")
+                m = re.search(r"<title[^>]*>(.*?)</title>", text, re.I|re.S)
+                title = re.sub(r"\s+", " ", m.group(1)).strip() if m else None
+                return title, total
+    except Exception:
+        return None, None
 
 def resolve_ip(host: str) -> str|None:
     try:
@@ -771,8 +790,9 @@ def whois_domain(domain: str) -> dict|None:
     except Exception as e:
         return {"error": f"whois error: {e}"}
 
-# فحوص الأمن
+# ==== urlscan (تحسين) ====
 async def urlscan_lookup(u: str) -> str:
+    """للخلفية فقط (توافق قديم)"""
     if not URLSCAN_API_KEY:
         return "ℹ️ ضع URLSCAN_API_KEY لتفعيل الفحص."
     try:
@@ -790,6 +810,57 @@ async def urlscan_lookup(u: str) -> str:
     except Exception as e:
         return f"urlscan error: {e}"
 
+async def urlscan_submit(u: str) -> dict:
+    """يرسل الفحص ويحاول يجلب ملخص JSON سريعاً"""
+    out = {"result_url": None, "uuid": None, "summary": None, "error": None}
+    if not URLSCAN_API_KEY:
+        out["error"] = "URLSCAN_API_KEY missing"
+        return out
+    try:
+        headers = {"API-Key": URLSCAN_API_KEY, "Content-Type": "application/json"}
+        payload = {"url": u, "visibility": "unlisted"}
+        async with aiohttp.ClientSession() as s:
+            async with s.post("https://urlscan.io/api/v1/scan/", headers=headers, json=payload, timeout=30) as r:
+                resp = await r.json(content_type=None)
+        out["result_url"] = resp.get("result")
+        out["uuid"] = resp.get("uuid")
+        # جرّب تجيب JSON النتيجة 3-5 مرات بسرعة
+        if out["uuid"]:
+            for _ in range(5):
+                await asyncio.sleep(2)  # انتظار المعالجة
+                try:
+                    async with aiohttp.ClientSession() as s:
+                        api = f"https://urlscan.io/api/v1/result/{out['uuid']}/"
+                        async with s.get(api, timeout=15) as r2:
+                            if r2.status == 200:
+                                data = await r2.json(content_type=None)
+                                # بناء ملخص آمن
+                                page = data.get("page", {})
+                                verdicts = (data.get("verdicts") or {}).get("overall") or {}
+                                stats = data.get("stats") or {}
+                                parts = []
+                                if page.get("title"): parts.append(f"📄 Title: {page.get('title')}")
+                                if page.get("domain"): parts.append(f"🌐 Domain: {page.get('domain')}")
+                                if page.get("country"): parts.append(f"🏳️ Country: {page.get('country')}")
+                                if page.get("server"): parts.append(f"🧾 Server: {page.get('server')}")
+                                if verdicts:
+                                    mal = verdicts.get("malicious")
+                                    score = verdicts.get("score")
+                                    parts.append(f"🧪 Verdict: {'malicious' if mal else 'clean'} (score={score})" if score is not None else f"🧪 Verdict: {'malicious' if mal else 'clean'}")
+                                if stats:
+                                    reqs = stats.get("requests")
+                                    uniq_domains = stats.get("uniqDomains")
+                                    if reqs is not None: parts.append(f"📊 Requests: {reqs}")
+                                    if uniq_domains is not None: parts.append(f"🧩 Unique domains: {uniq_domains}")
+                                out["summary"] = "\n".join(parts) if parts else None
+                                break
+                except Exception:
+                    continue
+    except Exception as e:
+        out["error"] = f"urlscan submit error: {e}"
+    return out
+
+# فحوص الأمن الأخرى
 async def kickbox_lookup(email: str) -> str:
     if not KICKBOX_API_KEY:
         return "ℹ️ ضع KICKBOX_API_KEY لتفعيل فحص الإيميل."
@@ -860,21 +931,66 @@ async def link_scan(u: str) -> str:
     meta = _urlparse.urlparse(u)
     host = meta.hostname or ""
     scheme = meta.scheme
-    issues = []
-    if scheme != "https": issues.append("❗️ بدون تشفير HTTPS")
-    ip = resolve_ip(host) if host else None
-    geo_txt = fmt_geo(await fetch_geo(ip)) if ip else "⚠️ تعذّر حلّ IP للمضيف."
-    status = await http_head(u)
+    lines = []
+
+    # HTTPS?
+    if scheme != "https":
+        lines.append("❗️ بدون تشفير HTTPS")
+
+    # HEAD + headers
+    status, headers = await http_head_details(u)
     if status is None:
-        issues.append("⚠️ فشل الوصول (HEAD)")
+        lines.append("⚠️ فشل الوصول (HEAD)")
+        headers = {}
     else:
-        issues.append(f"🔎 حالة HTTP: {status}")
-    try:
-        us = await urlscan_lookup(u)
-        issues.append(us)
-    except Exception:
-        pass
-    return f"🔗 <code>{u}</code>\nالمضيف: <code>{host}</code>\n" + "\n".join(issues) + f"\n\n{geo_txt}"
+        lines.append(f"🔎 حالة HTTP: {status}")
+        # أهم الهيدرز
+        server = headers.get("Server") or headers.get("server")
+        ctype  = headers.get("Content-Type") or headers.get("content-type")
+        clen   = headers.get("Content-Length") or headers.get("content-length")
+        header_bits = []
+        if server: header_bits.append(f"Server={server}")
+        if ctype:  header_bits.append(f"Type={ctype}")
+        if clen:   header_bits.append(f"Length={clen}")
+        if header_bits:
+            lines.append("🧾 Headers: " + ", ".join(header_bits))
+
+    # Page title (GET محدود)
+    title, read_bytes = await http_get_title(u)
+    if title:
+        lines.append(f"📄 العنوان: {title}")
+    if read_bytes:
+        lines.append(f"⬇️ تم قراءة ~{read_bytes} بايت لاستخراج العنوان")
+
+    # Resolve + geo
+    ip = resolve_ip(host) if host else None
+    geo_data = await fetch_geo(ip) if ip else None
+
+    # urlscan submit + quick summary
+    if URLSCAN_API_KEY:
+        us = await urlscan_submit(u)
+        if us.get("result_url"):
+            lines.append(f"urlscan: {us['result_url']}")
+        if us.get("summary"):
+            lines.append(us["summary"])
+        if us.get("error"):
+            lines.append(f"urlscan error: {us['error']}")
+    else:
+        # احتياطيًا أبقي السلوك القديم لو ما في مفتاح
+        try:
+            old = await urlscan_lookup(u)
+            lines.append(old)
+        except Exception:
+            pass
+
+    # Geo text + ملاحظة CDN
+    note_cdn = ""
+    if geo_data and isinstance(geo_data, dict):
+        org = (geo_data.get("org") or "").lower()
+        if "cloudflare" in org or "akamai" in org or "fastly" in org:
+            note_cdn = "\n🔔 ملاحظة: هذا IP يتبع شبكة CDN (مثل Cloudflare)، والموقع الجغرافي هنا لمركز الشبكة وليس خادم الموقع النهائي."
+    geo_txt = fmt_geo(geo_data) if geo_data else "⚠️ تعذّر حلّ IP للمضيف."
+    return f"🔗 <code>{u}</code>\nالمضيف: <code>{host}</code>\n" + "\n".join(lines) + f"\n\n{geo_txt}{note_cdn}"
 
 # PDF.co تحويلات PDF↔Word
 async def pdfco_convert(endpoint: str, file_bytes: bytes, out_name: str) -> bytes|None:
@@ -1165,7 +1281,6 @@ async def on_startup(app: Application):
                 BotCommand("id","Your ID"), BotCommand("grant","Grant VIP"),
                 BotCommand("revoke","Revoke VIP"), BotCommand("vipinfo","VIP Info"),
                 BotCommand("refreshcmds","Refresh Commands"), BotCommand("aidiag","AI diag"),
-                BotCommand("secdiag","Security diagnostics"),
                 BotCommand("libdiag","Lib versions"), BotCommand("paylist","Payments list"),
                 BotCommand("restart","Restart"),
             ],
@@ -1356,19 +1471,12 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]
         ])); return
 
-    # >>>>>>> تعديل: رسائل التوجيه داخل الأمن حسب اللغة <<<<<<<
     if q.data == "sec_security_url":
-        ai_set_mode(uid, "link_scan")
-        await safe_edit(q, ("🛡️ أرسل الرابط للفحص." if lang=="ar" else "🛡️ Send the URL to scan."),
-                        kb=ai_stop_kb(lang)); return
+        ai_set_mode(uid, "link_scan"); await safe_edit(q, T("prompt_send_url", lang=lang), kb=ai_stop_kb(lang)); return
     if q.data == "sec_security_email":
-        ai_set_mode(uid, "email_check")
-        await safe_edit(q, ("✉️ أرسل الإيميل للفحص." if lang=="ar" else "✉️ Send the email to check."),
-                        kb=ai_stop_kb(lang)); return
+        ai_set_mode(uid, "email_check"); await safe_edit(q, T("prompt_send_email", lang=lang), kb=ai_stop_kb(lang)); return
     if q.data == "sec_security_geo":
-        ai_set_mode(uid, "geo_ip")
-        await safe_edit(q, ("📍 أرسل IP أو دومين." if lang=="ar" else "📍 Send an IP or domain."),
-                        kb=ai_stop_kb(lang)); return
+        ai_set_mode(uid, "geo_ip"); await safe_edit(q, T("prompt_send_geo", lang=lang), kb=ai_stop_kb(lang)); return
 
     # الخدمات (قائمتان داخليًا)
     if q.data == "sec_services":
@@ -1613,7 +1721,7 @@ async def makepdf_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==== أوامر المالك ====
 async def help_cmd_owner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
-    await update.message.reply_text("Admin: /id /grant /revoke /vipinfo /refreshcmds /aidiag /secdiag /libdiag /paylist /restart")
+    await update.message.reply_text("Admin: /id /grant /revoke /vipinfo /refreshcmds /aidiag /libdiag /paylist /restart")
 
 async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
@@ -1657,64 +1765,6 @@ async def aidiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg)
     except Exception as e:
         await update.message.reply_text(f"aidiag error: {e}")
-
-# >>>>>>> جديد: أمر تشخيص مفاتيح وخدمات الأمن /secdiag <<<<<<<
-async def secdiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID:
-        return
-
-    def present(name):
-        v = (os.getenv(name) or "").strip()
-        return f"{name}={'set('+str(len(v))+' chars)' if v else 'MISSING'}"
-
-    lines = [
-        "— Security keys —",
-        present("URLSCAN_API_KEY"),
-        present("KICKBOX_API_KEY"),
-        present("IPINFO_TOKEN"),
-        "",
-        "— Probes —",
-    ]
-
-    # urlscan quota probe
-    try:
-        key = (os.getenv("URLSCAN_API_KEY") or "").strip()
-        if key:
-            headers = {"API-Key": key, "Content-Type": "application/json"}
-            async with aiohttp.ClientSession() as s:
-                async with s.get("https://urlscan.io/user/quotas", headers=headers, timeout=15) as r:
-                    lines.append(f"urlscan quotas HTTP {r.status}")
-        else:
-            lines.append("urlscan: no key")
-    except Exception as e:
-        lines.append(f"urlscan error: {e}")
-
-    # kickbox probe
-    try:
-        key = (os.getenv("KICKBOX_API_KEY") or "").strip()
-        if key:
-            params = {"email": "test@example.com", "apikey": key}
-            async with aiohttp.ClientSession() as s:
-                async with s.get("https://api.kickbox.com/v2/verify", params=params, timeout=15) as r:
-                    lines.append(f"kickbox verify HTTP {r.status}")
-        else:
-            lines.append("kickbox: no key")
-    except Exception as e:
-        lines.append(f"kickbox error: {e}")
-
-    # ipinfo probe
-    try:
-        key = (os.getenv("IPINFO_TOKEN") or "").strip()
-        if key:
-            async with aiohttp.ClientSession() as s:
-                async with s.get(f"https://ipinfo.io/8.8.8.8?token={key}", timeout=15) as r:
-                    lines.append(f"ipinfo probe HTTP {r.status}")
-        else:
-            lines.append("ipinfo: no token")
-    except Exception as e:
-        lines.append(f"ipinfo error: {e}")
-
-    await update.message.reply_text("\n".join(lines))
 
 async def libdiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
@@ -1774,7 +1824,6 @@ def main():
     app.add_handler(CommandHandler("vipinfo", vipinfo))
     app.add_handler(CommandHandler("refreshcmds", refresh_cmds))
     app.add_handler(CommandHandler("aidiag", aidiag))
-    app.add_handler(CommandHandler("secdiag", secdiag))  # << جديد
     app.add_handler(CommandHandler("libdiag", libdiag))
     app.add_handler(CommandHandler("paylist", paylist))
     app.add_handler(CommandHandler("restart", restart_cmd))
@@ -1795,7 +1844,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
 
 
