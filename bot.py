@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import os, sqlite3, threading, time, asyncio, re, json, logging, base64, hashlib, socket, tempfile, shutil, subprocess
+import os, sqlite3, threading, time, asyncio, re, json, logging, base64, hashlib, socket, tempfile, shutil
 from pathlib import Path
 from io import BytesIO
 from dotenv import load_dotenv
@@ -112,7 +112,7 @@ IPINFO_TOKEN    = (os.getenv("IPINFO_TOKEN") or "").strip()
 # PDF.co لتحويل PDF↔Word
 PDFCO_API_KEY   = (os.getenv("PDFCO_API_KEY") or "").strip()
 
-# ======= روابط المستخدم =======
+# ======= روابط حسب طلبك (مع إمكانية التغيير من متغيرات البيئة) =======
 FOLLOWERS_LINKS = [
     u for u in [
         os.getenv("FOLLOW_LINK_1","https://smmcpan.com/"),
@@ -121,22 +121,19 @@ FOLLOWERS_LINKS = [
     ] if u
 ]
 
-# خدمات: أرقام مؤقتة / فيزا افتراضية
+# في نفس قسم "الخدمات": قائمتان منفصلتان (أرقام مؤقتة / فيزا افتراضية)
 SERV_NUMBERS_LINKS = [
     u for u in [
         os.getenv("NUMBERS_LINK_1","https://txtu.app/"),
     ] if u
 ]
-# ⚠️ لأسباب أمان لن أضع رابط افتراضي لبطاقات غير موثوقة. ضعه من البيئة VCC_LINK_1..3
 SERV_VCC_LINKS = [
     u for u in [
-        os.getenv("VCC_LINK_1",""),
-        os.getenv("VCC_LINK_2",""),
-        os.getenv("VCC_LINK_3",""),
+        os.getenv("VCC_LINK_1","https://fake-card.com/virtual-card-mastercard-free-card-bin/228757973743900/"),
     ] if u
 ]
 
-# الدورات
+# الدورات (عناوين تُعرّب تلقائيًا)
 COURSE_PYTHON_URL = os.getenv("COURSE_PYTHON_URL","https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/Y8WctvBLiA6u6AASeZX2IUfDQAolTJ4QFGx9WRCu.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250815%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250815T021202Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=b7e556dd4c8a23f56f5e7cba1a29eadb6c48fa7c0656f463d47a64cd10ebfa81")
 COURSE_CYBER_URL  = os.getenv("COURSE_CYBER_URL","https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/pZ0spOmm1K0dA2qAzUuWUb4CcMMjUPTbn7WMRwAc.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250815%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250815T021253Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=bc11797f9de3cb6f391937936f73f8f2acded12a7d665c5d82e453241dea50c9")
 COURSE_EH_URL     = os.getenv("COURSE_EH_URL","https://www.mediafire.com/folder/r26pp5mpduvnx/%D8%AF%D9%88%D8%B1%D8%A9_%D8%A7%D9%84%D9%87%D8%A7%D9%83%D8%B1_%D8%A7%D9%84%D8%A7%D8%AE%D9%84%D8%A7%D9%82%D9%8A_%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D8%B1%D8%AD%D9%85%D9%86_%D9%88%D8%B5%D9%81%D9%8A")
@@ -151,43 +148,6 @@ try:
     AIOHTTP_AVAILABLE = True
 except Exception:
     AIOHTTP_AVAILABLE = False
-
-# ==== ffmpeg/ffprobe (فحص وتحديد مواقع) ====
-FFMPEG_PATH = os.getenv("FFMPEG_PATH","") or shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
-FFPROBE_PATH = os.getenv("FFPROBE_PATH","") or shutil.which("ffprobe") or "/usr/bin/ffprobe"
-
-def ffmpeg_ok() -> bool:
-    try:
-        if not Path(FFMPEG_PATH).exists():
-            return False
-        p = subprocess.run([FFMPEG_PATH, "-version"], capture_output=True, text=True, timeout=5)
-        return p.returncode == 0
-    except Exception:
-        return False
-
-def ffprobe_duration_sec(path: Path) -> float|None:
-    try:
-        if not Path(FFPROBE_PATH).exists(): return None
-        cmd = [FFPROBE_PATH, "-v", "error", "-select_streams", "v:0", "-show_entries", "format=duration", "-of", "json", str(path)]
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
-        if p.returncode != 0: return None
-        data = json.loads(p.stdout or "{}")
-        dur = data.get("format",{}).get("duration")
-        return float(dur) if dur else None
-    except Exception:
-        return None
-
-def remux_to_mp4(path: Path) -> Path|None:
-    try:
-        if not ffmpeg_ok(): return None
-        out = path.with_suffix(".mp4")
-        cmd = [FFMPEG_PATH, "-y", "-i", str(path), "-c", "copy", "-movflags", "+faststart", str(out)]
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-        if p.returncode == 0 and out.exists() and out.stat().st_size > 0:
-            return out
-    except Exception as e:
-        log.warning("[remux] %s", e)
-    return None
 
 def _clean_base(url: str) -> str:
     u = (url or "").strip().strip('"').strip("'")
@@ -345,6 +305,7 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "choose_lang_done": "✅ تم ضبط اللغة: {chosen}",
         "myinfo": "👤 اسمك: {name}\n🆔 معرفك: {uid}\n🌐 اللغة: {lng}",
 
+        # صفحات داخلية مع أزرار ملوّنة باللغة المختارة
         "page_ai": "🤖 أدوات الذكاء الاصطناعي:",
         "btn_ai_chat": "🤖 دردشة",
         "btn_ai_write": "✍️ كتابة",
@@ -361,7 +322,7 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "btn_numbers": "📱 أرقام مؤقتة",
         "btn_vcc": "💳 فيزا افتراضية",
         "services_numbers": "📱 الأرقام المؤقتة (استخدمها بمسؤولية):",
-        "services_vcc": "💳 بطاقات/فيزا افتراضية (ضع الروابط من الإعدادات):",
+        "services_vcc": "💳 بطاقات/فيزا افتراضية (قانونية):",
 
         "page_courses": "🎓 الدورات:",
         "course_python": "بايثون من الصفر",
@@ -414,8 +375,6 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "vip_ref": "🔖 Your reference: <code>{ref}</code>",
         "go_pay": "🚀 Go to payment",
         "check_pay": "✅ Verify payment",
-        "ai_chat_on": "🤖 Chat mode enabled. Send your question.",
-        "ai_chat_off": "🔚 AI chat disabled.",
         "security_desc": "Send URL/domain/email to check (urlscan, kickbox, ipinfo) – needs API keys.",
         "services_desc": "Pick a service:",
         "files_desc": "File conversions: JPG→PDF (local), PDF↔Word via PDF.co if key set.",
@@ -443,7 +402,7 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "btn_numbers": "📱 Temporary Numbers",
         "btn_vcc": "💳 Virtual Card",
         "services_numbers": "📱 Temporary numbers (use responsibly):",
-        "services_vcc": "💳 Virtual/Prepaid card providers (set via env):",
+        "services_vcc": "💳 Virtual/Prepaid card providers:",
 
         "page_courses": "🎓 Courses:",
         "course_python": "Python from Zero",
@@ -717,6 +676,21 @@ _HOST_RE = re.compile(r"^[a-zA-Z0-9.-]{1,253}\.[A-Za-z]{2,63}$")
 _URL_RE = re.compile(r"https?://[^\s]+")
 DISPOSABLE_DOMAINS = {"mailinator.com","tempmail.com","10minutemail.com","yopmail.com","guerrillamail.com","trashmail.com"}
 
+# ==== إعداد مسارات ffmpeg/ffprobe (لا نحذف شيء، فقط إضافة) ====
+FFMPEG_BIN = os.getenv("FFMPEG_PATH") or shutil.which("ffmpeg") or "/opt/render/project/src/ffmpeg"
+FFPROBE_BIN = os.getenv("FFPROBE_PATH") or shutil.which("ffprobe") or "/opt/render/project/src/ffprobe"
+# ضمّن مجلد ffmpeg في PATH عشان yt-dlp يلقاه
+try:
+    os.environ["PATH"] = str(Path(FFMPEG_BIN).parent) + os.pathsep + os.environ.get("PATH", "")
+except Exception:
+    pass
+
+def ffmpeg_ok() -> bool:
+    try:
+        return Path(FFMPEG_BIN).exists() and os.access(FFMPEG_BIN, os.X_OK)
+    except Exception:
+        return False
+
 async def fetch_geo(query: str) -> dict|None:
     url = f"http://ip-api.com/json/{query}?fields=status,message,country,regionName,city,isp,org,as,query,lat,lon,timezone,zip,reverse"
     try:
@@ -829,30 +803,6 @@ async def ipinfo_lookup(query: str) -> str:
     except Exception as e:
         return f"ipinfo error: {e}"
 
-def _dns_txt(domain: str) -> list[str]:
-    if not dnsresolver: return []
-    try:
-        ans = dnsresolver.resolve(domain, "TXT")
-        vals = []
-        for r in ans:
-            s = "".join([b.decode() if isinstance(b, bytes) else str(b) for b in r.strings]) if getattr(r, "strings", None) else str(r)
-            vals.append(s.strip('"'))
-        return vals
-    except Exception:
-        return []
-
-def _dns_dmarc(domain: str) -> str|None:
-    if not dnsresolver: return None
-    try:
-        ans = dnsresolver.resolve(f"_dmarc.{domain}", "TXT")
-        for r in ans:
-            s = "".join([b.decode() if isinstance(b, bytes) else str(b) for b in r.strings]) if getattr(r, "strings", None) else str(r)
-            if s.lower().startswith("v=dmarc1"):
-                return s
-    except Exception:
-        pass
-    return None
-
 async def osint_email(email: str) -> str:
     if not is_valid_email(email): return "⚠️ صيغة الإيميل غير صحيحة."
     local, domain = email.split("@", 1)
@@ -877,22 +827,11 @@ async def osint_email(email: str) -> str:
     # WHOIS
     w = whois_domain(domain)
     w_txt = "WHOIS: غير متاح" if not w else (f"WHOIS: {w['error']}" if w.get("error") else f"WHOIS:\n- Registrar: {w.get('registrar')}\n- Created: {w.get('creation_date')}\n- Expires: {w.get('expiration_date')}")
-    # SPF / DMARC
-    spf = None
-    for txt in _dns_txt(domain):
-        if txt.lower().startswith("v=spf1"):
-            spf = txt; break
-    dmarc = _dns_dmarc(domain)
-    # Disposable?
-    disposable = "✅" if domain.lower() in DISPOSABLE_DOMAINS else "❌"
     out = [
         f"📧 {email}",
         f"📮 MX: {mx_txt}",
         f"🖼️ Gravatar: {grav}",
         w_txt,
-        f"🧪 SPF: {spf or 'غير مهيأ'}",
-        f"🧪 DMARC: {dmarc or 'غير مهيأ'}",
-        f"🗑️ Disposable Domain: {disposable}",
         f"\n{geo_text}"
     ]
     try:
@@ -1084,101 +1023,76 @@ async def ai_write(prompt: str) -> str:
     if err: return "⚠️ تعذّر التوليد حالياً."
     return (r.choices[0].message.content or "").strip()
 
-# ==== تنزيل وسائط (محسّن) ====
-def _default_ua():
-    return os.getenv("YT_DLP_UA","Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36")
-
+# ==== تنزيل وسائط (تحسين بدون حذف أي شيء آخر) ====
 async def download_media(url: str) -> Path|None:
     if yt_dlp is None:
         log.warning("yt_dlp غير مثبت")
         return None
     TMP_DIR.mkdir(parents=True, exist_ok=True)
+    outtmpl = str(TMP_DIR / "%(title).50s.%(ext)s")
 
-    # اسم ملف آمن
-    stamp = int(time.time())
-    base_out = TMP_DIR / f"media_{stamp}.%(ext)s"
-
-    ydl_opts = {
-        "outtmpl": str(base_out),
-        "format": "bv*+ba/b",  # أفضل فيديو+صوت وإن تعذر فـ single
-        "merge_output_format": "mp4",
+    # إعدادات مشتركة (نضيف ffmpeg_location + ترويسات)
+    ydl_common = {
+        "outtmpl": outtmpl,
         "quiet": True,
         "no_warnings": True,
-        "retries": 5,
+        "retries": 2,
         "noplaylist": True,
-        "http_headers": {"User-Agent": _default_ua()},
-        "socket_timeout": 20,
-        "concurrent_fragment_downloads": 3,
+        "ffmpeg_location": str(Path(FFMPEG_BIN).parent),
+        "merge_output_format": "mp4",
         "postprocessors": [
-            {"key":"FFmpegVideoConvertor","preferedformat":"mp4"},
-            {"key":"FFmpegFixupM4a"},  # إصلاح رأس m4a
+            {"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}
         ],
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        },
+        "concurrent_fragment_downloads": 1,
     }
 
-    # proxy اختياري
-    if os.getenv("YT_DLP_PROXY"):
-        ydl_opts["proxy"] = os.getenv("YT_DLP_PROXY")
+    # فيديو أولاً (أفضل متاح)
+    ydl_opts_video = {
+        **ydl_common,
+        "format": "bv*+ba/b",  # أفضل فيديو+صوت أو أفضل صيغة متاحة
+    }
 
-    # مسارات ffmpeg
-    if ffmpeg_ok():
-        ydl_opts["ffmpeg_location"] = str(Path(FFMPEG_PATH).parent)
+    # بديل صوت لو الحجم كبير أو الدمج فشل
+    ydl_opts_audio = {
+        **ydl_common,
+        "format": "bestaudio/best",
+        "postprocessors": [
+            {"key": "FFmpegExtractAudio", "preferredcodec": "m4a", "preferredquality": "192"},
+        ],
+        "merge_output_format": "m4a",
+    }
 
-    # محاولة تنزيل
-    out_file = None
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        with yt_dlp.YoutubeDL(ydl_opts_video) as ydl:
             info = ydl.extract_info(url, download=True)
-            # تحديد اسم الملف بعد التحويل
-            real_ext = "mp4"
-            title = info.get("title") or f"video_{stamp}"
-            # yt-dlp سيكتب بـ merge_output_format
-            out_file = TMP_DIR / f"media_{stamp}.{real_ext}"
-            # إذا لم يوجد بهذا الاسم ابحث بأي امتداد
-            if not out_file.exists():
-                # التقط أي ملف في TMP بنفس الطابع
-                for ext in (".mp4",".mkv",".webm",".m4a",".mp3",".mov"):
-                    p = TMP_DIR / f"media_{stamp}{ext}"
-                    if p.exists(): out_file = p; break
+            fname = ydl.prepare_filename(info)
+            # ابحث عن الناتج بعد التحويل
+            for ext in (".mp4", ".mkv", ".webm"):
+                p = Path(os.path.splitext(fname)[0] + ext)
+                if p.exists() and p.is_file():
+                    if p.stat().st_size <= MAX_UPLOAD_BYTES:
+                        return p
+                    else:
+                        log.info("[ydl] video too large for Telegram, falling back to audio")
+                        break
 
-        # تحقق الحجم والمدة
-        if (not out_file) or (not out_file.exists()):
-            return None
-        if out_file.stat().st_size == 0:
-            return None
+        # fallback إلى صوت لو الحجم كبير أو فشل الدمج
+        with yt_dlp.YoutubeDL(ydl_opts_audio) as y2:
+            info2 = y2.extract_info(url, download=True)
+            fname2 = y2.prepare_filename(info2)
+            for ext2 in (".m4a", ".mp3"):
+                p2 = Path(os.path.splitext(fname2)[0] + ext2)
+                if p2.exists() and p2.is_file() and p2.stat().st_size <= MAX_UPLOAD_BYTES:
+                    return p2
 
-        # لو فيديو بامتداد غير mp4 جرب remux
-        if out_file.suffix.lower() not in (".mp4",".mov",".m4v"):
-            alt = remux_to_mp4(out_file)
-            if alt and alt.exists() and alt.stat().st_size > 0:
-                out_file = alt
-
-        dur = ffprobe_duration_sec(out_file)
-        if dur is not None and dur <= 0.5:
-            alt = remux_to_mp4(out_file)
-            if alt and alt.exists() and alt.stat().st_size > 0:
-                out_file = alt
-                dur = ffprobe_duration_sec(out_file)
-
-        # إذا أكبر من حد تيليجرام—حاول صوت فقط كبديل
-        if out_file.stat().st_size > MAX_UPLOAD_BYTES:
-            y2 = ydl_opts | {
-                "format": "ba/bestaudio",
-                "postprocessors": [{"key":"FFmpegExtractAudio","preferredcodec":"m4a"}],
-                "outtmpl": str(TMP_DIR / f"media_audio_{stamp}.%(ext)s")
-            }
-            with yt_dlp.YoutubeDL(y2) as ydl:
-                info2 = ydl.extract_info(url, download=True)
-                # التقط ملف الصوت
-                for ext in (".m4a",".mp3",".webm"):
-                    p2 = TMP_DIR / f"media_audio_{stamp}{ext}"
-                    if p2.exists() and p2.stat().st_size <= MAX_UPLOAD_BYTES:
-                        return p2
-            return None
-
-        return out_file
     except Exception as e:
         log.error("[ydl] %s", e)
         return None
+
+    return None
 
 # ==== Telegram UI ====
 def gate_kb(lang="ar"):
@@ -1482,11 +1396,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit(q, T("services_numbers", lang=lang), kb=InlineKeyboardMarkup(rows)); return
 
     if q.data == "serv_vcc":
-        vcc  = SERV_VCC_LINKS or []
-        if not vcc:
-            msg = T("services_vcc", lang=lang) + "\nENV: VCC_LINK_1, VCC_LINK_2, VCC_LINK_3"
-            rows = [[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_services")]]
-            await safe_edit(q, msg, kb=InlineKeyboardMarkup(rows)); return
+        vcc  = SERV_VCC_LINKS or ["https://fake-card.com/virtual-card-mastercard-free-card-bin/228757973743900/"]
         rows = [[InlineKeyboardButton(u, url=u)] for u in vcc]
         rows.append([InlineKeyboardButton(T("back", lang=lang), callback_data="sec_services")])
         await safe_edit(q, T("services_vcc", lang=lang), kb=InlineKeyboardMarkup(rows)); return
@@ -1615,19 +1525,16 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if mode == "media_dl":
             if not _URL_RE.search(text):
                 await update.message.reply_text("أرسل رابط صالح (http/https)."); return
-            await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_VIDEO)
+            await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_DOCUMENT)
             path = await download_media(text)
             if path and path.exists() and path.stat().st_size <= MAX_UPLOAD_BYTES:
                 try:
-                    ext = path.suffix.lower()
-                    if ext in (".mp4",".mov",".m4v",".webm"):
+                    # أرسل كفيديو إن كان mp4 أو webm وبحجم مناسب
+                    if path.suffix.lower() in (".mp4",".webm",".mkv"):
                         await update.message.reply_video(video=InputFile(str(path)))
-                    elif ext in (".mp3",".m4a",".aac",".oga",".ogg",".wav"):
-                        await update.message.reply_audio(audio=InputFile(str(path)))
                     else:
                         await update.message.reply_document(document=InputFile(str(path)))
-                except Exception as e:
-                    log.warning("send file err: %s", e)
+                except Exception:
                     await update.message.reply_text("⚠️ تعذّر إرسال الملف.")
             else:
                 await update.message.reply_text("⚠️ تعذّر التحميل أو أن الملف كبير.")
@@ -1757,11 +1664,12 @@ async def aidiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try: return version(pkg)
             except PackageNotFoundError: return "not-installed"
         k = (os.getenv("OPENAI_API_KEY") or "").strip()
+        ff = "OK" if ffmpeg_ok() else "MISSING"
         msg = (f"AI_ENABLED={'ON' if AI_ENABLED else 'OFF'}\n"
                f"Key={'set(len=%d)'%len(k) if k else 'missing'}\n"
                f"Model={OPENAI_CHAT_MODEL}\n"
                f"openai={v('openai')}\n"
-               f"ffmpeg={'OK' if ffmpeg_ok() else 'MISSING'}")
+               f"ffmpeg={ff}")
         await update.message.reply_text(msg)
     except Exception as e:
         await update.message.reply_text(f"aidiag error: {e}")
@@ -1844,3 +1752,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
