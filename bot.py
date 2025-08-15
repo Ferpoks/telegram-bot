@@ -249,7 +249,7 @@ def _run_http_server():
 _run_http_server()
 
 # ==== i18n ====
-def T(lang: str, key: str, **kw) -> str:
+def T(key: str, lang: str | None = None, **kw) -> str:
     AR = {
         "start_pick_lang": "اختر لغتك:",
         "lang_ar": "العربية",
@@ -297,8 +297,8 @@ def T(lang: str, key: str, **kw) -> str:
         "downloader_desc": "أرسل رابط فيديو/صوت (يوتيوب/تويتر/انستغرام...).",
         "boost_desc": "روابط منصات زيادة المتابعين (استخدمها بمسؤولية).",
         "darkgpt_desc": "يفتح الرابط:",
-        "choose_lang_done": "✅ تم ضبط اللغة: {lang}",
-        "myinfo": "👤 اسمك: {name}\n🆔 معرفك: {uid}\n🌐 اللغة: {lang}",
+        "choose_lang_done": "✅ تم ضبط اللغة: {chosen}",
+        "myinfo": "👤 اسمك: {name}\n🆔 معرفك: {uid}\n🌐 اللغة: {lng}",
         "page_ai": "🤖 أدوات الذكاء الاصطناعي:\n- دردشة\n- كتابة\n- ترجمة\n- تحويل صوت لنص\n- صور AI",
         "page_security": "🛡️ الأمن:",
         "page_services": "🧰 خدمات:",
@@ -355,8 +355,8 @@ def T(lang: str, key: str, **kw) -> str:
         "downloader_desc": "Send video/audio link (YouTube/Twitter/Instagram...).",
         "boost_desc": "Follower growth sites (use responsibly).",
         "darkgpt_desc": "Opens:",
-        "choose_lang_done": "✅ Language set: {lang}",
-        "myinfo": "👤 Name: {name}\n🆔 ID: {uid}\n🌐 Lang: {lang}",
+        "choose_lang_done": "✅ Language set: {chosen}",
+        "myinfo": "👤 Name: {name}\n🆔 ID: {uid}\n🌐 Lang: {lng}",
         "page_ai": "🤖 AI Tools:\n- Chat\n- Writing\n- Translate\n- Speech-to-Text\n- Image Gen",
         "page_security": "🛡️ Security:",
         "page_services": "🧰 Services:",
@@ -366,6 +366,14 @@ def T(lang: str, key: str, **kw) -> str:
         "page_downloader": "⬇️ Downloader:",
         "page_boost": "📈 Followers:",
     }
+
+    # توافق للخلف مع النداءات القديمة: T("ar","hello") و T(lang, "key")
+    if key in ("ar", "en") and (lang is not None and lang not in ("ar", "en")):
+        key, lang = lang, key
+
+    if lang not in ("ar", "en"):
+        lang = "ar"
+
     D = AR if lang == "ar" else EN
     s = D.get(key, key)
     try:
@@ -695,7 +703,7 @@ async def urlscan_lookup(u: str) -> str:
     try:
         headers = {"API-Key": URLSCAN_API_KEY, "Content-Type": "application/json"}
         async with aiohttp.ClientSession() as s:
-            # طلب مسح جديد (يستغرق ثواني)، أو نستخدم البحث إن هو دومين فقط
+            # طلب مسح جديد (يستغرق ثواني)
             data = {"url": u, "visibility": "unlisted"}
             async with s.post("https://urlscan.io/api/v1/scan/", headers=headers, json=data, timeout=30) as r:
                 resp = await r.json(content_type=None)
@@ -902,13 +910,13 @@ def _chat_with_fallback(messages):
 
 def ai_chat_reply(prompt: str) -> str:
     if not AI_ENABLED or client is None:
-        return T("ar","ai_disabled")
+        return T("ai_disabled", lang="ar")
     try:
         r, err = _chat_with_fallback([
             {"role":"system","content":"أجب بالعربية أو الإنجليزية حسب لغة المستخدم بإيجاز ووضوح."},
             {"role":"user","content":prompt}
         ])
-        if err == "ai_disabled": return T("ar","ai_disabled")
+        if err == "ai_disabled": return T("ai_disabled", lang="ar")
         if err == "quota": return "⚠️ نفاد الرصيد."
         if err == "apikey": return "⚠️ مفتاح OpenAI غير صالح أو مفقود."
         if r is None: return "⚠️ تعذّر التنفيذ حالياً."
@@ -919,7 +927,7 @@ def ai_chat_reply(prompt: str) -> str:
 
 async def tts_whisper_from_file(filepath: str) -> str:
     if not AI_ENABLED or client is None:
-        return T("ar","ai_disabled")
+        return T("ai_disabled", lang="ar")
     try:
         with open(filepath, "rb") as f:
             resp = client.audio.transcriptions.create(model="whisper-1", file=f)
@@ -930,7 +938,7 @@ async def tts_whisper_from_file(filepath: str) -> str:
 
 async def translate_text(text: str, target_lang: str="ar") -> str:
     if not AI_ENABLED or client is None:
-        return T("ar","ai_disabled")
+        return T("ai_disabled", lang="ar")
     prompt = f"Translate the following into {target_lang}. Keep formatting:\n\n{text}"
     r, err = _chat_with_fallback([
         {"role":"system","content":"You are a high-quality translator. Preserve meaning and style."},
@@ -959,7 +967,7 @@ async def translate_image_file(path: str, target_lang: str="ar") -> str:
 
 async def ai_write(prompt: str) -> str:
     if not AI_ENABLED or client is None:
-        return T("ar","ai_disabled")
+        return T("ai_disabled", lang="ar")
     sysmsg = "اكتب نصًا عربيًا/إنجليزيًا إعلانيًا جذابًا ومختصرًا، مع عناوين قصيرة وCTA واضح."
     r, err = _chat_with_fallback([{"role":"system","content":sysmsg},{"role":"user","content":prompt}])
     if err: return "⚠️ تعذّر التوليد حالياً."
@@ -1009,39 +1017,39 @@ async def download_media(url: str) -> Path|None:
 def gate_kb(lang="ar"):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📣 " + ( "الانضمام للقناة" if lang=="ar" else "Join Channel"), url=MAIN_CHANNEL_LINK)],
-        [InlineKeyboardButton(T(lang,"verify"), callback_data="verify")]
+        [InlineKeyboardButton(T("verify", lang=lang), callback_data="verify")]
     ])
 
 def main_menu_kb(uid: int, lang="ar"):
     is_vip = (user_is_premium(uid) or uid == OWNER_ID)
     rows = [
-        [InlineKeyboardButton(T(lang,"btn_myinfo"), callback_data="myinfo")],
-        [InlineKeyboardButton(T(lang,"btn_lang"), callback_data="pick_lang")],
-        [InlineKeyboardButton(T(lang,"btn_vip"), callback_data="vip")],
-        [InlineKeyboardButton(T(lang,"btn_contact"), url=admin_button_url())],
-        [InlineKeyboardButton(T(lang,"btn_sections"), callback_data="sections")]
+        [InlineKeyboardButton(T("btn_myinfo", lang=lang), callback_data="myinfo")],
+        [InlineKeyboardButton(T("btn_lang", lang=lang), callback_data="pick_lang")],
+        [InlineKeyboardButton(T("btn_vip", lang=lang), callback_data="vip")],
+        [InlineKeyboardButton(T("btn_contact", lang=lang), url=admin_button_url())],
+        [InlineKeyboardButton(T("btn_sections", lang=lang), callback_data="sections")]
     ]
     return InlineKeyboardMarkup(rows)
 
 def sections_kb(lang="ar"):
     rows = [
-        [InlineKeyboardButton(T(lang,"sec_ai"), callback_data="sec_ai")],
-        [InlineKeyboardButton(T(lang,"sec_security"), callback_data="sec_security")],
-        [InlineKeyboardButton(T(lang,"sec_services"), callback_data="sec_services")],
-        [InlineKeyboardButton(T(lang,"sec_unban"), callback_data="sec_unban")],
-        [InlineKeyboardButton(T(lang,"sec_courses"), callback_data="sec_courses")],
-        [InlineKeyboardButton(T(lang,"sec_files"), callback_data="sec_files")],
-        [InlineKeyboardButton(T(lang,"sec_downloader"), callback_data="sec_downloader")],
-        [InlineKeyboardButton(T(lang,"sec_boost"), callback_data="sec_boost")],
-        [InlineKeyboardButton(T(lang,"sec_darkgpt"), url=DARK_GPT_URL)],
-        [InlineKeyboardButton(T(lang,"back"), callback_data="back_home")]
+        [InlineKeyboardButton(T("sec_ai", lang=lang), callback_data="sec_ai")],
+        [InlineKeyboardButton(T("sec_security", lang=lang), callback_data="sec_security")],
+        [InlineKeyboardButton(T("sec_services", lang=lang), callback_data="sec_services")],
+        [InlineKeyboardButton(T("sec_unban", lang=lang), callback_data="sec_unban")],
+        [InlineKeyboardButton(T("sec_courses", lang=lang), callback_data="sec_courses")],
+        [InlineKeyboardButton(T("sec_files", lang=lang), callback_data="sec_files")],
+        [InlineKeyboardButton(T("sec_downloader", lang=lang), callback_data="sec_downloader")],
+        [InlineKeyboardButton(T("sec_boost", lang=lang), callback_data="sec_boost")],
+        [InlineKeyboardButton(T("sec_darkgpt", lang=lang), url=DARK_GPT_URL)],
+        [InlineKeyboardButton(T("back", lang=lang), callback_data="back_home")]
     ]
     return InlineKeyboardMarkup(rows)
 
 def ai_stop_kb(lang="ar"):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔚 " + ( "إنهاء الدردشة" if lang=="ar" else "Stop Chat" ), callback_data="ai_stop")],
-        [InlineKeyboardButton(T(lang,"back"), callback_data="back_home")]
+        [InlineKeyboardButton(T("back", lang=lang), callback_data="back_home")]
     ])
 
 async def safe_edit(q, text=None, kb=None):
@@ -1117,26 +1125,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     init_db()
     uid = update.effective_user.id; chat_id = update.effective_chat.id
     u = user_get(uid)
-    lang = u.get("pref_lang","ar")
-
-    # أول مرة: اسأل اختيار اللغة
-    if not u.get("pref_lang"):
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(T(lang,"lang_ar"), callback_data="set_lang_ar"),
-             InlineKeyboardButton(T(lang,"lang_en"), callback_data="set_lang_en")]
-        ])
-        await context.bot.send_message(chat_id, T(lang,"start_pick_lang"), reply_markup=kb)
-        return
-
-    name = (update.effective_user.username and "@"+update.effective_user.username) or (update.effective_user.first_name or "صديقي")
-    greeting = T(lang,"hello_name", name=name)
-    await context.bot.send_message(chat_id, greeting, parse_mode="HTML", disable_web_page_preview=True)
-    await context.bot.send_message(chat_id, T(lang,"main_menu"), reply_markup=main_menu_kb(uid, lang))
+    # عند /start: نعرض اختيار اللغة دائمًا (ترتيب أفضل)
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(T("lang_ar", lang="ar"), callback_data="set_lang_ar"),
+         InlineKeyboardButton(T("lang_en", lang="ar"), callback_data="set_lang_en")]
+    ])
+    await context.bot.send_message(chat_id, T("start_pick_lang", lang=u.get("pref_lang","ar")), reply_markup=kb)
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     lang = user_get(uid).get("pref_lang","ar")
-    await update.message.reply_text(T(lang,"main_menu"), reply_markup=main_menu_kb(uid, lang))
+    await update.message.reply_text(T("main_menu", lang=lang), reply_markup=main_menu_kb(uid, lang))
 
 # ==== الأزرار ====
 ALLOWED_STATUSES = {ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR}
@@ -1189,19 +1188,22 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = user_get(uid); lang = u.get("pref_lang","ar")
     await q.answer()
 
-    # اختيار اللغة أول مرة
+    # اختيار اللغة
     if q.data in ("set_lang_ar","set_lang_en"):
         new = "ar" if q.data.endswith("_ar") else "en"
         prefs_set_lang(uid, new)
-        await safe_edit(q, T(new,"choose_lang_done", lang=("العربية" if new=="ar" else "English")), kb=main_menu_kb(uid, new))
+        name = (q.from_user.username and "@"+q.from_user.username) or (q.from_user.first_name or "صديقي")
+        greeting = T("hello_name", lang=new, name=name)
+        text = f"{greeting}\n\n{T('main_menu', lang=new)}"
+        await safe_edit(q, text, kb=main_menu_kb(uid, new))
         return
 
     # زر تغيير اللغة دائمًا
     if q.data == "pick_lang":
-        await safe_edit(q, T(lang,"start_pick_lang"), kb=InlineKeyboardMarkup([
-            [InlineKeyboardButton(T(lang,"lang_ar"), callback_data="set_lang_ar"),
-             InlineKeyboardButton(T(lang,"lang_en"), callback_data="set_lang_en")],
-            [InlineKeyboardButton(T(lang,"back"), callback_data="back_home")]
+        await safe_edit(q, T("start_pick_lang", lang=lang), kb=InlineKeyboardMarkup([
+            [InlineKeyboardButton(T("lang_ar", lang=lang), callback_data="set_lang_ar"),
+             InlineKeyboardButton(T("lang_en", lang=lang), callback_data="set_lang_en")],
+            [InlineKeyboardButton(T("back", lang=lang), callback_data="back_home")]
         ]))
         return
 
@@ -1209,36 +1211,36 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "verify":
         ok = await is_member(context, uid, force=True, retries=3, backoff=0.7)
         if ok:
-            await safe_edit(q, T(lang,"verify_done"), kb=main_menu_kb(uid, lang))
+            await safe_edit(q, T("verify_done", lang=lang), kb=main_menu_kb(uid, lang))
         else:
-            await safe_edit(q, T(lang,"not_verified") + "\n" + need_admin_text(lang), kb=gate_kb(lang))
+            await safe_edit(q, T("not_verified", lang=lang) + "\n" + need_admin_text(lang), kb=gate_kb(lang))
         return
 
     # صلاحية الانضمام قبل باقي الأقسام
     if not await must_be_member_or_vip(context, uid):
-        await safe_edit(q, T(lang,"must_join"), kb=gate_kb(lang)); return
+        await safe_edit(q, T("must_join", lang=lang), kb=gate_kb(lang)); return
 
     if q.data == "myinfo":
-        await safe_edit(q, T(lang,"myinfo", name=q.from_user.full_name, uid=uid, lang=lang.upper()), kb=main_menu_kb(uid, lang)); return
+        await safe_edit(q, T("myinfo", lang=lang, name=q.from_user.full_name, uid=uid, lng=lang.upper()), kb=main_menu_kb(uid, lang)); return
 
     if q.data == "back_home":
-        await safe_edit(q, T(lang,"main_menu"), kb=main_menu_kb(uid, lang)); return
+        await safe_edit(q, T("main_menu", lang=lang), kb=main_menu_kb(uid, lang)); return
 
     # VIP
     if q.data == "vip":
         if user_is_premium(uid) or uid == OWNER_ID:
-            await safe_edit(q, T(lang,"vip_status_on"), kb=main_menu_kb(uid, lang)); return
+            await safe_edit(q, T("vip_status_on", lang=lang), kb=main_menu_kb(uid, lang)); return
         ref = payments_create(uid, VIP_PRICE_SAR, "paylink")
         try:
             if USE_PAYLINK_API:
                 pay_url, _ = await paylink_create_invoice(ref, VIP_PRICE_SAR, q.from_user.full_name or "Telegram User")
             else:
                 pay_url = _build_pay_link(ref)
-            txt = T(lang,"vip_pay_title", price=VIP_PRICE_SAR) + "\n" + T(lang,"vip_ref", ref=ref)
+            txt = T("vip_pay_title", lang=lang, price=VIP_PRICE_SAR) + "\n" + T("vip_ref", lang=lang, ref=ref)
             await safe_edit(q, txt, kb=InlineKeyboardMarkup([
-                [InlineKeyboardButton(T(lang,"go_pay"), url=pay_url)],
-                [InlineKeyboardButton(T(lang,"check_pay"), callback_data=f"verify_pay_{ref}")],
-                [InlineKeyboardButton(T(lang,"back"), callback_data="back_home")]
+                [InlineKeyboardButton(T("go_pay", lang=lang), url=pay_url)],
+                [InlineKeyboardButton(T("check_pay", lang=lang), callback_data=f"verify_pay_{ref}")],
+                [InlineKeyboardButton(T("back", lang=lang), callback_data="back_home")]
             ]))
         except Exception as e:
             log.error("[upgrade] %s", e)
@@ -1249,57 +1251,57 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ref = q.data.replace("verify_pay_","")
         st = payments_status(ref)
         if st == "paid" or user_is_premium(uid):
-            await safe_edit(q, T(lang,"vip_status_on"), kb=main_menu_kb(uid, lang))
+            await safe_edit(q, T("vip_status_on", lang=lang), kb=main_menu_kb(uid, lang))
         else:
-            await safe_edit(q, T(lang,"not_verified")+"\n"+T(lang,"vip_ref",ref=ref), kb=InlineKeyboardMarkup([
-                [InlineKeyboardButton(T(lang,"check_pay"), callback_data=f"verify_pay_{ref}")],
-                [InlineKeyboardButton(T(lang,"back"), callback_data="back_home")]
+            await safe_edit(q, T("not_verified", lang=lang)+"\n"+T("vip_ref", lang=lang, ref=ref), kb=InlineKeyboardMarkup([
+                [InlineKeyboardButton(T("check_pay", lang=lang), callback_data=f"verify_pay_{ref}")],
+                [InlineKeyboardButton(T("back", lang=lang), callback_data="back_home")]
             ]))
         return
 
     # الأقسام
     if q.data == "sections":
-        await safe_edit(q, T(lang,"sections"), kb=sections_kb(lang)); return
+        await safe_edit(q, T("sections", lang=lang), kb=sections_kb(lang)); return
 
-    # الصفحات الفرعية (نص مختصر + نفس الرسالة)
+    # الصفحات الفرعية
     if q.data == "sec_ai":
-        await safe_edit(q, T(lang,"page_ai") + "\n\n" + T(lang,"choose_option"),
+        await safe_edit(q, T("page_ai", lang=lang) + "\n\n" + T("choose_option", lang=lang),
                         kb=InlineKeyboardMarkup([
                             [InlineKeyboardButton("🤖 Chat", callback_data="ai_chat")],
                             [InlineKeyboardButton("✍️ Writing", callback_data="ai_writer")],
                             [InlineKeyboardButton("🌐 Translate", callback_data="ai_translate")],
                             [InlineKeyboardButton("🎙️ STT", callback_data="ai_stt")],
                             [InlineKeyboardButton("🖼️ Image Gen", callback_data="ai_image")],
-                            [InlineKeyboardButton(T(lang,"back"), callback_data="sections")]
+                            [InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]
                         ])); return
 
     if q.data == "ai_chat":
         if not AI_ENABLED or client is None:
-            await safe_edit(q, T(lang,"ai_disabled"), kb=sections_kb(lang)); return
+            await safe_edit(q, T("ai_disabled", lang=lang), kb=sections_kb(lang)); return
         ai_set_mode(uid, "ai_chat")
-        await safe_edit(q, T(lang,"ai_chat_on"), kb=ai_stop_kb(lang)); return
+        await safe_edit(q, T("ai_chat_on", lang=lang), kb=ai_stop_kb(lang)); return
     if q.data == "ai_stop":
         ai_set_mode(uid, None)
-        await safe_edit(q, T(lang,"ai_chat_off"), kb=sections_kb(lang)); return
+        await safe_edit(q, T("ai_chat_off", lang=lang), kb=sections_kb(lang)); return
     if q.data == "ai_writer":
         ai_set_mode(uid, "writer")
-        await safe_edit(q, T(lang,"send_text"), kb=ai_stop_kb(lang)); return
+        await safe_edit(q, T("send_text", lang=lang), kb=ai_stop_kb(lang)); return
     if q.data == "ai_translate":
         ai_set_mode(uid, "translate", {"to": "ar" if lang=="ar" else "en"})
-        await safe_edit(q, T(lang,"send_text"), kb=ai_stop_kb(lang)); return
+        await safe_edit(q, T("send_text", lang=lang), kb=ai_stop_kb(lang)); return
     if q.data == "ai_stt":
         ai_set_mode(uid, "stt")
-        await safe_edit(q, T(lang,"send_text"), kb=ai_stop_kb(lang)); return
+        await safe_edit(q, T("send_text", lang=lang), kb=ai_stop_kb(lang)); return
     if q.data == "ai_image":
         ai_set_mode(uid, "image_ai")
-        await safe_edit(q, T(lang,"send_text"), kb=ai_stop_kb(lang)); return
+        await safe_edit(q, T("send_text", lang=lang), kb=ai_stop_kb(lang)); return
 
     if q.data == "sec_security":
-        await safe_edit(q, T(lang,"security_desc"), kb=InlineKeyboardMarkup([
+        await safe_edit(q, T("security_desc", lang=lang), kb=InlineKeyboardMarkup([
             [InlineKeyboardButton("🔗 URL Scan", callback_data="sec_security_url")],
             [InlineKeyboardButton("📧 Email Check", callback_data="sec_security_email")],
             [InlineKeyboardButton("🛰️ IP/Domain Geo", callback_data="sec_security_geo")],
-            [InlineKeyboardButton(T(lang,"back"), callback_data="sections")]
+            [InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]
         ])); return
 
     if q.data == "sec_security_url":
@@ -1310,19 +1312,18 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ai_set_mode(uid, "geo_ip"); await safe_edit(q, "📍 أرسل IP أو دومين.", kb=ai_stop_kb(lang)); return
 
     if q.data == "sec_services":
-        # روابط من البيئة
         nums = SERV_NUMBERS_LINKS or ["https://5sim.net","https://sms-activate.org"]
         vcc  = SERV_VCC_LINKS or ["https://wise.com","https://privacy.com"]
-        txt = T(lang,"services_desc") + "\n\n" + "Numbers:\n" + "\n".join(nums) + "\n\nVCC:\n" + "\n".join(vcc) + "\n\n(استخدم خدمات قانونية فقط)"
-        await safe_edit(q, txt, kb=InlineKeyboardMarkup([[InlineKeyboardButton(T(lang,"back"), callback_data="sections")]])); return
+        txt = T("services_desc", lang=lang) + "\n\n" + "Numbers:\n" + "\n".join(nums) + "\n\nVCC:\n" + "\n".join(vcc) + "\n\n(استخدم خدمات قانونية فقط)"
+        await safe_edit(q, txt, kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]])); return
 
     if q.data == "sec_unban":
-        await safe_edit(q, T(lang,"unban_desc"), kb=InlineKeyboardMarkup([
+        await safe_edit(q, T("unban_desc", lang=lang), kb=InlineKeyboardMarkup([
             [InlineKeyboardButton("Instagram", callback_data="unban_instagram")],
             [InlineKeyboardButton("Facebook", callback_data="unban_facebook")],
             [InlineKeyboardButton("Telegram", callback_data="unban_telegram")],
             [InlineKeyboardButton("Epic Games", callback_data="unban_epic")],
-            [InlineKeyboardButton(T(lang,"back"), callback_data="sections")]
+            [InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]
         ])); return
 
     if q.data.startswith("unban_"):
@@ -1330,47 +1331,46 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = UNBAN_TEMPLATES.get(key,"")
         link = UNBAN_LINKS.get(key,"")
         await safe_edit(q, f"📋 Message:\n<code>{msg}</code>\n\n🔗 {link}", kb=InlineKeyboardMarkup([
-            [InlineKeyboardButton(T(lang,"back"), callback_data="sec_unban")]
+            [InlineKeyboardButton(T("back", lang=lang), callback_data="sec_unban")]
         ])); return
 
     if q.data == "sec_courses":
-        # حط روابطك أنت هنا
         courses = [
             ("Python from Zero", os.getenv("COURSE_PYTHON_URL","https://example.com/python")),
             ("Cybersecurity from Zero", os.getenv("COURSE_CYBER_URL","https://example.com/cyber")),
             ("Ethical Hacking", os.getenv("COURSE_EH_URL","https://example.com/eh")),
         ]
         rows = [[InlineKeyboardButton(title, url=url)] for title,url in courses]
-        rows.append([InlineKeyboardButton(T(lang,"back"), callback_data="sections")])
-        await safe_edit(q, T(lang,"courses_desc"), kb=InlineKeyboardMarkup(rows)); return
+        rows.append([InlineKeyboardButton(T("back", lang=lang), callback_data="sections")])
+        await safe_edit(q, T("courses_desc", lang=lang), kb=InlineKeyboardMarkup(rows)); return
 
     if q.data == "sec_files":
-        await safe_edit(q, T(lang,"files_desc"), kb=InlineKeyboardMarkup([
+        await safe_edit(q, T("files_desc", lang=lang), kb=InlineKeyboardMarkup([
             [InlineKeyboardButton("JPG → PDF", callback_data="file_jpg2pdf")],
             [InlineKeyboardButton("PDF → Word", callback_data="file_pdf2word")],
             [InlineKeyboardButton("Word → PDF", callback_data="file_word2pdf")],
-            [InlineKeyboardButton(T(lang,"back"), callback_data="sections")]
+            [InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]
         ])); return
 
     if q.data == "file_jpg2pdf":
         ai_set_mode(uid, "file_img_to_pdf", {"paths":[]})
-        await safe_edit(q, "📌 أرسل صورة واحدة أو أكثر وسأحوّلها إلى PDF. ثم اضغط /makepdf", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T(lang,"back"), callback_data="sec_files")]])); return
+        await safe_edit(q, "📌 أرسل صورة واحدة أو أكثر وسأحوّلها إلى PDF. ثم اضغط /makepdf", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
     if q.data == "file_pdf2word":
         ai_set_mode(uid, "file_pdf2word")
-        await safe_edit(q, "📌 أرسل ملف PDF وسيتم تحويله إلى Word (باستخدام PDF.co عند وجود المفتاح).", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T(lang,"back"), callback_data="sec_files")]])); return
+        await safe_edit(q, "📌 أرسل ملف PDF وسيتم تحويله إلى Word (باستخدام PDF.co عند وجود المفتاح).", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
     if q.data == "file_word2pdf":
         ai_set_mode(uid, "file_word2pdf")
-        await safe_edit(q, "📌 أرسل ملف DOC أو DOCX وسيُحوّل إلى PDF (PDF.co).", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T(lang,"back"), callback_data="sec_files")]])); return
+        await safe_edit(q, "📌 أرسل ملف DOC أو DOCX وسيُحوّل إلى PDF (PDF.co).", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
 
     if q.data == "sec_downloader":
         ai_set_mode(uid, "media_dl")
-        await safe_edit(q, T(lang,"downloader_desc"), kb=InlineKeyboardMarkup([[InlineKeyboardButton(T(lang,"back"), callback_data="sections")]])); return
+        await safe_edit(q, T("downloader_desc", lang=lang), kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]])); return
 
     if q.data == "sec_boost":
         links = FOLLOWERS_LINKS or ["https://example.com/boost1","https://example.com/boost2","https://example.com/boost3"]
         rows = [[InlineKeyboardButton(f"🔗 {i+1}", url=links[i])] for i in range(len(links))]
-        rows.append([InlineKeyboardButton(T(lang,"back"), callback_data="sections")])
-        await safe_edit(q, T(lang,"boost_desc"), kb=InlineKeyboardMarkup(rows)); return
+        rows.append([InlineKeyboardButton(T("back", lang=lang), callback_data="sections")])
+        await safe_edit(q, T("boost_desc", lang=lang), kb=InlineKeyboardMarkup(rows)); return
 
 # ==== تنزيل ملف من تيليجرام ====
 async def tg_download_to_path(bot, file_id: str, suffix: str = "") -> Path:
@@ -1405,7 +1405,7 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = u.get("pref_lang","ar")
 
     if not await must_be_member_or_vip(context, uid):
-        await update.message.reply_text(T(lang,"gate_join"), reply_markup=gate_kb(lang)); return
+        await update.message.reply_text(T("gate_join", lang=lang), reply_markup=gate_kb(lang)); return
 
     mode, extra = ai_get_mode(uid)
     msg = update.message
@@ -1512,7 +1512,7 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # بدون وضع مفعّل: رجّع القائمة
     if not mode:
-        await update.message.reply_text(T(lang,"main_menu"), reply_markup=main_menu_kb(uid, lang))
+        await update.message.reply_text(T("main_menu", lang=lang), reply_markup=main_menu_kb(uid, lang))
 
 # ==== أوامر إضافية ====
 async def makepdf_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1597,7 +1597,7 @@ async def libdiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"libdiag error: {e}")
 
-async def paylist(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def paylist(update: Update, ContextTypes=ContextTypes):
     if update.effective_user.id != OWNER_ID: return
     rows = payments_last(15)
     if not rows:
@@ -1657,7 +1657,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
 
 
