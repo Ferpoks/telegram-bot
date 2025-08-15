@@ -133,7 +133,7 @@ SERV_VCC_LINKS = [
     ] if u
 ]
 
-# الدورات (عناوين تُعرّب تلقائيًا)
+# الدورات (إن كانت روابط S3 مؤقتة يفضّل لاحقًا رفعها كـ file_id)
 COURSE_PYTHON_URL = os.getenv("COURSE_PYTHON_URL","https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/Y8WctvBLiA6u6AASeZX2IUfDQAolTJ4QFGx9WRCu.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250815%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250815T021202Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=b7e556dd4c8a23f56f5e7cba1a29eadb6c48fa7c0656f463d47a64cd10ebfa81")
 COURSE_CYBER_URL  = os.getenv("COURSE_CYBER_URL","https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/pZ0spOmm1K0dA2qAzUuWUb4CcMMjUPTbn7WMRwAc.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250815%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250815T021253Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=bc11797f9de3cb6f391937936f73f8f2acded12a7d665c5d82e453241dea50c9")
 COURSE_EH_URL     = os.getenv("COURSE_EH_URL","https://www.mediafire.com/folder/r26pp5mpduvnx/%D8%AF%D9%88%D8%B1%D8%A9_%D8%A7%D9%84%D9%87%D8%A7%D9%83%D8%B1_%D8%A7%D9%84%D8%A7%D8%AE%D9%84%D8%A7%D9%82%D9%8A_%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D8%B1%D8%AD%D9%85%D9%86_%D9%88%D8%B5%D9%81%D9%8A")
@@ -294,18 +294,26 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "check_pay": "✅ تحقّق الدفع",
         "ai_chat_on": "🤖 وضع الدردشة مفعّل. أرسل سؤالك الآن.",
         "ai_chat_off": "🔚 تم إنهاء وضع الذكاء الاصطناعي.",
-        "security_desc": "أرسل رابط/دومين/إيميل للفحص. (urlscan, kickbox, ipinfo) – يتطلب مفاتيح.",
-        "services_desc": "اختر خدمة:",
-        "files_desc": "تحويلات ملفات: JPG→PDF (محلي)، و PDF↔Word عبر PDF.co إن وُجد المفتاح.",
-        "unban_desc": "قوالب جاهزة ورسائل دعم للمنصات.",
-        "courses_desc": "دورات مختارة بروابط مباشرة.",
-        "downloader_desc": "أرسل رابط فيديو/صوت (يوتيوب/تويتر/انستغرام...).",
-        "boost_desc": "روابط منصات زيادة المتابعين (استخدمها بمسؤولية).",
-        "darkgpt_desc": "يفتح الرابط:",
-        "choose_lang_done": "✅ تم ضبط اللغة: {chosen}",
-        "myinfo": "👤 اسمك: {name}\n🆔 معرفك: {uid}\n🌐 اللغة: {lng}",
 
-        # صفحات داخلية مع أزرار ملوّنة باللغة المختارة
+        # الأمن
+        "security_desc": "أرسل رابط/دومين/إيميل للفحص. (urlscan, kickbox, ipinfo) – يتطلب مفاتيح.",
+        "page_security": "🛡️ الأمن:",
+        "btn_urlscan": "🔗 فحص رابط",
+        "btn_emailcheck": "📧 فحص إيميل",
+        "btn_geolookup": "🛰️ موقع IP/دومين",
+        "send_url_scan": "🛡️ أرسل الرابط للفحص.",
+        "send_email_check": "✉️ أرسل الإيميل للفحص.",
+        "send_ip_or_domain": "📍 أرسل IP أو دومين.",
+
+        # الخدمات
+        "page_services": "🧰 خدمات:",
+        "btn_numbers": "📱 أرقام مؤقتة",
+        "btn_vcc": "💳 فيزا افتراضية",
+        "services_desc": "اختر خدمة:",
+        "services_numbers": "📱 الأرقام المؤقتة (استخدمها بمسؤولية):",
+        "services_vcc": "💳 بطاقات/فيزا افتراضية (قانونية):",
+
+        # AI
         "page_ai": "🤖 أدوات الذكاء الاصطناعي:",
         "btn_ai_chat": "🤖 دردشة",
         "btn_ai_write": "✍️ كتابة",
@@ -313,30 +321,46 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "btn_ai_stt": "🎙️ تحويل صوت لنص",
         "btn_ai_image": "🖼️ توليد صور",
 
-        "page_security": "🛡️ الأمن:",
-        "btn_urlscan": "🔗 فحص رابط",
-        "btn_emailcheck": "📧 فحص إيميل",
-        "btn_geolookup": "🛰️ موقع IP/دومين",
-
-        "page_services": "🧰 خدمات:",
-        "btn_numbers": "📱 أرقام مؤقتة",
-        "btn_vcc": "💳 فيزا افتراضية",
-        "services_numbers": "📱 الأرقام المؤقتة (استخدمها بمسؤولية):",
-        "services_vcc": "💳 بطاقات/فيزا افتراضية (قانونية):",
-
+        # الدورات
         "page_courses": "🎓 الدورات:",
         "course_python": "بايثون من الصفر",
         "course_cyber": "الأمن السيبراني من الصفر",
         "course_eh": "الهكر الأخلاقي",
         "course_ecom": "التجارة الإلكترونية",
 
+        # الملفات
         "page_files": "🗂️ أدوات الملفات:",
+        "files_desc": "تحويلات ملفات: JPG→PDF (محلي)، و PDF↔Word عبر PDF.co إن وُجد المفتاح.",
         "btn_jpg2pdf": "JPG → PDF",
         "btn_pdf2word": "PDF → Word",
         "btn_word2pdf": "Word → PDF",
+        "prompt_img2pdf": "📌 أرسل صورة واحدة أو أكثر وسأحوّلها إلى PDF. ثم اضغط /makepdf",
+        "prompt_pdf2word": "📌 أرسل ملف PDF وسيتم تحويله إلى Word (باستخدام PDF.co عند وجود المفتاح).",
+        "prompt_word2pdf": "📌 أرسل ملف DOC أو DOCX وسيُحوّل إلى PDF (PDF.co).",
+        "img_added_count": "✅ تم إضافة صورة/ملف ({n}). أرسل /makepdf للإخراج أو أرسل صورًا إضافية.",
+        "makepdf_needed": "هذه الأداة تعمل بعد اختيار (JPG → PDF) من الأقسام.",
+        "makepdf_no_images": "لم يتم استلام أي صور بعد. أرسل صورًا ثم /makepdf.",
+        "makepdf_failed": "⚠️ فشل إنشاء PDF أو الحجم كبير.",
 
+        # التنزيل/الرشق/Dark GPT
         "page_downloader": "⬇️ تنزيل الفيديو:",
+        "downloader_desc": "أرسل رابط فيديو/صوت (يوتيوب/تويتر/انستغرام...).",
         "page_boost": "📈 رشق متابعين:",
+        "boost_desc": "روابط منصات زيادة المتابعين (استخدمها بمسؤولية).",
+        "darkgpt_desc": "يفتح الرابط:",
+
+        # رسائل متفرقة
+        "choose_lang_done": "✅ تم ضبط اللغة: {chosen}",
+        "myinfo": "👤 اسمك: {name}\n🆔 معرفك: {uid}\n🌐 اللغة: {lng}",
+        "valid_url_required": "أرسل رابط صالح (http/https).",
+        "doc_send_fail": "⚠️ تعذّر إرسال الملف.",
+        "download_fail_too_big": "⚠️ تعذّر التحميل أو أن الملف كبير.",
+        "img_gen_fail": "⚠️ تعذّر توليد الصورة.",
+        "pdf2word_need_key": "⚠️ تحتاج PDFCO_API_KEY لتفعيل PDF → Word.",
+        "word2pdf_need_key": "⚠️ تحتاج PDFCO_API_KEY لتفعيل Word → PDF.",
+        "pdf2word_fail": "⚠️ فشل التحويل (PDF → Word).",
+        "word2pdf_fail": "⚠️ فشل التحويل (Word → PDF).",
+        "pay_create_fail": "تعذّر إنشاء/فتح رابط الدفع حالياً."
     }
     EN = {
         "start_pick_lang": "Pick your language:",
@@ -375,17 +399,28 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "vip_ref": "🔖 Your reference: <code>{ref}</code>",
         "go_pay": "🚀 Go to payment",
         "check_pay": "✅ Verify payment",
-        "security_desc": "Send URL/domain/email to check (urlscan, kickbox, ipinfo) – needs API keys.",
-        "services_desc": "Pick a service:",
-        "files_desc": "File conversions: JPG→PDF (local), PDF↔Word via PDF.co if key set.",
-        "unban_desc": "Ready-made support templates & links.",
-        "courses_desc": "Curated courses (links).",
-        "downloader_desc": "Send video/audio link (YouTube/Twitter/Instagram...).",
-        "boost_desc": "Follower growth sites (use responsibly).",
-        "darkgpt_desc": "Opens:",
-        "choose_lang_done": "✅ Language set: {chosen}",
-        "myinfo": "👤 Name: {name}\n🆔 ID: {uid}\n🌐 Lang: {lng}",
+        "ai_chat_on": "🤖 Chat mode enabled. Send your question.",
+        "ai_chat_off": "🔚 AI chat disabled.",
 
+        # Security
+        "security_desc": "Send URL/domain/email to check (urlscan, kickbox, ipinfo) – needs API keys.",
+        "page_security": "🛡️ Security:",
+        "btn_urlscan": "🔗 URL Scan",
+        "btn_emailcheck": "📧 Email Check",
+        "btn_geolookup": "🛰️ IP/Domain Geo",
+        "send_url_scan": "🛡️ Send the link to scan.",
+        "send_email_check": "✉️ Send the email to verify.",
+        "send_ip_or_domain": "📍 Send an IP or a domain.",
+
+        # Services
+        "page_services": "🧰 Services:",
+        "btn_numbers": "📱 Temporary Numbers",
+        "btn_vcc": "💳 Virtual Card",
+        "services_desc": "Pick a service:",
+        "services_numbers": "📱 Temporary numbers (use responsibly):",
+        "services_vcc": "💳 Virtual/Prepaid card providers:",
+
+        # AI
         "page_ai": "🤖 AI Tools:",
         "btn_ai_chat": "🤖 Chat",
         "btn_ai_write": "✍️ Writing",
@@ -393,33 +428,49 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "btn_ai_stt": "🎙️ Speech-to-Text",
         "btn_ai_image": "🖼️ Image Gen",
 
-        "page_security": "🛡️ Security:",
-        "btn_urlscan": "🔗 URL Scan",
-        "btn_emailcheck": "📧 Email Check",
-        "btn_geolookup": "🛰️ IP/Domain Geo",
-
-        "page_services": "🧰 Services:",
-        "btn_numbers": "📱 Temporary Numbers",
-        "btn_vcc": "💳 Virtual Card",
-        "services_numbers": "📱 Temporary numbers (use responsibly):",
-        "services_vcc": "💳 Virtual/Prepaid card providers:",
-
+        # Courses
         "page_courses": "🎓 Courses:",
         "course_python": "Python from Zero",
         "course_cyber": "Cybersecurity from Zero",
         "course_eh": "Ethical Hacking",
         "course_ecom": "E-commerce",
 
+        # Files
         "page_files": "🗂️ File Tools:",
+        "files_desc": "File conversions: JPG→PDF (local), PDF↔Word via PDF.co if key set.",
         "btn_jpg2pdf": "JPG → PDF",
         "btn_pdf2word": "PDF → Word",
         "btn_word2pdf": "Word → PDF",
+        "prompt_img2pdf": "📌 Send one or more images and I’ll convert to PDF. Then press /makepdf",
+        "prompt_pdf2word": "📌 Send a PDF and I’ll convert it to Word (via PDF.co if key is set).",
+        "prompt_word2pdf": "📌 Send a DOC/DOCX and I’ll convert it to PDF (PDF.co).",
+        "img_added_count": "✅ Image/file added ({n}). Send /makepdf to export, or send more images.",
+        "makepdf_needed": "This tool works after choosing (JPG → PDF) from Sections.",
+        "makepdf_no_images": "No images received yet. Send images then /makepdf.",
+        "makepdf_failed": "⚠️ Failed to create PDF or file is too large.",
 
+        # Downloader / Boost / DarkGPT
         "page_downloader": "⬇️ Downloader:",
+        "downloader_desc": "Send a video/audio link (YouTube/Twitter/Instagram...).",
         "page_boost": "📈 Followers:",
+        "boost_desc": "Follower growth sites (use responsibly).",
+        "darkgpt_desc": "Opens:",
+
+        # Misc messages
+        "choose_lang_done": "✅ Language set: {chosen}",
+        "myinfo": "👤 Name: {name}\n🆔 ID: {uid}\n🌐 Lang: {lng}",
+        "valid_url_required": "Please send a valid http/https URL.",
+        "doc_send_fail": "⚠️ Failed to send the file.",
+        "download_fail_too_big": "⚠️ Download failed or file is too large.",
+        "img_gen_fail": "⚠️ Failed to generate the image.",
+        "pdf2word_need_key": "⚠️ You need PDFCO_API_KEY to enable PDF → Word.",
+        "word2pdf_need_key": "⚠️ You need PDFCO_API_KEY to enable Word → PDF.",
+        "pdf2word_fail": "⚠️ Conversion failed (PDF → Word).",
+        "word2pdf_fail": "⚠️ Conversion failed (Word → PDF).",
+        "pay_create_fail": "Couldn’t create/open a payment link right now."
     }
 
-    # توافق نداءات قديمة: T("ar","key")
+    # توافق نداءات قديمة: T("ar","key") أو T("en","key")
     if key in ("ar", "en") and (lang is not None and lang not in ("ar", "en")):
         key, lang = lang, key
     if lang not in ("ar","en"):
@@ -896,9 +947,9 @@ async def replicate_image_generate(prompt: str) -> bytes|None:
             pred_url = pred.get("urls",{}).get("get")
             for _ in range(40):
                 await asyncio.sleep(2)
-                async with aiohttp.ClientSession() as s:
-                    async with s.get(pred_url, headers=headers, timeout=30) as r:
-                        cur = await r.json()
+                async with aiohttp.ClientSession() as s2:
+                    async with s2.get(pred_url, headers=headers, timeout=30) as r2:
+                        cur = await r2.json()
                 if cur.get("status") in ("succeeded","failed","canceled"):
                     pred = cur; break
             if pred.get("status") != "succeeded":
@@ -908,9 +959,9 @@ async def replicate_image_generate(prompt: str) -> bytes|None:
             if not outputs:
                 return None
             img_url = outputs[0]
-            async with aiohttp.ClientSession() as s:
-                async with s.get(img_url, timeout=60) as r:
-                    return await r.read()
+            async with aiohttp.ClientSession() as s3:
+                async with s3.get(img_url, timeout=60) as r3:
+                    return await r3.read()
     except Exception as e:
         log.error("[replicate] %s", e)
         return None
@@ -1149,6 +1200,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     init_db()
     uid = update.effective_user.id; chat_id = update.effective_chat.id
     u = user_get(uid)
+    # دائماً نعرض اختيار اللغة أولاً (رسالة واحدة)، وبعد الاختيار نفس الرسالة تتحوّل للترحيب + القائمة
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton(T("lang_ar", lang="ar"), callback_data="set_lang_ar"),
          InlineKeyboardButton(T("lang_en", lang="ar"), callback_data="set_lang_en")]
@@ -1266,7 +1318,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]))
         except Exception as e:
             log.error("[upgrade] %s", e)
-            await safe_edit(q, "تعذّر إنشاء/فتح رابط الدفع حالياً.", kb=main_menu_kb(uid, lang))
+            await safe_edit(q, T("pay_create_fail", lang=lang), kb=main_menu_kb(uid, lang))
         return
 
     if q.data.startswith("verify_pay_"):
@@ -1328,15 +1380,15 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ])); return
 
     if q.data == "sec_security_url":
-        ai_set_mode(uid, "link_scan"); await safe_edit(q, "🛡️ أرسل الرابط للفحص.", kb=ai_stop_kb(lang)); return
+        ai_set_mode(uid, "link_scan"); await safe_edit(q, T("send_url_scan", lang=lang), kb=ai_stop_kb(lang)); return
     if q.data == "sec_security_email":
-        ai_set_mode(uid, "email_check"); await safe_edit(q, "✉️ أرسل الإيميل للفحص.", kb=ai_stop_kb(lang)); return
+        ai_set_mode(uid, "email_check"); await safe_edit(q, T("send_email_check", lang=lang), kb=ai_stop_kb(lang)); return
     if q.data == "sec_security_geo":
-        ai_set_mode(uid, "geo_ip"); await safe_edit(q, "📍 أرسل IP أو دومين.", kb=ai_stop_kb(lang)); return
+        ai_set_mode(uid, "geo_ip"); await safe_edit(q, T("send_ip_or_domain", lang=lang), kb=ai_stop_kb(lang)); return
 
     # الخدمات (قائمتان داخليًا)
     if q.data == "sec_services":
-        await safe_edit(q, T("page_services", lang=lang) + "\n\n" + T("choose_option", lang=lang),
+        await safe_edit(q, T("page_services", lang=lang) + "\n\n" + T("services_desc", lang=lang),
                         kb=InlineKeyboardMarkup([
                             [InlineKeyboardButton(T("btn_numbers", lang=lang), callback_data="serv_numbers")],
                             [InlineKeyboardButton(T("btn_vcc", lang=lang), callback_data="serv_vcc")],
@@ -1396,13 +1448,13 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if q.data == "file_jpg2pdf":
         ai_set_mode(uid, "file_img_to_pdf", {"paths":[]})
-        await safe_edit(q, "📌 أرسل صورة واحدة أو أكثر وسأحوّلها إلى PDF. ثم اضغط /makepdf", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
+        await safe_edit(q, T("prompt_img2pdf", lang=lang), kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
     if q.data == "file_pdf2word":
         ai_set_mode(uid, "file_pdf2word")
-        await safe_edit(q, "📌 أرسل ملف PDF وسيتم تحويله إلى Word (باستخدام PDF.co عند وجود المفتاح).", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
+        await safe_edit(q, T("prompt_pdf2word", lang=lang), kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
     if q.data == "file_word2pdf":
         ai_set_mode(uid, "file_word2pdf")
-        await safe_edit(q, "📌 أرسل ملف DOC أو DOCX وسيُحوّل إلى PDF (PDF.co).", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
+        await safe_edit(q, T("prompt_word2pdf", lang=lang), kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
 
     # تنزيل الفيديو
     if q.data == "sec_downloader":
@@ -1478,16 +1530,16 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(fmt_geo(data), parse_mode="HTML"); return
         if mode == "media_dl":
             if not _URL_RE.search(text):
-                await update.message.reply_text("أرسل رابط صالح (http/https)."); return
+                await update.message.reply_text(T("valid_url_required", lang=lang)); return
             await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_DOCUMENT)
             path = await download_media(text)
             if path and path.exists() and path.stat().st_size <= MAX_UPLOAD_BYTES:
                 try:
                     await update.message.reply_document(document=InputFile(str(path)))
                 except Exception:
-                    await update.message.reply_text("⚠️ تعذّر إرسال الملف.")
+                    await update.message.reply_text(T("doc_send_fail", lang=lang))
             else:
-                await update.message.reply_text("⚠️ تعذّر التحميل أو أن الملف كبير.")
+                await update.message.reply_text(T("download_fail_too_big", lang=lang))
             return
         if mode == "image_ai":
             prompt = text
@@ -1497,7 +1549,7 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 bio = BytesIO(img_bytes); bio.name = "ai.png"
                 await update.message.reply_photo(photo=InputFile(bio))
             else:
-                await update.message.reply_text("⚠️ تعذّر توليد الصورة.")
+                await update.message.reply_text(T("img_gen_fail", lang=lang))
             return
 
     # ملفات/صوت/صور
@@ -1518,7 +1570,7 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             st_paths = (extra or {}).get("paths", [])
             st_paths.append(str(p))
             ai_set_mode(uid, "file_img_to_pdf", {"paths": st_paths})
-            await update.message.reply_text(f"✅ تم إضافة صورة ({len(st_paths)}). أرسل /makepdf للإخراج أو أرسل صورًا إضافية.")
+            await update.message.reply_text(T("img_added_count", lang=lang, n=len(st_paths)))
             return
 
     if msg.document:
@@ -1527,11 +1579,11 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             st_paths = (extra or {}).get("paths", [])
             st_paths.append(str(p))
             ai_set_mode(uid, "file_img_to_pdf", {"paths": st_paths})
-            await update.message.reply_text(f"✅ تم إضافة ملف صورة ({len(st_paths)}). أرسل /makepdf للإخراج أو أرسل صورًا إضافية.")
+            await update.message.reply_text(T("img_added_count", lang=lang, n=len(st_paths)))
             return
         if mode == "file_pdf2word":
             if not PDFCO_API_KEY:
-                await update.message.reply_text("⚠️ تحتاج PDFCO_API_KEY لتفعيل PDF → Word."); return
+                await update.message.reply_text(T("pdf2word_need_key", lang=lang)); return
             with open(p, "rb") as f: data = f.read()
             out = await pdfco_convert("pdf/convert/to/doc", data, "convert.doc")
             if out:
@@ -1539,11 +1591,11 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 path.write_bytes(out)
                 await update.message.reply_document(InputFile(str(path)))
             else:
-                await update.message.reply_text("⚠️ فشل التحويل (PDF → Word).")
+                await update.message.reply_text(T("pdf2word_fail", lang=lang))
             return
         if mode == "file_word2pdf":
             if not PDFCO_API_KEY:
-                await update.message.reply_text("⚠️ تحتاج PDFCO_API_KEY لتفعيل Word → PDF."); return
+                await update.message.reply_text(T("word2pdf_need_key", lang=lang)); return
             with open(p, "rb") as f: data = f.read()
             out = await pdfco_convert("pdf/convert/from/doc", data, "document.pdf")
             if out:
@@ -1551,7 +1603,7 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 path.write_bytes(out)
                 await update.message.reply_document(InputFile(str(path)))
             else:
-                await update.message.reply_text("⚠️ فشل التحويل (Word → PDF).")
+                await update.message.reply_text(T("word2pdf_fail", lang=lang))
             return
 
     if not mode:
@@ -1561,17 +1613,18 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def makepdf_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     mode, extra = ai_get_mode(uid)
+    lang = user_get(uid).get("pref_lang","ar")
     if mode != "file_img_to_pdf":
-        await update.message.reply_text("هذه الأداة تعمل بعد اختيار (JPG → PDF) من الأقسام.")
+        await update.message.reply_text(T("makepdf_needed", lang=lang))
         return
     paths = (extra or {}).get("paths", [])
     if not paths:
-        await update.message.reply_text("لم يتم استلام أي صور بعد. أرسل صورًا ثم /makepdf."); return
+        await update.message.reply_text(T("makepdf_no_images", lang=lang)); return
     pdf = images_to_pdf([Path(p) for p in paths])
     if pdf and pdf.exists() and pdf.stat().st_size <= MAX_UPLOAD_BYTES:
         await update.message.reply_document(InputFile(str(pdf)))
     else:
-        await update.message.reply_text("⚠️ فشل إنشاء PDF أو الحجم كبير.")
+        await update.message.reply_text(T("makepdf_failed", lang=lang))
     ai_set_mode(uid, None, {})
 
 # ==== أوامر المالك ====
@@ -1700,5 +1753,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
