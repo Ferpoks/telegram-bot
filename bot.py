@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import os, sqlite3, threading, time, asyncio, re, json, logging, base64, hashlib, socket, tempfile, shutil
+import os, sqlite3, threading, time, asyncio, re, json, logging, base64, hashlib, socket, tempfile
 from pathlib import Path
 from io import BytesIO
 from dotenv import load_dotenv
@@ -133,7 +133,7 @@ SERV_VCC_LINKS = [
     ] if u
 ]
 
-# الدورات (عناوين تُعرّب تلقائيًا)
+# الدورات
 COURSE_PYTHON_URL = os.getenv("COURSE_PYTHON_URL","https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/Y8WctvBLiA6u6AASeZX2IUfDQAolTJ4QFGx9WRCu.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250815%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250815T021202Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=b7e556dd4c8a23f56f5e7cba1a29eadb6c48fa7c0656f463d47a64cd10ebfa81")
 COURSE_CYBER_URL  = os.getenv("COURSE_CYBER_URL","https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/pZ0spOmm1K0dA2qAzUuWUb4CcMMjUPTbn7WMRwAc.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250815%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250815T021253Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=bc11797f9de3cb6f391937936f73f8f2acded12a7d665c5d82e453241dea50c9")
 COURSE_EH_URL     = os.getenv("COURSE_EH_URL","https://www.mediafire.com/folder/r26pp5mpduvnx/%D8%AF%D9%88%D8%B1%D8%A9_%D8%A7%D9%84%D9%87%D8%A7%D9%83%D8%B1_%D8%A7%D9%84%D8%A7%D8%AE%D9%84%D8%A7%D9%82%D9%8A_%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D8%B1%D8%AD%D9%85%D9%86_%D9%88%D8%B5%D9%81%D9%8A")
@@ -305,7 +305,6 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "choose_lang_done": "✅ تم ضبط اللغة: {chosen}",
         "myinfo": "👤 اسمك: {name}\n🆔 معرفك: {uid}\n🌐 اللغة: {lng}",
 
-        # صفحات داخلية مع أزرار ملوّنة باللغة المختارة
         "page_ai": "🤖 أدوات الذكاء الاصطناعي:",
         "btn_ai_chat": "🤖 دردشة",
         "btn_ai_write": "✍️ كتابة",
@@ -676,21 +675,6 @@ _HOST_RE = re.compile(r"^[a-zA-Z0-9.-]{1,253}\.[A-Za-z]{2,63}$")
 _URL_RE = re.compile(r"https?://[^\s]+")
 DISPOSABLE_DOMAINS = {"mailinator.com","tempmail.com","10minutemail.com","yopmail.com","guerrillamail.com","trashmail.com"}
 
-# ==== إعداد مسارات ffmpeg/ffprobe (لا نحذف شيء، فقط إضافة) ====
-FFMPEG_BIN = os.getenv("FFMPEG_PATH") or shutil.which("ffmpeg") or "/opt/render/project/src/ffmpeg"
-FFPROBE_BIN = os.getenv("FFPROBE_PATH") or shutil.which("ffprobe") or "/opt/render/project/src/ffprobe"
-# ضمّن مجلد ffmpeg في PATH عشان yt-dlp يلقاه
-try:
-    os.environ["PATH"] = str(Path(FFMPEG_BIN).parent) + os.pathsep + os.environ.get("PATH", "")
-except Exception:
-    pass
-
-def ffmpeg_ok() -> bool:
-    try:
-        return Path(FFMPEG_BIN).exists() and os.access(FFMPEG_BIN, os.X_OK)
-    except Exception:
-        return False
-
 async def fetch_geo(query: str) -> dict|None:
     url = f"http://ip-api.com/json/{query}?fields=status,message,country,regionName,city,isp,org,as,query,lat,lon,timezone,zip,reverse"
     try:
@@ -841,27 +825,92 @@ async def osint_email(email: str) -> str:
         pass
     return "\n".join(out)
 
-async def link_scan(u: str) -> str:
-    if not _URL_RE.search(u or ""):
-        return "⚠️ أرسل رابط يبدأ بـ http:// أو https://"
-    meta = _urlparse.urlparse(u)
-    host = meta.hostname or ""
-    scheme = meta.scheme
-    issues = []
-    if scheme != "https": issues.append("❗️ بدون تشفير HTTPS")
-    ip = resolve_ip(host) if host else None
-    geo_txt = fmt_geo(await fetch_geo(ip)) if ip else "⚠️ تعذّر حلّ IP للمضيف."
-    status = await http_head(u)
-    if status is None:
-        issues.append("⚠️ فشل الوصول (HEAD)")
-    else:
-        issues.append(f"🔎 حالة HTTP: {status}")
+# =================== تنزيل وسائط (بدون ffmpeg) ===================
+async def download_media(url: str) -> Path|None:
+    """
+    نحاول تنزيل فيديو واحد جاهز (MP4 بصوت وفيديو) بدون الحاجة لـ ffmpeg.
+    نختار فورمات mp4 تقدّم صوت+فيديو (مثل TikTok/Instagram/X).
+    لليوتيوب نفضّل itag=18 (360p) لأنه مدمج Audio+Video ولا يحتاج دمج.
+    """
+    if yt_dlp is None:
+        log.warning("yt_dlp غير مثبت")
+        return None
+
+    TMP_DIR.mkdir(parents=True, exist_ok=True)
+
+    # قالب اسم الملف
+    outtmpl = str(TMP_DIR / "%(title).50s-%(id)s.%(ext)s")
+
+    # تهيئة عامة
+    base_opts = {
+        "outtmpl": outtmpl,
+        "quiet": True,
+        "noprogress": True,
+        "nocheckcertificate": True,
+        "retries": 2,
+        "noplaylist": True,
+        "merge_output_format": None,   # لا دمج
+        "postprocessors": [],          # لا بوست-بروسسور (لا ffmpeg)
+        "prefer_free_formats": False,  # لا تفضّل webm
+        "http_headers": {              # UA حديث لتفادي حظر بعض المواقع
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36"
+        },
+    }
+
+    # 1) محاولة “آمنة”: MP4 فقط، وإن وجد itag=18 ليوتيوب
+    try_order = [
+        # يوتيوب: 18 (AVC+AAC 360p) غالبًا متوفر ومضمن
+        "18/best[ext=mp4][vcodec*=avc1][acodec*=mp4a]/best[ext=mp4]",
+        # تيك توك/انستغرام/تويتر: أفضل mp4
+        "b[ext=mp4]/best"
+    ]
+
+    last_err = None
+    for idx, fmt in enumerate(try_order, start=1):
+        opts = base_opts | {
+            "format": fmt,
+        }
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                # حدد الاسم النهائي
+                # إذا playlist=false سيعيد عنصر واحد
+                fname = ydl.prepare_filename(info)
+                p = Path(fname)
+                # تحقق من الامتداد والحجم
+                if p.exists() and p.is_file():
+                    if p.suffix.lower() not in (".mp4", ".m4v", ".mov", ".webm", ".mkv"):
+                        # إن امتداد غريب، جرّب تغيير اسم الامتداد إلى mp4 فقط إن كان الموقع أرسل mp4 أصلاً
+                        pass
+                    # لو الملف أكبر من حد تيليجرام نعيد None
+                    if p.stat().st_size > MAX_UPLOAD_BYTES:
+                        log.warning("[ydl] file too big (%.2f MB) using fmt #%d", p.stat().st_size/1024/1024, idx)
+                        # جرّب محاولة أخرى بجودة أدنى:
+                        continue
+                    # نجاح
+                    return p
+        except Exception as e:
+            last_err = e
+            log.error("[ydl] try #%d fmt='%s' error: %s", idx, fmt, e)
+            continue
+
+    # 2) محاولة أخيرة: تقييد الدقة ≤480p لإجبار ملف أصغر (MP4 إن أمكن)
+    low_opts = base_opts | {
+        "format": "best[ext=mp4][height<=480]/best[height<=480]/best"
+    }
     try:
-        us = await urlscan_lookup(u)
-        issues.append(us)
-    except Exception:
-        pass
-    return f"🔗 <code>{u}</code>\nالمضيف: <code>{host}</code>\n" + "\n".join(issues) + f"\n\n{geo_txt}"
+        with yt_dlp.YoutubeDL(low_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            fname = ydl.prepare_filename(info)
+            p = Path(fname)
+            if p.exists() and p.is_file() and p.stat().st_size <= MAX_UPLOAD_BYTES:
+                return p
+    except Exception as e:
+        last_err = e
+        log.error("[ydl] low-fallback error: %s", e)
+
+    log.error("[ydl] failed to fetch playable video. last_err=%s", last_err)
+    return None
 
 # PDF.co تحويلات PDF↔Word
 async def pdfco_convert(endpoint: str, file_bytes: bytes, out_name: str) -> bytes|None:
@@ -1022,77 +1071,6 @@ async def ai_write(prompt: str) -> str:
     r, err = _chat_with_fallback([{"role":"system","content":sysmsg},{"role":"user","content":prompt}])
     if err: return "⚠️ تعذّر التوليد حالياً."
     return (r.choices[0].message.content or "").strip()
-
-# ==== تنزيل وسائط (تحسين بدون حذف أي شيء آخر) ====
-async def download_media(url: str) -> Path|None:
-    if yt_dlp is None:
-        log.warning("yt_dlp غير مثبت")
-        return None
-    TMP_DIR.mkdir(parents=True, exist_ok=True)
-    outtmpl = str(TMP_DIR / "%(title).50s.%(ext)s")
-
-    # إعدادات مشتركة (نضيف ffmpeg_location + ترويسات)
-    ydl_common = {
-        "outtmpl": outtmpl,
-        "quiet": True,
-        "no_warnings": True,
-        "retries": 2,
-        "noplaylist": True,
-        "ffmpeg_location": str(Path(FFMPEG_BIN).parent),
-        "merge_output_format": "mp4",
-        "postprocessors": [
-            {"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}
-        ],
-        "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        },
-        "concurrent_fragment_downloads": 1,
-    }
-
-    # فيديو أولاً (أفضل متاح)
-    ydl_opts_video = {
-        **ydl_common,
-        "format": "bv*+ba/b",  # أفضل فيديو+صوت أو أفضل صيغة متاحة
-    }
-
-    # بديل صوت لو الحجم كبير أو الدمج فشل
-    ydl_opts_audio = {
-        **ydl_common,
-        "format": "bestaudio/best",
-        "postprocessors": [
-            {"key": "FFmpegExtractAudio", "preferredcodec": "m4a", "preferredquality": "192"},
-        ],
-        "merge_output_format": "m4a",
-    }
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts_video) as ydl:
-            info = ydl.extract_info(url, download=True)
-            fname = ydl.prepare_filename(info)
-            # ابحث عن الناتج بعد التحويل
-            for ext in (".mp4", ".mkv", ".webm"):
-                p = Path(os.path.splitext(fname)[0] + ext)
-                if p.exists() and p.is_file():
-                    if p.stat().st_size <= MAX_UPLOAD_BYTES:
-                        return p
-                    else:
-                        log.info("[ydl] video too large for Telegram, falling back to audio")
-                        break
-
-        # fallback إلى صوت لو الحجم كبير أو فشل الدمج
-        with yt_dlp.YoutubeDL(ydl_opts_audio) as y2:
-            info2 = y2.extract_info(url, download=True)
-            fname2 = y2.prepare_filename(info2)
-            for ext2 in (".m4a", ".mp3"):
-                p2 = Path(os.path.splitext(fname2)[0] + ext2)
-                if p2.exists() and p2.is_file() and p2.stat().st_size <= MAX_UPLOAD_BYTES:
-                    return p2
-
-    except Exception as e:
-        log.error("[ydl] %s", e)
-        return None
-
-    return None
 
 # ==== Telegram UI ====
 def gate_kb(lang="ar"):
@@ -1380,7 +1358,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "sec_security_geo":
         ai_set_mode(uid, "geo_ip"); await safe_edit(q, "📍 أرسل IP أو دومين.", kb=ai_stop_kb(lang)); return
 
-    # الخدمات (قائمتان داخليًا)
+    # الخدمات
     if q.data == "sec_services":
         await safe_edit(q, T("page_services", lang=lang) + "\n\n" + T("choose_option", lang=lang),
                         kb=InlineKeyboardMarkup([
@@ -1525,17 +1503,18 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if mode == "media_dl":
             if not _URL_RE.search(text):
                 await update.message.reply_text("أرسل رابط صالح (http/https)."); return
-            await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_DOCUMENT)
+            await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_VIDEO)
             path = await download_media(text)
             if path and path.exists() and path.stat().st_size <= MAX_UPLOAD_BYTES:
                 try:
-                    # أرسل كفيديو إن كان mp4 أو webm وبحجم مناسب
-                    if path.suffix.lower() in (".mp4",".webm",".mkv"):
-                        await update.message.reply_video(video=InputFile(str(path)))
-                    else:
+                    # أرسل كـ فيديو (يدعم المشاهدة المباشرة)
+                    await update.message.reply_video(video=InputFile(str(path)), supports_streaming=True)
+                except Exception as e:
+                    log.error("[tg] send_video error: %s", e)
+                    try:
                         await update.message.reply_document(document=InputFile(str(path)))
-                except Exception:
-                    await update.message.reply_text("⚠️ تعذّر إرسال الملف.")
+                    except Exception:
+                        await update.message.reply_text("⚠️ تعذّر إرسال الملف.")
             else:
                 await update.message.reply_text("⚠️ تعذّر التحميل أو أن الملف كبير.")
             return
@@ -1664,12 +1643,14 @@ async def aidiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try: return version(pkg)
             except PackageNotFoundError: return "not-installed"
         k = (os.getenv("OPENAI_API_KEY") or "").strip()
-        ff = "OK" if ffmpeg_ok() else "MISSING"
+        # محاولة اكتشاف ffmpeg (لن يكون مثبت في Render Free عادة)
+        from shutil import which
+        ff = which("ffmpeg")
         msg = (f"AI_ENABLED={'ON' if AI_ENABLED else 'OFF'}\n"
                f"Key={'set(len=%d)'%len(k) if k else 'missing'}\n"
                f"Model={OPENAI_CHAT_MODEL}\n"
                f"openai={v('openai')}\n"
-               f"ffmpeg={ff}")
+               f"ffmpeg={'FOUND' if ff else 'MISSING'}")
         await update.message.reply_text(msg)
     except Exception as e:
         await update.message.reply_text(f"aidiag error: {e}")
