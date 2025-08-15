@@ -1,6 +1,3 @@
 ffmpeg
-libreoffice
-poppler-utils
-ghostscript
-tesseract-ocr
+
 
