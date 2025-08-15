@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import os, sqlite3, threading, time, asyncio, re, json, logging, base64, hashlib, socket, tempfile, subprocess, shutil
+import os, sqlite3, threading, time, asyncio, re, json, logging, base64, hashlib, socket, tempfile, shutil, subprocess
 from pathlib import Path
 from io import BytesIO
 from dotenv import load_dotenv
@@ -112,7 +112,7 @@ IPINFO_TOKEN    = (os.getenv("IPINFO_TOKEN") or "").strip()
 # PDF.co لتحويل PDF↔Word
 PDFCO_API_KEY   = (os.getenv("PDFCO_API_KEY") or "").strip()
 
-# ======= روابط حسب طلبك =======
+# ======= روابط المستخدم =======
 FOLLOWERS_LINKS = [
     u for u in [
         os.getenv("FOLLOW_LINK_1","https://smmcpan.com/"),
@@ -121,15 +121,18 @@ FOLLOWERS_LINKS = [
     ] if u
 ]
 
-# في نفس قسم "الخدمات": قائمتان منفصلتان (أرقام مؤقتة / فيزا افتراضية)
+# خدمات: أرقام مؤقتة / فيزا افتراضية
 SERV_NUMBERS_LINKS = [
     u for u in [
         os.getenv("NUMBERS_LINK_1","https://txtu.app/"),
     ] if u
 ]
+# ⚠️ لأسباب أمان لن أضع رابط افتراضي لبطاقات غير موثوقة. ضعه من البيئة VCC_LINK_1..3
 SERV_VCC_LINKS = [
     u for u in [
-        os.getenv("VCC_LINK_1","https://fake-card.com/virtual-card-mastercard-free-card-bin/228757973743900/"),
+        os.getenv("VCC_LINK_1",""),
+        os.getenv("VCC_LINK_2",""),
+        os.getenv("VCC_LINK_3",""),
     ] if u
 ]
 
@@ -148,6 +151,43 @@ try:
     AIOHTTP_AVAILABLE = True
 except Exception:
     AIOHTTP_AVAILABLE = False
+
+# ==== ffmpeg/ffprobe (فحص وتحديد مواقع) ====
+FFMPEG_PATH = os.getenv("FFMPEG_PATH","") or shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
+FFPROBE_PATH = os.getenv("FFPROBE_PATH","") or shutil.which("ffprobe") or "/usr/bin/ffprobe"
+
+def ffmpeg_ok() -> bool:
+    try:
+        if not Path(FFMPEG_PATH).exists():
+            return False
+        p = subprocess.run([FFMPEG_PATH, "-version"], capture_output=True, text=True, timeout=5)
+        return p.returncode == 0
+    except Exception:
+        return False
+
+def ffprobe_duration_sec(path: Path) -> float|None:
+    try:
+        if not Path(FFPROBE_PATH).exists(): return None
+        cmd = [FFPROBE_PATH, "-v", "error", "-select_streams", "v:0", "-show_entries", "format=duration", "-of", "json", str(path)]
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+        if p.returncode != 0: return None
+        data = json.loads(p.stdout or "{}")
+        dur = data.get("format",{}).get("duration")
+        return float(dur) if dur else None
+    except Exception:
+        return None
+
+def remux_to_mp4(path: Path) -> Path|None:
+    try:
+        if not ffmpeg_ok(): return None
+        out = path.with_suffix(".mp4")
+        cmd = [FFMPEG_PATH, "-y", "-i", str(path), "-c", "copy", "-movflags", "+faststart", str(out)]
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if p.returncode == 0 and out.exists() and out.stat().st_size > 0:
+            return out
+    except Exception as e:
+        log.warning("[remux] %s", e)
+    return None
 
 def _clean_base(url: str) -> str:
     u = (url or "").strip().strip('"').strip("'")
@@ -305,7 +345,6 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "choose_lang_done": "✅ تم ضبط اللغة: {chosen}",
         "myinfo": "👤 اسمك: {name}\n🆔 معرفك: {uid}\n🌐 اللغة: {lng}",
 
-        # صفحات داخلية وأزرارها
         "page_ai": "🤖 أدوات الذكاء الاصطناعي:",
         "btn_ai_chat": "🤖 دردشة",
         "btn_ai_write": "✍️ كتابة",
@@ -317,15 +356,12 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "btn_urlscan": "🔗 فحص رابط",
         "btn_emailcheck": "📧 فحص إيميل",
         "btn_geolookup": "🛰️ موقع IP/دومين",
-        "prompt_send_url": "🛡️ أرسل الرابط للفحص.",
-        "prompt_send_email": "✉️ أرسل الإيميل للفحص.",
-        "prompt_send_geo": "📍 أرسل IP أو دومين.",
 
         "page_services": "🧰 خدمات:",
         "btn_numbers": "📱 أرقام مؤقتة",
         "btn_vcc": "💳 فيزا افتراضية",
         "services_numbers": "📱 الأرقام المؤقتة (استخدمها بمسؤولية):",
-        "services_vcc": "💳 بطاقات/فيزا افتراضية (قانونية):",
+        "services_vcc": "💳 بطاقات/فيزا افتراضية (ضع الروابط من الإعدادات):",
 
         "page_courses": "🎓 الدورات:",
         "course_python": "بايثون من الصفر",
@@ -378,6 +414,8 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "vip_ref": "🔖 Your reference: <code>{ref}</code>",
         "go_pay": "🚀 Go to payment",
         "check_pay": "✅ Verify payment",
+        "ai_chat_on": "🤖 Chat mode enabled. Send your question.",
+        "ai_chat_off": "🔚 AI chat disabled.",
         "security_desc": "Send URL/domain/email to check (urlscan, kickbox, ipinfo) – needs API keys.",
         "services_desc": "Pick a service:",
         "files_desc": "File conversions: JPG→PDF (local), PDF↔Word via PDF.co if key set.",
@@ -400,15 +438,12 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "btn_urlscan": "🔗 URL Scan",
         "btn_emailcheck": "📧 Email Check",
         "btn_geolookup": "🛰️ IP/Domain Geo",
-        "prompt_send_url": "🛡️ Send the URL to scan.",
-        "prompt_send_email": "✉️ Send the email to check.",
-        "prompt_send_geo": "📍 Send an IP or a domain.",
 
         "page_services": "🧰 Services:",
         "btn_numbers": "📱 Temporary Numbers",
         "btn_vcc": "💳 Virtual Card",
         "services_numbers": "📱 Temporary numbers (use responsibly):",
-        "services_vcc": "💳 Virtual/Prepaid card providers:",
+        "services_vcc": "💳 Virtual/Prepaid card providers (set via env):",
 
         "page_courses": "🎓 Courses:",
         "course_python": "Python from Zero",
@@ -425,6 +460,7 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "page_boost": "📈 Followers:",
     }
 
+    # توافق نداءات قديمة: T("ar","key")
     if key in ("ar", "en") and (lang is not None and lang not in ("ar", "en")):
         key, lang = lang, key
     if lang not in ("ar","en"):
@@ -679,10 +715,7 @@ async def paylink_create_invoice(order_number: str, amount: float, client_name: 
 _IP_RE = re.compile(r"\b(?:(?:[0-9]{1,3}\.){3}[0-9]{1,3})\b")
 _HOST_RE = re.compile(r"^[a-zA-Z0-9.-]{1,253}\.[A-Za-z]{2,63}$")
 _URL_RE = re.compile(r"https?://[^\s]+")
-DISPOSABLE_DOMAINS = {
-    "mailinator.com","tempmail.com","10minutemail.com","yopmail.com","guerrillamail.com","trashmail.com",
-    "tempmailo.com","moakt.com","fakemail.net","dispostable.com","maildrop.cc","getnada.com","mytemp.email"
-}
+DISPOSABLE_DOMAINS = {"mailinator.com","tempmail.com","10minutemail.com","yopmail.com","guerrillamail.com","trashmail.com"}
 
 async def fetch_geo(query: str) -> dict|None:
     url = f"http://ip-api.com/json/{query}?fields=status,message,country,regionName,city,isp,org,as,query,lat,lon,timezone,zip,reverse"
@@ -726,44 +759,6 @@ async def http_head(url: str) -> int|None:
     except Exception:
         return None
 
-async def http_head_details(url: str):
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.head(url, allow_redirects=True, timeout=15) as r:
-                return r.status, dict(r.headers)
-    except Exception:
-        return None, {}
-
-def _detect_charset_from_ct(ct: str|None) -> str:
-    if not ct: return "utf-8"
-    m = re.search(r"charset=([\w\-\d]+)", ct, re.I)
-    return (m.group(1) if m else "utf-8").strip().lower()
-
-async def http_get_title(url: str, max_bytes: int = 131072) -> tuple[str|None, int|None]:
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(url, allow_redirects=True, timeout=20) as r:
-                ct = r.headers.get("content-type","")
-                charset = _detect_charset_from_ct(ct)
-                total = 0
-                buf = bytearray()
-                async for chunk in r.content.iter_chunked(4096):
-                    buf += chunk
-                    total += len(chunk)
-                    if total >= max_bytes:
-                        break
-                    if b"</title>" in buf.lower():
-                        break
-                try:
-                    text = buf.decode(charset, errors="ignore")
-                except Exception:
-                    text = buf.decode("utf-8", errors="ignore")
-                m = re.search(r"<title[^>]*>(.*?)</title>", text, re.I|re.S)
-                title = re.sub(r"\s+", " ", m.group(1)).strip() if m else None
-                return title, total
-    except Exception:
-        return None, None
-
 def resolve_ip(host: str) -> str|None:
     try:
         infos = socket.getaddrinfo(host, None)
@@ -774,109 +769,22 @@ def resolve_ip(host: str) -> str|None:
     except Exception:
         return None
 
-def _norm_date(val):
-    if not val:
-        return "-"
-    try:
-        if isinstance(val, (list, tuple, set)):
-            val = list(val)
-            val = [x for x in val if x]
-            if not val: return "-"
-            val = min(val)
-        from datetime import datetime, date
-        if isinstance(val, (datetime, )):
-            return val.strftime("%Y-%m-%d %H:%M")
-        if isinstance(val, (date, )):
-            return val.strftime("%Y-%m-%d")
-        return str(val)
-    except Exception:
-        return str(val)
-
 def whois_domain(domain: str) -> dict|None:
     if pywhois is None:
         return {"error": "python-whois غير مثبت"}
     try:
         w = pywhois.whois(domain)
         return {
-            "domain_name": str(getattr(w, "domain_name", None)),
+            "domain_name": str(w.domain_name) if hasattr(w, "domain_name") else None,
             "registrar": getattr(w, "registrar", None),
-            "creation_date": _norm_date(getattr(w, "creation_date", None)),
-            "expiration_date": _norm_date(getattr(w, "expiration_date", None)),
+            "creation_date": str(getattr(w, "creation_date", None)),
+            "expiration_date": str(getattr(w, "expiration_date", None)),
             "emails": getattr(w, "emails", None)
         }
     except Exception as e:
         return {"error": f"whois error: {e}"}
 
-# ==== DNS Helpers (SPF/DMARC/MX) ====
-def _txt_rr_to_plain(rr):
-    t = rr.to_text()
-    parts = re.findall(r'"([^"]*)"', t)
-    return "".join(parts) if parts else t.strip('"')
-
-def dns_txt_records(name: str) -> list[str] | None:
-    if not dnsresolver:
-        return None
-    try:
-        answers = dnsresolver.resolve(name, "TXT")
-        out = []
-        for rr in answers:
-            out.append(_txt_rr_to_plain(rr))
-        return out
-    except dnsexception.DNSException:
-        return []
-    except Exception:
-        return []
-
-def dns_mx_records(name: str) -> list[str] | None:
-    if not dnsresolver:
-        return None
-    try:
-        answers = dnsresolver.resolve(name, "MX")
-        hosts = [str(r.exchange).rstrip(".") for r in answers]
-        return hosts
-    except dnsexception.DNSException:
-        return []
-    except Exception:
-        return []
-
-def get_spf_record(domain: str) -> str | None:
-    txts = dns_txt_records(domain) or []
-    for t in txts:
-        if t.lower().startswith("v=spf1"):
-            return t
-    return None
-
-def get_dmarc_record(domain: str) -> dict | None:
-    recs = dns_txt_records(f"_dmarc.{domain}") or []
-    for t in recs:
-        if t.lower().startswith("v=dmarc1"):
-            d = {"raw": t}
-            m = re.search(r"\bp=([a-z]+)\b", t, re.I)
-            if m: d["policy"] = m.group(1).lower()
-            m2 = re.search(r"\bruag?=([^;]+)", t, re.I)
-            if m2: d["rua"] = m2.group(1)
-            m3 = re.search(r"\bsp=([a-z]+)\b", t, re.I)
-            if m3: d["subdomain_policy"] = m3.group(1).lower()
-            return d
-    return None
-
-def classify_provider(mx_hosts: list[str]) -> str | None:
-    s = ",".join(mx_hosts).lower()
-    if "google.com" in s or "googlemail.com" in s:
-        return "Google (Gmail / Workspace)"
-    if "protection.outlook.com" in s or "outlook.com" in s or "hotmail.com" in s:
-        return "Microsoft (Outlook/Office365)"
-    if "yahoodns.net" in s or "yahoo.com" in s:
-        return "Yahoo"
-    if "protonmail." in s:
-        return "Proton"
-    if "zoho." in s:
-        return "Zoho"
-    if "messagelabs.com" in s or "proofpoint.com" in s:
-        return "Proofpoint"
-    return None
-
-# ==== urlscan (تحسين) ====
+# فحوص الأمن
 async def urlscan_lookup(u: str) -> str:
     if not URLSCAN_API_KEY:
         return "ℹ️ ضع URLSCAN_API_KEY لتفعيل الفحص."
@@ -895,54 +803,6 @@ async def urlscan_lookup(u: str) -> str:
     except Exception as e:
         return f"urlscan error: {e}"
 
-async def urlscan_submit(u: str) -> dict:
-    out = {"result_url": None, "uuid": None, "summary": None, "error": None}
-    if not URLSCAN_API_KEY:
-        out["error"] = "URLSCAN_API_KEY missing"
-        return out
-    try:
-        headers = {"API-Key": URLSCAN_API_KEY, "Content-Type": "application/json"}
-        payload = {"url": u, "visibility": "unlisted"}
-        async with aiohttp.ClientSession() as s:
-            async with s.post("https://urlscan.io/api/v1/scan/", headers=headers, json=payload, timeout=30) as r:
-                resp = await r.json(content_type=None)
-        out["result_url"] = resp.get("result")
-        out["uuid"] = resp.get("uuid")
-        if out["uuid"]:
-            for _ in range(5):
-                await asyncio.sleep(2)
-                try:
-                    async with aiohttp.ClientSession() as s:
-                        api = f"https://urlscan.io/api/v1/result/{out['uuid']}/"
-                        async with s.get(api, timeout=15) as r2:
-                            if r2.status == 200:
-                                data = await r2.json(content_type=None)
-                                page = data.get("page", {})
-                                verdicts = (data.get("verdicts") or {}).get("overall") or {}
-                                stats = data.get("stats") or {}
-                                parts = []
-                                if page.get("title"): parts.append(f"📄 Title: {page.get('title')}")
-                                if page.get("domain"): parts.append(f"🌐 Domain: {page.get('domain')}")
-                                if page.get("country"): parts.append(f"🏳️ Country: {page.get('country')}")
-                                if page.get("server"): parts.append(f"🧾 Server: {page.get('server')}")
-                                if verdicts:
-                                    mal = verdicts.get("malicious")
-                                    score = verdicts.get("score")
-                                    parts.append(f"🧪 Verdict: {'malicious' if mal else 'clean'}" + (f" (score={score})" if score is not None else ""))
-                                if stats:
-                                    reqs = stats.get("requests")
-                                    uniq_domains = stats.get("uniqDomains")
-                                    if reqs is not None: parts.append(f"📊 Requests: {reqs}")
-                                    if uniq_domains is not None: parts.append(f"🧩 Unique domains: {uniq_domains}")
-                                out["summary"] = "\n".join(parts) if parts else None
-                                break
-                except Exception:
-                    continue
-    except Exception as e:
-        out["error"] = f"urlscan submit error: {e}"
-    return out
-
-# فحوص الأمن الأخرى
 async def kickbox_lookup(email: str) -> str:
     if not KICKBOX_API_KEY:
         return "ℹ️ ضع KICKBOX_API_KEY لتفعيل فحص الإيميل."
@@ -969,169 +829,78 @@ async def ipinfo_lookup(query: str) -> str:
     except Exception as e:
         return f"ipinfo error: {e}"
 
+def _dns_txt(domain: str) -> list[str]:
+    if not dnsresolver: return []
+    try:
+        ans = dnsresolver.resolve(domain, "TXT")
+        vals = []
+        for r in ans:
+            s = "".join([b.decode() if isinstance(b, bytes) else str(b) for b in r.strings]) if getattr(r, "strings", None) else str(r)
+            vals.append(s.strip('"'))
+        return vals
+    except Exception:
+        return []
+
+def _dns_dmarc(domain: str) -> str|None:
+    if not dnsresolver: return None
+    try:
+        ans = dnsresolver.resolve(f"_dmarc.{domain}", "TXT")
+        for r in ans:
+            s = "".join([b.decode() if isinstance(b, bytes) else str(b) for b in r.strings]) if getattr(r, "strings", None) else str(r)
+            if s.lower().startswith("v=dmarc1"):
+                return s
+    except Exception:
+        pass
+    return None
+
 async def osint_email(email: str) -> str:
     if not is_valid_email(email): return "⚠️ صيغة الإيميل غير صحيحة."
     local, domain = email.split("@", 1)
-
-    # Disposable?
-    disposable = "✅ لا" if domain.lower() not in DISPOSABLE_DOMAINS else "❌ نعم (مؤقت)"
-
     # MX
+    mx_txt = "❓"
     if dnsresolver:
         try:
-            mx_hosts = dns_mx_records(domain) or []
+            answers = dnsresolver.resolve(domain, "MX")
+            mx_hosts = [str(r.exchange).rstrip(".") for r in answers]
             mx_txt = ", ".join(mx_hosts[:5]) if mx_hosts else "لا يوجد"
         except dnsexception.DNSException:
-            mx_hosts = []
             mx_txt = "لا يوجد (فشل الاستعلام)"
     else:
-        mx_hosts = []
         mx_txt = "dnspython غير مثبت"
-
-    provider = classify_provider(mx_hosts) if mx_hosts else None
-
-    # SPF / DMARC
-    spf = get_spf_record(domain)
-    dmarc = get_dmarc_record(domain)
-    spf_txt = spf if spf else "لا يوجد"
-    dmarc_txt = (f"policy={dmarc.get('policy','-')}  raw={dmarc.get('raw','')}" if dmarc else "لا يوجد")
-
     # Gravatar
     g_url = f"https://www.gravatar.com/avatar/{md5_hex(email)}?d=404"
     g_st = await http_head(g_url)
     grav = "✅ موجود" if g_st and 200 <= g_st < 300 else "❌ غير موجود"
-
-    # WHOIS (للدومين فقط)
+    # Resolve + geo
+    ip = resolve_ip(domain)
+    geo_text = fmt_geo(await fetch_geo(ip)) if ip else "⚠️ تعذّر حلّ IP للدومين."
+    # WHOIS
     w = whois_domain(domain)
-    w_txt = "WHOIS: غير متاح" if not w else (f"WHOIS: {w['error']}" if w.get("error") else f"WHOIS:\n- Registrar: {w.get('registrar','-')}\n- Created: {w.get('creation_date','-')}\n- Expires: {w.get('expiration_date','-')}")
-
-    # Geo: فرّق بين A-record للدومين وMX
-    ip_domain = resolve_ip(domain)
-    geo_domain = await fetch_geo(ip_domain) if ip_domain else None
-
-    ip_mx = None
-    geo_mx = None
-    if mx_hosts:
-        ip_mx = resolve_ip(mx_hosts[0])
-        geo_mx = await fetch_geo(ip_mx) if ip_mx else None
-
-    # Kickbox
+    w_txt = "WHOIS: غير متاح" if not w else (f"WHOIS: {w['error']}" if w.get("error") else f"WHOIS:\n- Registrar: {w.get('registrar')}\n- Created: {w.get('creation_date')}\n- Expires: {w.get('expiration_date')}")
+    # SPF / DMARC
+    spf = None
+    for txt in _dns_txt(domain):
+        if txt.lower().startswith("v=spf1"):
+            spf = txt; break
+    dmarc = _dns_dmarc(domain)
+    # Disposable?
+    disposable = "✅" if domain.lower() in DISPOSABLE_DOMAINS else "❌"
+    out = [
+        f"📧 {email}",
+        f"📮 MX: {mx_txt}",
+        f"🖼️ Gravatar: {grav}",
+        w_txt,
+        f"🧪 SPF: {spf or 'غير مهيأ'}",
+        f"🧪 DMARC: {dmarc or 'غير مهيأ'}",
+        f"🗑️ Disposable Domain: {disposable}",
+        f"\n{geo_text}"
+    ]
     try:
         kb = await kickbox_lookup(email)
+        out.append(kb)
     except Exception:
-        kb = None
-
-    lines = []
-    lines.append(f"📧 {email}")
-    lines.append(f"🏢 المزود: {provider or 'غير معروف'}")
-    lines.append(f"⏳ مؤقت/Disposable: {disposable}")
-    lines.append(f"📮 MX: {mx_txt}")
-    lines.append(f"🛡️ SPF: {spf_txt}")
-    lines.append(f"🧾 DMARC: {dmarc_txt}")
-    lines.append(f"🖼️ Gravatar: {grav}")
-    lines.append(w_txt)
-
-    if geo_domain:
-        lines.append("\n🌐 معلومات الدومين (A-record):")
-        lines.append(fmt_geo(geo_domain))
-
-    if geo_mx:
-        lines.append("\n📨 معلومات خادم البريد (MX):")
-        lines.append(fmt_geo(geo_mx))
-
-    lines.append("\n🔔 تنويه: الموقع الجغرافي هنا يعكس مواقع خوادم البريد/الدومين (مثل Google/Cloudflare) وليس موقع صاحب البريد.")
-
-    if kb:
-        lines.append(kb)
-
-    return "\n".join(lines)
-
-# ==== تنزيل وسائط (محسّن) ====
-async def download_media(url: str) -> Path|None:
-    """
-    يحاول تنزيل ملف فيديو موحّد (single file) بحجم ≤ MAX_UPLOAD_BYTES.
-    يتجنب ملفات الدمج الفارغة. يحاول تصغير الحجم عبر ffmpeg إن وُجد.
-    """
-    if yt_dlp is None:
-        log.warning("yt_dlp غير مثبت")
-        return None
-
-    TMP_DIR.mkdir(parents=True, exist_ok=True)
-    ts = int(time.time() * 1000)
-    prefix = f"dl_{ts}_"
-    outtmpl = str(TMP_DIR / (prefix + "%(title).50s.%(ext)s"))
-
-    # أعطِ أولوية لـ single-file (b) ثم fallback
-    format_str = (
-        "b[ext=mp4][filesize<"+str(MAX_UPLOAD_BYTES)+"]/"
-        "b[filesize<"+str(MAX_UPLOAD_BYTES)+"]/"
-        "b[ext=mp4]/"
-        "b/"
-        "best[ext=mp4][filesize<"+str(MAX_UPLOAD_BYTES)+"]/best"
-    )
-
-    ydl_opts = {
-        "outtmpl": outtmpl,
-        "format": format_str,
-        "merge_output_format": "mp4",   # إن توفر ffmpeg
-        "noplaylist": True,
-        "quiet": True,
-        "no_warnings": True,
-        "retries": 2,
-        "concurrent_fragments": 1,
-    }
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.extract_info(url, download=True)
-    except Exception as e:
-        log.error("[ydl] extract error: %s", e)
-        return None
-
-    # التقط أي ملفات خرجت بهذا الـ prefix وتجاهل .part
-    files = sorted(
-        [p for p in TMP_DIR.glob(prefix + "*") if p.is_file() and not p.name.endswith(".part")],
-        key=lambda p: p.stat().st_mtime,
-        reverse=True
-    )
-
-    if not files:
-        return None
-
-    video_exts = {".mp4", ".mkv", ".webm", ".mov", ".m4v", ".avi", ".ts"}
-    audio_exts = {".m4a", ".mp3", ".webm", ".ogg", ".aac"}
-
-    # 1) فيديو ضمن الحد
-    for p in files:
-        if p.suffix.lower() in video_exts and p.stat().st_size > 0 and p.stat().st_size <= MAX_UPLOAD_BYTES:
-            return p
-
-    # 2) فيديو كبير -> نحاول تصغيره لو ffmpeg موجود
-    if shutil.which("ffmpeg"):
-        for p in files:
-            if p.suffix.lower() in video_exts and p.stat().st_size > MAX_UPLOAD_BYTES:
-                target = TMP_DIR / (p.stem + "_480p.mp4")
-                try:
-                    # 480p تقريبًا، يحافظ على النسبة
-                    cmd = [
-                        "ffmpeg","-y","-i",str(p),
-                        "-vf","scale='min(854,iw)':-2",
-                        "-c:v","libx264","-preset","veryfast","-crf","28",
-                        "-c:a","aac","-b:a","96k",
-                        str(target)
-                    ]
-                    subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    if target.exists() and target.stat().st_size > 0 and target.stat().st_size <= MAX_UPLOAD_BYTES:
-                        return target
-                except Exception as e:
-                    log.error("[ffmpeg] shrink error: %s", e)
-
-    # 3) لا يوجد فيديو صالح → أعد أقرب ملف صوتي ضمن الحد
-    for p in files:
-        if p.suffix.lower() in audio_exts and p.stat().st_size > 0 and p.stat().st_size <= MAX_UPLOAD_BYTES:
-            return p
-
-    return None
+        pass
+    return "\n".join(out)
 
 async def link_scan(u: str) -> str:
     if not _URL_RE.search(u or ""):
@@ -1139,60 +908,23 @@ async def link_scan(u: str) -> str:
     meta = _urlparse.urlparse(u)
     host = meta.hostname or ""
     scheme = meta.scheme
-    lines = []
-
-    if scheme != "https":
-        lines.append("❗️ بدون تشفير HTTPS")
-
-    status, headers = await http_head_details(u)
-    if status is None:
-        lines.append("⚠️ فشل الوصول (HEAD)")
-        headers = {}
-    else:
-        lines.append(f"🔎 حالة HTTP: {status}")
-        server = headers.get("Server") or headers.get("server")
-        ctype  = headers.get("Content-Type") or headers.get("content-type")
-        clen   = headers.get("Content-Length") or headers.get("content-length")
-        header_bits = []
-        if server: header_bits.append(f"Server={server}")
-        if ctype:  header_bits.append(f"Type={ctype}")
-        if clen:   header_bits.append(f"Length={clen}")
-        if header_bits:
-            lines.append("🧾 Headers: " + ", ".join(header_bits))
-
-    title, read_bytes = await http_get_title(u)
-    if title:
-        lines.append(f"📄 العنوان: {title}")
-    if read_bytes:
-        lines.append(f"⬇️ تم قراءة ~{read_bytes} بايت لاستخراج العنوان")
-
+    issues = []
+    if scheme != "https": issues.append("❗️ بدون تشفير HTTPS")
     ip = resolve_ip(host) if host else None
-    geo_data = await fetch_geo(ip) if ip else None
-
-    if URLSCAN_API_KEY:
-        us = await urlscan_submit(u)
-        if us.get("result_url"):
-            lines.append(f"urlscan: {us['result_url']}")
-        if us.get("summary"):
-            lines.append(us["summary"])
-        if us.get("error"):
-            lines.append(f"urlscan error: {us['error']}")
+    geo_txt = fmt_geo(await fetch_geo(ip)) if ip else "⚠️ تعذّر حلّ IP للمضيف."
+    status = await http_head(u)
+    if status is None:
+        issues.append("⚠️ فشل الوصول (HEAD)")
     else:
-        try:
-            old = await urlscan_lookup(u)
-            lines.append(old)
-        except Exception:
-            pass
+        issues.append(f"🔎 حالة HTTP: {status}")
+    try:
+        us = await urlscan_lookup(u)
+        issues.append(us)
+    except Exception:
+        pass
+    return f"🔗 <code>{u}</code>\nالمضيف: <code>{host}</code>\n" + "\n".join(issues) + f"\n\n{geo_txt}"
 
-    note_cdn = ""
-    if geo_data and isinstance(geo_data, dict):
-        org = (geo_data.get("org") or "").lower()
-        if "cloudflare" in org or "akamai" in org or "fastly" in org:
-            note_cdn = "\n🔔 ملاحظة: هذا IP يتبع شبكة CDN (مثل Cloudflare)، والموقع الجغرافي هنا لمركز الشبكة وليس خادم الموقع النهائي."
-    geo_txt = fmt_geo(geo_data) if geo_data else "⚠️ تعذّر حلّ IP للمضيف."
-    return f"🔗 <code>{u}</code>\nالمضيف: <code>{host}</code>\n" + "\n".join(lines) + f"\n\n{geo_txt}{note_cdn}"
-
-# PDF.co
+# PDF.co تحويلات PDF↔Word
 async def pdfco_convert(endpoint: str, file_bytes: bytes, out_name: str) -> bytes|None:
     if not PDFCO_API_KEY:
         return None
@@ -1351,6 +1083,102 @@ async def ai_write(prompt: str) -> str:
     r, err = _chat_with_fallback([{"role":"system","content":sysmsg},{"role":"user","content":prompt}])
     if err: return "⚠️ تعذّر التوليد حالياً."
     return (r.choices[0].message.content or "").strip()
+
+# ==== تنزيل وسائط (محسّن) ====
+def _default_ua():
+    return os.getenv("YT_DLP_UA","Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36")
+
+async def download_media(url: str) -> Path|None:
+    if yt_dlp is None:
+        log.warning("yt_dlp غير مثبت")
+        return None
+    TMP_DIR.mkdir(parents=True, exist_ok=True)
+
+    # اسم ملف آمن
+    stamp = int(time.time())
+    base_out = TMP_DIR / f"media_{stamp}.%(ext)s"
+
+    ydl_opts = {
+        "outtmpl": str(base_out),
+        "format": "bv*+ba/b",  # أفضل فيديو+صوت وإن تعذر فـ single
+        "merge_output_format": "mp4",
+        "quiet": True,
+        "no_warnings": True,
+        "retries": 5,
+        "noplaylist": True,
+        "http_headers": {"User-Agent": _default_ua()},
+        "socket_timeout": 20,
+        "concurrent_fragment_downloads": 3,
+        "postprocessors": [
+            {"key":"FFmpegVideoConvertor","preferedformat":"mp4"},
+            {"key":"FFmpegFixupM4a"},  # إصلاح رأس m4a
+        ],
+    }
+
+    # proxy اختياري
+    if os.getenv("YT_DLP_PROXY"):
+        ydl_opts["proxy"] = os.getenv("YT_DLP_PROXY")
+
+    # مسارات ffmpeg
+    if ffmpeg_ok():
+        ydl_opts["ffmpeg_location"] = str(Path(FFMPEG_PATH).parent)
+
+    # محاولة تنزيل
+    out_file = None
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            # تحديد اسم الملف بعد التحويل
+            real_ext = "mp4"
+            title = info.get("title") or f"video_{stamp}"
+            # yt-dlp سيكتب بـ merge_output_format
+            out_file = TMP_DIR / f"media_{stamp}.{real_ext}"
+            # إذا لم يوجد بهذا الاسم ابحث بأي امتداد
+            if not out_file.exists():
+                # التقط أي ملف في TMP بنفس الطابع
+                for ext in (".mp4",".mkv",".webm",".m4a",".mp3",".mov"):
+                    p = TMP_DIR / f"media_{stamp}{ext}"
+                    if p.exists(): out_file = p; break
+
+        # تحقق الحجم والمدة
+        if (not out_file) or (not out_file.exists()):
+            return None
+        if out_file.stat().st_size == 0:
+            return None
+
+        # لو فيديو بامتداد غير mp4 جرب remux
+        if out_file.suffix.lower() not in (".mp4",".mov",".m4v"):
+            alt = remux_to_mp4(out_file)
+            if alt and alt.exists() and alt.stat().st_size > 0:
+                out_file = alt
+
+        dur = ffprobe_duration_sec(out_file)
+        if dur is not None and dur <= 0.5:
+            alt = remux_to_mp4(out_file)
+            if alt and alt.exists() and alt.stat().st_size > 0:
+                out_file = alt
+                dur = ffprobe_duration_sec(out_file)
+
+        # إذا أكبر من حد تيليجرام—حاول صوت فقط كبديل
+        if out_file.stat().st_size > MAX_UPLOAD_BYTES:
+            y2 = ydl_opts | {
+                "format": "ba/bestaudio",
+                "postprocessors": [{"key":"FFmpegExtractAudio","preferredcodec":"m4a"}],
+                "outtmpl": str(TMP_DIR / f"media_audio_{stamp}.%(ext)s")
+            }
+            with yt_dlp.YoutubeDL(y2) as ydl:
+                info2 = ydl.extract_info(url, download=True)
+                # التقط ملف الصوت
+                for ext in (".m4a",".mp3",".webm"):
+                    p2 = TMP_DIR / f"media_audio_{stamp}{ext}"
+                    if p2.exists() and p2.stat().st_size <= MAX_UPLOAD_BYTES:
+                        return p2
+            return None
+
+        return out_file
+    except Exception as e:
+        log.error("[ydl] %s", e)
+        return None
 
 # ==== Telegram UI ====
 def gate_kb(lang="ar"):
@@ -1632,13 +1460,13 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ])); return
 
     if q.data == "sec_security_url":
-        ai_set_mode(uid, "link_scan"); await safe_edit(q, T("prompt_send_url", lang=lang), kb=ai_stop_kb(lang)); return
+        ai_set_mode(uid, "link_scan"); await safe_edit(q, "🛡️ أرسل الرابط للفحص.", kb=ai_stop_kb(lang)); return
     if q.data == "sec_security_email":
-        ai_set_mode(uid, "email_check"); await safe_edit(q, T("prompt_send_email", lang=lang), kb=ai_stop_kb(lang)); return
+        ai_set_mode(uid, "email_check"); await safe_edit(q, "✉️ أرسل الإيميل للفحص.", kb=ai_stop_kb(lang)); return
     if q.data == "sec_security_geo":
-        ai_set_mode(uid, "geo_ip"); await safe_edit(q, T("prompt_send_geo", lang=lang), kb=ai_stop_kb(lang)); return
+        ai_set_mode(uid, "geo_ip"); await safe_edit(q, "📍 أرسل IP أو دومين.", kb=ai_stop_kb(lang)); return
 
-    # الخدمات
+    # الخدمات (قائمتان داخليًا)
     if q.data == "sec_services":
         await safe_edit(q, T("page_services", lang=lang) + "\n\n" + T("choose_option", lang=lang),
                         kb=InlineKeyboardMarkup([
@@ -1654,7 +1482,11 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit(q, T("services_numbers", lang=lang), kb=InlineKeyboardMarkup(rows)); return
 
     if q.data == "serv_vcc":
-        vcc  = SERV_VCC_LINKS or ["https://fake-card.com/virtual-card-mastercard-free-card-bin/228757973743900/"]
+        vcc  = SERV_VCC_LINKS or []
+        if not vcc:
+            msg = T("services_vcc", lang=lang) + "\nENV: VCC_LINK_1, VCC_LINK_2, VCC_LINK_3"
+            rows = [[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_services")]]
+            await safe_edit(q, msg, kb=InlineKeyboardMarkup(rows)); return
         rows = [[InlineKeyboardButton(u, url=u)] for u in vcc]
         rows.append([InlineKeyboardButton(T("back", lang=lang), callback_data="sec_services")])
         await safe_edit(q, T("services_vcc", lang=lang), kb=InlineKeyboardMarkup(rows)); return
@@ -1783,23 +1615,19 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if mode == "media_dl":
             if not _URL_RE.search(text):
                 await update.message.reply_text("أرسل رابط صالح (http/https)."); return
-            # نزّل وأرسل كـ Video/Audio حسب الامتداد
             await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_VIDEO)
             path = await download_media(text)
-            if path and path.exists() and path.stat().st_size > 0 and path.stat().st_size <= MAX_UPLOAD_BYTES:
+            if path and path.exists() and path.stat().st_size <= MAX_UPLOAD_BYTES:
                 try:
                     ext = path.suffix.lower()
-                    video_exts = {".mp4", ".mkv", ".webm", ".mov", ".m4v", ".avi", ".ts"}
-                    audio_exts = {".m4a", ".mp3", ".webm", ".ogg", ".aac"}
-                    if ext in video_exts:
-                        await update.message.reply_video(video=InputFile(str(path)), supports_streaming=True)
-                    elif ext in audio_exts:
-                        await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_AUDIO)
+                    if ext in (".mp4",".mov",".m4v",".webm"):
+                        await update.message.reply_video(video=InputFile(str(path)))
+                    elif ext in (".mp3",".m4a",".aac",".oga",".ogg",".wav"):
                         await update.message.reply_audio(audio=InputFile(str(path)))
                     else:
                         await update.message.reply_document(document=InputFile(str(path)))
                 except Exception as e:
-                    log.error("send file error: %s", e)
+                    log.warning("send file err: %s", e)
                     await update.message.reply_text("⚠️ تعذّر إرسال الملف.")
             else:
                 await update.message.reply_text("⚠️ تعذّر التحميل أو أن الملف كبير.")
@@ -1932,7 +1760,8 @@ async def aidiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = (f"AI_ENABLED={'ON' if AI_ENABLED else 'OFF'}\n"
                f"Key={'set(len=%d)'%len(k) if k else 'missing'}\n"
                f"Model={OPENAI_CHAT_MODEL}\n"
-               f"openai={v('openai')}")
+               f"openai={v('openai')}\n"
+               f"ffmpeg={'OK' if ffmpeg_ok() else 'MISSING'}")
         await update.message.reply_text(msg)
     except Exception as e:
         await update.message.reply_text(f"aidiag error: {e}")
