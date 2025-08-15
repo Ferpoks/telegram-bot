@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
-import os, sqlite3, threading, time, asyncio, re, json, logging, base64, hashlib, socket, tempfile, traceback
+import os, sqlite3, threading, time, asyncio, re, json, logging, base64, hashlib, socket, tempfile
 from pathlib import Path
 from io import BytesIO
 from dotenv import load_dotenv
-from collections import deque, defaultdict
-from html import escape as h
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("bot")
@@ -77,20 +75,6 @@ OWNER_USERNAME = os.getenv("OWNER_USERNAME", "ferpo_ksa").strip().lstrip("@")
 MAX_UPLOAD_MB = 47
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 
-# === ميزات احترافية قابلة للتهيئة ===
-FLOOD_MAX_MSGS = int(os.getenv("FLOOD_MAX_MSGS", "5"))      # أقصى رسائل خلال النافذة
-FLOOD_WINDOW_S = int(os.getenv("FLOOD_WINDOW_S", "6"))      # طول النافذة بالثواني
-HEAVY_TASK_LOCK = True                                      # قفل مهام ثقيلة لكل مستخدم
-ANALYTICS_ENABLED = True
-TMP_CLEAN_INTERVAL = int(os.getenv("TMP_CLEAN_INTERVAL", "3600"))  # كل ساعة
-TMP_MAX_AGE_H = int(os.getenv("TMP_MAX_AGE_H", "8"))               # حذف ملفات أقدم من 8 ساعات
-CACHE_TTL = {
-    "geo": int(os.getenv("TTL_GEO_S", "900")),
-    "head": int(os.getenv("TTL_HEAD_S", "300")),
-    "dns": int(os.getenv("TTL_DNS_S", "900")),
-    "whois": int(os.getenv("TTL_WHOIS_S", "3600")),
-}
-
 def admin_button_url() -> str:
     return f"tg://resolve?domain={OWNER_USERNAME}" if OWNER_USERNAME else f"tg://user?id={OWNER_ID}"
 
@@ -149,7 +133,7 @@ SERV_VCC_LINKS = [
     ] if u
 ]
 
-# الدورات
+# الدورات (عناوين تُعرّب تلقائيًا)
 COURSE_PYTHON_URL = os.getenv("COURSE_PYTHON_URL","https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/Y8WctvBLiA6u6AASeZX2IUfDQAolTJ4QFGx9WRCu.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250815%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250815T021202Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=b7e556dd4c8a23f56f5e7cba1a29eadb6c48fa7c0656f463d47a64cd10ebfa81")
 COURSE_CYBER_URL  = os.getenv("COURSE_CYBER_URL","https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/pZ0spOmm1K0dA2qAzUuWUb4CcMMjUPTbn7WMRwAc.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250815%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250815T021253Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=bc11797f9de3cb6f391937936f73f8f2acded12a7d665c5d82e453241dea50c9")
 COURSE_EH_URL     = os.getenv("COURSE_EH_URL","https://www.mediafire.com/folder/r26pp5mpduvnx/%D8%AF%D9%88%D8%B1%D8%A9_%D8%A7%D9%84%D9%87%D8%A7%D9%83%D8%B1_%D8%A7%D9%84%D8%A7%D8%AE%D9%84%D8%A7%D9%82%D9%8A_%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D8%B1%D8%AD%D9%85%D9%86_%D9%88%D8%B5%D9%81%D9%8A")
@@ -269,7 +253,7 @@ def _run_http_server():
 
 _run_http_server()
 
-# ====================== i18n ======================
+# ==== i18n ====
 def T(key: str, lang: str | None = None, **kw) -> str:
     AR = {
         "start_pick_lang": "اختر لغتك:",
@@ -310,72 +294,49 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "check_pay": "✅ تحقّق الدفع",
         "ai_chat_on": "🤖 وضع الدردشة مفعّل. أرسل سؤالك الآن.",
         "ai_chat_off": "🔚 تم إنهاء وضع الذكاء الاصطناعي.",
-        # الأمن
         "security_desc": "أرسل رابط/دومين/إيميل للفحص. (urlscan, kickbox, ipinfo) – يتطلب مفاتيح.",
-        "page_security": "🛡️ الأمن:",
-        "btn_urlscan": "🔗 فحص رابط",
-        "btn_emailcheck": "📧 فحص إيميل",
-        "btn_geolookup": "🛰️ موقع IP/دومين",
-        "send_url_scan": "🛡️ أرسل الرابط للفحص.",
-        "send_email_check": "✉️ أرسل الإيميل للفحص.",
-        "send_ip_or_domain": "📍 أرسل IP أو دومين.",
-        # الخدمات
-        "page_services": "🧰 خدمات:",
-        "btn_numbers": "📱 أرقام مؤقتة",
-        "btn_vcc": "💳 فيزا افتراضية",
         "services_desc": "اختر خدمة:",
-        "services_numbers": "📱 الأرقام المؤقتة (استخدمها بمسؤولية):",
-        "services_vcc": "💳 بطاقات/فيزا افتراضية (قانونية):",
-        # AI
+        "files_desc": "تحويلات ملفات: JPG→PDF (محلي)، و PDF↔Word عبر PDF.co إن وُجد المفتاح.",
+        "unban_desc": "قوالب جاهزة ورسائل دعم للمنصات.",
+        "courses_desc": "دورات مختارة بروابط مباشرة.",
+        "downloader_desc": "أرسل رابط فيديو/صوت (يوتيوب/تويتر/انستغرام...).",
+        "boost_desc": "روابط منصات زيادة المتابعين (استخدمها بمسؤولية).",
+        "darkgpt_desc": "يفتح الرابط:",
+        "choose_lang_done": "✅ تم ضبط اللغة: {chosen}",
+        "myinfo": "👤 اسمك: {name}\n🆔 معرفك: {uid}\n🌐 اللغة: {lng}",
+
+        # صفحات داخلية مع أزرار ملوّنة باللغة المختارة
         "page_ai": "🤖 أدوات الذكاء الاصطناعي:",
         "btn_ai_chat": "🤖 دردشة",
         "btn_ai_write": "✍️ كتابة",
         "btn_ai_translate": "🌐 ترجمة",
         "btn_ai_stt": "🎙️ تحويل صوت لنص",
         "btn_ai_image": "🖼️ توليد صور",
-        "trg_lang_now": "🎯 لغة الترجمة الحالية: {to}",
-        "to_ar": "الترجمة → العربية",
-        "to_en": "الترجمة → English",
-        # الدورات
+
+        "page_security": "🛡️ الأمن:",
+        "btn_urlscan": "🔗 فحص رابط",
+        "btn_emailcheck": "📧 فحص إيميل",
+        "btn_geolookup": "🛰️ موقع IP/دومين",
+
+        "page_services": "🧰 خدمات:",
+        "btn_numbers": "📱 أرقام مؤقتة",
+        "btn_vcc": "💳 فيزا افتراضية",
+        "services_numbers": "📱 الأرقام المؤقتة (استخدمها بمسؤولية):",
+        "services_vcc": "💳 بطاقات/فيزا افتراضية (قانونية):",
+
         "page_courses": "🎓 الدورات:",
         "course_python": "بايثون من الصفر",
         "course_cyber": "الأمن السيبراني من الصفر",
         "course_eh": "الهكر الأخلاقي",
         "course_ecom": "التجارة الإلكترونية",
-        "note_maybe_expire": "⚠️ قد تكون بعض الروابط مؤقتة (S3) وقد تنتهي صلاحيتها.",
-        # الملفات
+
         "page_files": "🗂️ أدوات الملفات:",
-        "files_desc": "تحويلات ملفات: JPG→PDF (محلي)، و PDF↔Word عبر PDF.co إن وُجد المفتاح.",
         "btn_jpg2pdf": "JPG → PDF",
         "btn_pdf2word": "PDF → Word",
         "btn_word2pdf": "Word → PDF",
-        "prompt_img2pdf": "📌 أرسل صورة واحدة أو أكثر وسأحوّلها إلى PDF. ثم اضغط /makepdf",
-        "prompt_pdf2word": "📌 أرسل ملف PDF وسيتم تحويله إلى Word (باستخدام PDF.co عند وجود المفتاح).",
-        "prompt_word2pdf": "📌 أرسل ملف DOC أو DOCX وسيُحوّل إلى PDF (PDF.co).",
-        "img_added_count": "✅ تم إضافة صورة/ملف ({n}). أرسل /makepdf للإخراج أو أرسل صورًا إضافية.",
-        "makepdf_needed": "هذه الأداة تعمل بعد اختيار (JPG → PDF) من الأقسام.",
-        "makepdf_no_images": "لم يتم استلام أي صور بعد. أرسل صورًا ثم /makepdf.",
-        "makepdf_failed": "⚠️ فشل إنشاء PDF أو الحجم كبير.",
-        # التنزيل/الرشق/Dark GPT
+
         "page_downloader": "⬇️ تنزيل الفيديو:",
-        "downloader_desc": "أرسل رابط فيديو/صوت (يوتيوب/تويتر/انستغرام...).",
         "page_boost": "📈 رشق متابعين:",
-        "boost_desc": "روابط منصات زيادة المتابعين (استخدمها بمسؤولية).",
-        "darkgpt_desc": "يفتح الرابط:",
-        # رسائل متفرقة
-        "choose_lang_done": "✅ تم ضبط اللغة: {chosen}",
-        "myinfo": "👤 اسمك: {name}\n🆔 معرفك: {uid}\n🌐 اللغة: {lng}",
-        "valid_url_required": "أرسل رابط صالح (http/https).",
-        "doc_send_fail": "⚠️ تعذّر إرسال الملف.",
-        "download_fail_too_big": "⚠️ تعذّر التحميل أو أن الملف كبير.",
-        "img_gen_fail": "⚠️ تعذّر توليد الصورة.",
-        "pdf2word_need_key": "⚠️ تحتاج PDFCO_API_KEY لتفعيل PDF → Word.",
-        "word2pdf_need_key": "⚠️ تحتاج PDFCO_API_KEY لتفعيل Word → PDF.",
-        "pdf2word_fail": "⚠️ فشل التحويل (PDF → Word).",
-        "word2pdf_fail": "⚠️ فشل التحويل (Word → PDF).",
-        "pay_create_fail": "تعذّر إنشاء/فتح رابط الدفع حالياً.",
-        "slow_down": "⏱️ أمهل ثواني بين الرسائل.",
-        "busy_task": "⏳ ما زال تنفيذ سابق قيد العمل. انتظر حتى ينتهي.",
     }
     EN = {
         "start_pick_lang": "Pick your language:",
@@ -414,77 +375,51 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "vip_ref": "🔖 Your reference: <code>{ref}</code>",
         "go_pay": "🚀 Go to payment",
         "check_pay": "✅ Verify payment",
-        "ai_chat_on": "🤖 Chat mode enabled. Send your question.",
-        "ai_chat_off": "🔚 AI chat disabled.",
-        # Security
         "security_desc": "Send URL/domain/email to check (urlscan, kickbox, ipinfo) – needs API keys.",
-        "page_security": "🛡️ Security:",
-        "btn_urlscan": "🔗 URL Scan",
-        "btn_emailcheck": "📧 Email Check",
-        "btn_geolookup": "🛰️ IP/Domain Geo",
-        "send_url_scan": "🛡️ Send the link to scan.",
-        "send_email_check": "✉️ Send the email to verify.",
-        "send_ip_or_domain": "📍 Send an IP or a domain.",
-        # Services
-        "page_services": "🧰 Services:",
-        "btn_numbers": "📱 Temporary Numbers",
-        "btn_vcc": "💳 Virtual Card",
         "services_desc": "Pick a service:",
-        "services_numbers": "📱 Temporary numbers (use responsibly):",
-        "services_vcc": "💳 Virtual/Prepaid card providers:",
-        # AI
+        "files_desc": "File conversions: JPG→PDF (local), PDF↔Word via PDF.co if key set.",
+        "unban_desc": "Ready-made support templates & links.",
+        "courses_desc": "Curated courses (links).",
+        "downloader_desc": "Send video/audio link (YouTube/Twitter/Instagram...).",
+        "boost_desc": "Follower growth sites (use responsibly).",
+        "darkgpt_desc": "Opens:",
+        "choose_lang_done": "✅ Language set: {chosen}",
+        "myinfo": "👤 Name: {name}\n🆔 ID: {uid}\n🌐 Lang: {lng}",
+
         "page_ai": "🤖 AI Tools:",
         "btn_ai_chat": "🤖 Chat",
         "btn_ai_write": "✍️ Writing",
         "btn_ai_translate": "🌐 Translate",
         "btn_ai_stt": "🎙️ Speech-to-Text",
         "btn_ai_image": "🖼️ Image Gen",
-        "trg_lang_now": "🎯 Current target language: {to}",
-        "to_ar": "Translate → العربية",
-        "to_en": "Translate → English",
-        # Courses
+
+        "page_security": "🛡️ Security:",
+        "btn_urlscan": "🔗 URL Scan",
+        "btn_emailcheck": "📧 Email Check",
+        "btn_geolookup": "🛰️ IP/Domain Geo",
+
+        "page_services": "🧰 Services:",
+        "btn_numbers": "📱 Temporary Numbers",
+        "btn_vcc": "💳 Virtual Card",
+        "services_numbers": "📱 Temporary numbers (use responsibly):",
+        "services_vcc": "💳 Virtual/Prepaid card providers:",
+
         "page_courses": "🎓 Courses:",
         "course_python": "Python from Zero",
         "course_cyber": "Cybersecurity from Zero",
         "course_eh": "Ethical Hacking",
         "course_ecom": "E-commerce",
-        "note_maybe_expire": "⚠️ Some links (S3) may be temporary and expire.",
-        # Files
+
         "page_files": "🗂️ File Tools:",
-        "files_desc": "File conversions: JPG→PDF (local), PDF↔Word via PDF.co if key set.",
         "btn_jpg2pdf": "JPG → PDF",
         "btn_pdf2word": "PDF → Word",
         "btn_word2pdf": "Word → PDF",
-        "prompt_img2pdf": "📌 Send one or more images and I’ll convert to PDF. Then press /makepdf",
-        "prompt_pdf2word": "📌 Send a PDF and I’ll convert it to Word (via PDF.co if key is set).",
-        "prompt_word2pdf": "📌 Send a DOC/DOCX and I’ll convert it to PDF (PDF.co).",
-        "img_added_count": "✅ Image/file added ({n}). Send /makepdf to export, or send more images.",
-        "makepdf_needed": "This tool works after choosing (JPG → PDF) from Sections.",
-        "makepdf_no_images": "No images received yet. Send images then /makepdf.",
-        "makepdf_failed": "⚠️ Failed to create PDF or file is too large.",
-        # Downloader / Boost / DarkGPT
+
         "page_downloader": "⬇️ Downloader:",
-        "downloader_desc": "Send a video/audio link (YouTube/Twitter/Instagram...).",
         "page_boost": "📈 Followers:",
-        "boost_desc": "Follower growth sites (use responsibly).",
-        "darkgpt_desc": "Opens:",
-        # Misc messages
-        "choose_lang_done": "✅ Language set: {chosen}",
-        "myinfo": "👤 Name: {name}\n🆔 ID: {uid}\n🌐 Lang: {lng}",
-        "valid_url_required": "Please send a valid http/https URL.",
-        "doc_send_fail": "⚠️ Failed to send the file.",
-        "download_fail_too_big": "⚠️ Download failed or file is too large.",
-        "img_gen_fail": "⚠️ Failed to generate the image.",
-        "pdf2word_need_key": "⚠️ You need PDFCO_API_KEY to enable PDF → Word.",
-        "word2pdf_need_key": "⚠️ You need PDFCO_API_KEY to enable Word → PDF.",
-        "pdf2word_fail": "⚠️ Conversion failed (PDF → Word).",
-        "word2pdf_fail": "⚠️ Conversion failed (Word → PDF).",
-        "pay_create_fail": "Couldn’t create/open a payment link right now.",
-        "slow_down": "⏱️ Please slow down a bit.",
-        "busy_task": "⏳ A previous task is still running. Please wait.",
     }
 
-    # توافق نداءات قديمة: T("ar","key") أو T("en","key")
+    # توافق نداءات قديمة: T("ar","key")
     if key in ("ar", "en") and (lang is not None and lang not in ("ar", "en")):
         key, lang = lang, key
     if lang not in ("ar","en"):
@@ -497,7 +432,7 @@ def T(key: str, lang: str | None = None, **kw) -> str:
     except Exception:
         return s
 
-# ================= قاعدة البيانات + Analytics =================
+# ==== قاعدة البيانات ====
 _conn_lock = threading.RLock()
 def _db():
     conn = getattr(_db, "_conn", None)
@@ -581,31 +516,10 @@ def migrate_db():
             paid_at INTEGER,
             raw TEXT
         );""")
-
-        # جدول أحداث للاستخدام/الإحصائيات
-        _db().execute("""
-        CREATE TABLE IF NOT EXISTS events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id TEXT,
-            etype TEXT,
-            edata TEXT,
-            ts INTEGER
-        );""")
         _db().commit()
 
 def init_db():
     migrate_db()
-
-def log_event(uid, etype: str, edata: dict | None = None):
-    if not ANALYTICS_ENABLED:
-        return
-    try:
-        with _conn_lock:
-            _db().execute("INSERT INTO events (user_id, etype, edata, ts) VALUES (?,?,?,?)",
-                          (str(uid), etype, json.dumps(edata or {}, ensure_ascii=False), int(time.time())))
-            _db().commit()
-    except Exception as e:
-        log.debug("log_event error: %s", e)
 
 def user_get(uid: int|str) -> dict:
     uid = str(uid)
@@ -756,46 +670,58 @@ async def paylink_create_invoice(order_number: str, amount: float, client_name: 
             if not pay_url: raise RuntimeError(f"addInvoice failed: {data}")
             return pay_url, data
 
-# ==== كاش بسيط (TTL) ====
-_CACHE = {"geo": {}, "head": {}, "dns": {}, "whois": {}}
-def _cache_get(ns, key, ttl):
-    ent = _CACHE.get(ns, {}).get(key)
-    if not ent: return None
-    ts, val = ent
-    if time.time() - ts <= ttl: return val
-    return None
-def _cache_set(ns, key, val):
-    _CACHE.setdefault(ns, {})[key] = (time.time(), val)
-
 # ==== أدوات تقنية ====
 _IP_RE = re.compile(r"\b(?:(?:[0-9]{1,3}\.){3}[0-9]{1,3})\b")
 _HOST_RE = re.compile(r"^[a-zA-Z0-9.-]{1,253}\.[A-Za-z]{2,63}$")
 _URL_RE = re.compile(r"https?://[^\s]+")
 DISPOSABLE_DOMAINS = {"mailinator.com","tempmail.com","10minutemail.com","yopmail.com","guerrillamail.com","trashmail.com"}
 
+# >>>>>>> تعديل: fetch_geo يستخدم ipinfo أولاً ثم ip-api كبديل <<<<<<<
 async def fetch_geo(query: str) -> dict|None:
-    ck = _cache_get("geo", query, CACHE_TTL["geo"])
-    if ck is not None: return ck
+    # استخدم ipinfo إن وُجد توكن
+    if IPINFO_TOKEN:
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(f"https://ipinfo.io/{query}?token={IPINFO_TOKEN}", timeout=15) as r:
+                    d = await r.json(content_type=None)
+            lat, lon = None, None
+            if isinstance(d.get("loc"), str) and "," in d["loc"]:
+                lat, lon = d["loc"].split(",", 1)
+            return {
+                "status": "success",
+                "query": d.get("ip", query),
+                "country": d.get("country"),
+                "regionName": d.get("region"),
+                "city": d.get("city"),
+                "zip": d.get("postal"),
+                "timezone": d.get("timezone"),
+                "isp": d.get("org"),
+                "org": d.get("org"),
+                "as": d.get("asn", {}).get("asn") if isinstance(d.get("asn"), dict) else d.get("asn"),
+                "lat": lat, "lon": lon,
+                "reverse": d.get("hostname"),
+            }
+        except Exception:
+            pass  # نرجع لـ ip-api أدناه
+
+    # بديل ip-api (بدون مفاتيح)
     url = f"http://ip-api.com/json/{query}?fields=status,message,country,regionName,city,isp,org,as,query,lat,lon,timezone,zip,reverse"
     try:
         async with aiohttp.ClientSession() as s:
             async with s.get(url, timeout=15) as r:
                 data = await r.json(content_type=None)
                 if data.get("status") != "success":
-                    val = {"error": data.get("message","lookup failed")}
-                    _cache_set("geo", query, val); return val
-                _cache_set("geo", query, data)
+                    return {"error": data.get("message","lookup failed")}
                 return data
     except Exception as e:
         log.warning("[geo] fetch error: %s", e)
-        val = {"error": "network error"}
-        _cache_set("geo", query, val); return val
+        return {"error": "network error"}
 
 def fmt_geo(data: dict) -> str:
     if not data: return "⚠️ تعذّر جلب البيانات."
     if data.get("error"): return f"⚠️ {data['error']}"
     parts = []
-    parts.append(f"🔎 query: <code>{h(str(data.get('query','')))}</code>")
+    parts.append(f"🔎 query: <code>{data.get('query','')}</code>")
     parts.append(f"🌍 {data.get('country','?')} — {data.get('regionName','?')}")
     parts.append(f"🏙️ {data.get('city','?')} — {data.get('zip','-')}")
     parts.append(f"⏰ {data.get('timezone','-')}")
@@ -813,51 +739,37 @@ def md5_hex(s: str) -> str:
     return hashlib.md5(s.strip().lower().encode()).hexdigest()
 
 async def http_head(url: str) -> int|None:
-    ck = _cache_get("head", url, CACHE_TTL["head"])
-    if ck is not None: return ck
     try:
         async with aiohttp.ClientSession() as s:
             async with s.head(url, allow_redirects=True, timeout=15) as r:
-                _cache_set("head", url, r.status)
                 return r.status
     except Exception:
-        _cache_set("head", url, None)
         return None
 
 def resolve_ip(host: str) -> str|None:
-    ck = _cache_get("dns", host, CACHE_TTL["dns"])
-    if ck is not None: return ck
     try:
         infos = socket.getaddrinfo(host, None)
         for _, _, _, _, sockaddr in infos:
             ip = sockaddr[0]
-            if ":" not in ip:
-                _cache_set("dns", host, ip); return ip
-        ip = infos[0][4][0] if infos else None
-        _cache_set("dns", host, ip); return ip
+            if ":" not in ip: return ip
+        return infos[0][4][0] if infos else None
     except Exception:
-        _cache_set("dns", host, None)
         return None
 
 def whois_domain(domain: str) -> dict|None:
-    ck = _cache_get("whois", domain, CACHE_TTL["whois"])
-    if ck is not None: return ck
     if pywhois is None:
-        val = {"error": "python-whois غير مثبت"}
-        _cache_set("whois", domain, val); return val
+        return {"error": "python-whois غير مثبت"}
     try:
         w = pywhois.whois(domain)
-        val = {
+        return {
             "domain_name": str(w.domain_name) if hasattr(w, "domain_name") else None,
             "registrar": getattr(w, "registrar", None),
             "creation_date": str(getattr(w, "creation_date", None)),
             "expiration_date": str(getattr(w, "expiration_date", None)),
             "emails": getattr(w, "emails", None)
         }
-        _cache_set("whois", domain, val); return val
     except Exception as e:
-        val = {"error": f"whois error: {e}"}
-        _cache_set("whois", domain, val); return val
+        return {"error": f"whois error: {e}"}
 
 # فحوص الأمن
 async def urlscan_lookup(u: str) -> str:
@@ -929,8 +841,8 @@ async def osint_email(email: str) -> str:
     w = whois_domain(domain)
     w_txt = "WHOIS: غير متاح" if not w else (f"WHOIS: {w['error']}" if w.get("error") else f"WHOIS:\n- Registrar: {w.get('registrar')}\n- Created: {w.get('creation_date')}\n- Expires: {w.get('expiration_date')}")
     out = [
-        f"📧 {h(email)}",
-        f"📮 MX: {h(mx_txt)}",
+        f"📧 {email}",
+        f"📮 MX: {mx_txt}",
         f"🖼️ Gravatar: {grav}",
         w_txt,
         f"\n{geo_text}"
@@ -962,7 +874,7 @@ async def link_scan(u: str) -> str:
         issues.append(us)
     except Exception:
         pass
-    return f"🔗 <code>{h(u)}</code>\nالمضيف: <code>{h(host)}</code>\n" + "\n".join(issues) + f"\n\n{geo_txt}"
+    return f"🔗 <code>{u}</code>\nالمضيف: <code>{host}</code>\n" + "\n".join(issues) + f"\n\n{geo_txt}"
 
 # PDF.co تحويلات PDF↔Word
 async def pdfco_convert(endpoint: str, file_bytes: bytes, out_name: str) -> bytes|None:
@@ -1012,9 +924,9 @@ async def replicate_image_generate(prompt: str) -> bytes|None:
             pred_url = pred.get("urls",{}).get("get")
             for _ in range(40):
                 await asyncio.sleep(2)
-                async with aiohttp.ClientSession() as s2:
-                    async with s2.get(pred_url, headers=headers, timeout=30) as r2:
-                        cur = await r2.json()
+                async with aiohttp.ClientSession() as s:
+                    async with s.get(pred_url, headers=headers, timeout=30) as r:
+                        cur = await r.json()
                 if cur.get("status") in ("succeeded","failed","canceled"):
                     pred = cur; break
             if pred.get("status") != "succeeded":
@@ -1024,9 +936,9 @@ async def replicate_image_generate(prompt: str) -> bytes|None:
             if not outputs:
                 return None
             img_url = outputs[0]
-            async with aiohttp.ClientSession() as s3:
-                async with s3.get(img_url, timeout=60) as r3:
-                    return await r3.read()
+            async with aiohttp.ClientSession() as s:
+                async with s.get(img_url, timeout=60) as r:
+                    return await r.read()
     except Exception as e:
         log.error("[replicate] %s", e)
         return None
@@ -1164,7 +1076,7 @@ async def download_media(url: str) -> Path|None:
         return None
     return None
 
-# ================== Telegram UI ==================
+# ==== Telegram UI ====
 def gate_kb(lang="ar"):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📣 " + ( "الانضمام للقناة" if lang=="ar" else "Join Channel"), url=MAIN_CHANNEL_LINK)],
@@ -1202,15 +1114,6 @@ def ai_stop_kb(lang="ar"):
         [InlineKeyboardButton(T("back", lang=lang), callback_data="back_home")]
     ])
 
-def ai_translate_kb(lang="ar", to="ar"):
-    # لوحة صغيرة لاختيار لغة الهدف + إيقاف
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(T("to_ar", lang=lang), callback_data="ai_tr_to_ar")],
-        [InlineKeyboardButton(T("to_en", lang=lang), callback_data="ai_tr_to_en")],
-        [InlineKeyboardButton("🔚 " + ( "إنهاء" if lang=="ar" else "Stop" ), callback_data="ai_stop")],
-        [InlineKeyboardButton(T("back", lang=lang), callback_data="sec_ai")]
-    ])
-
 async def safe_edit(q, text=None, kb=None):
     try:
         if text is not None:
@@ -1227,43 +1130,12 @@ async def safe_edit(q, text=None, kb=None):
         else:
             log.warning("safe_edit error: %s", e)
 
-# ================== Anti-flood / Heavy locks / tmp clean ==================
-_user_msgs_window = defaultdict(lambda: deque(maxlen=50))  # uid -> deque[timestamps]
-_user_locks = defaultdict(asyncio.Lock)  # لكل مستخدم قفل للمهام الثقيلة
-
-def _allow_message(uid: int) -> bool:
-    dq = _user_msgs_window[uid]
-    now = time.time()
-    dq.append(now)
-    # احسب عدد الرسائل خلال النافذة
-    cnt = sum(1 for t in dq if now - t <= FLOOD_WINDOW_S)
-    return cnt <= FLOOD_MAX_MSGS
-
-def _start_tmp_cleaner():
-    def _clean():
-        while True:
-            try:
-                cutoff = time.time() - TMP_MAX_AGE_H*3600
-                TMP_DIR.mkdir(parents=True, exist_ok=True)
-                for p in TMP_DIR.iterdir():
-                    try:
-                        if p.is_file() and p.stat().st_mtime < cutoff:
-                            p.unlink(missing_ok=True)
-                    except Exception:
-                        pass
-            except Exception as e:
-                log.debug("tmp_clean error: %s", e)
-            time.sleep(TMP_CLEAN_INTERVAL)
-    threading.Thread(target=_clean, daemon=True).start()
-
 # ==== Start / Commands ====
 async def on_startup(app: Application):
     try:
         await app.bot.delete_webhook(drop_pending_updates=True)
     except Exception as e:
         log.warning("[startup] delete_webhook: %s", e)
-
-    _start_tmp_cleaner()
 
     global CHANNEL_ID
     CHANNEL_ID = None
@@ -1293,8 +1165,8 @@ async def on_startup(app: Application):
                 BotCommand("id","Your ID"), BotCommand("grant","Grant VIP"),
                 BotCommand("revoke","Revoke VIP"), BotCommand("vipinfo","VIP Info"),
                 BotCommand("refreshcmds","Refresh Commands"), BotCommand("aidiag","AI diag"),
+                BotCommand("secdiag","Security diagnostics"),
                 BotCommand("libdiag","Lib versions"), BotCommand("paylist","Payments list"),
-                BotCommand("stats","Usage stats"), BotCommand("broadcast","Broadcast"),
                 BotCommand("restart","Restart"),
             ],
             scope=BotCommandScopeChat(chat_id=OWNER_ID)
@@ -1311,13 +1183,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton(T("lang_en", lang="ar"), callback_data="set_lang_en")]
     ])
     await context.bot.send_message(chat_id, T("start_pick_lang", lang=u.get("pref_lang","ar")), reply_markup=kb)
-    log_event(uid, "cmd:start", {})
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     lang = user_get(uid).get("pref_lang","ar")
     await update.message.reply_text(T("main_menu", lang=lang), reply_markup=main_menu_kb(uid, lang))
-    log_event(uid, "cmd:help", {})
 
 # ==== الأزرار ====
 ALLOWED_STATUSES = {ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR}
@@ -1368,7 +1238,6 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; uid = q.from_user.id
     u = user_get(uid); lang = u.get("pref_lang","ar")
     await q.answer()
-    log_event(uid, "btn", {"data": q.data})
 
     # اختيار اللغة
     if q.data in ("set_lang_ar","set_lang_en"):
@@ -1392,7 +1261,6 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # تحقق الانضمام
     if q.data == "verify":
         ok = await is_member(context, uid, force=True, retries=3, backoff=0.7)
-        log_event(uid, "verify", {"ok": ok})
         if ok:
             await safe_edit(q, T("verify_done", lang=lang), kb=main_menu_kb(uid, lang))
         else:
@@ -1427,7 +1295,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]))
         except Exception as e:
             log.error("[upgrade] %s", e)
-            await safe_edit(q, T("pay_create_fail", lang=lang), kb=main_menu_kb(uid, lang))
+            await safe_edit(q, "تعذّر إنشاء/فتح رابط الدفع حالياً.", kb=main_menu_kb(uid, lang))
         return
 
     if q.data.startswith("verify_pay_"):
@@ -1463,36 +1331,18 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, T("ai_disabled", lang=lang), kb=sections_kb(lang)); return
         ai_set_mode(uid, "ai_chat")
         await safe_edit(q, T("ai_chat_on", lang=lang), kb=ai_stop_kb(lang)); return
-
     if q.data == "ai_stop":
         ai_set_mode(uid, None)
         await safe_edit(q, T("ai_chat_off", lang=lang), kb=sections_kb(lang)); return
-
     if q.data == "ai_writer":
         ai_set_mode(uid, "writer")
         await safe_edit(q, T("send_text", lang=lang), kb=ai_stop_kb(lang)); return
-
     if q.data == "ai_translate":
-        # تحسين: نعرض لوحة لاختيار هدف الترجمة
-        to = "ar" if lang=="ar" else "en"
-        ai_set_mode(uid, "translate", {"to": to})
-        await safe_edit(q, T("send_text", lang=lang) + "\n" + T("trg_lang_now", lang=lang, to=to.upper()),
-                        kb=ai_translate_kb(lang, to=to)); return
-
-    if q.data == "ai_tr_to_ar":
-        ai_set_mode(uid, "translate", {"to": "ar"})
-        await safe_edit(q, T("send_text", lang=lang) + "\n" + T("trg_lang_now", lang=lang, to="AR"),
-                        kb=ai_translate_kb(lang, to="ar")); return
-
-    if q.data == "ai_tr_to_en":
-        ai_set_mode(uid, "translate", {"to": "en"})
-        await safe_edit(q, T("send_text", lang=lang) + "\n" + T("trg_lang_now", lang=lang, to="EN"),
-                        kb=ai_translate_kb(lang, to="en")); return
-
+        ai_set_mode(uid, "translate", {"to": "ar" if lang=="ar" else "en"})
+        await safe_edit(q, T("send_text", lang=lang), kb=ai_stop_kb(lang)); return
     if q.data == "ai_stt":
         ai_set_mode(uid, "stt")
         await safe_edit(q, T("send_text", lang=lang), kb=ai_stop_kb(lang)); return
-
     if q.data == "ai_image":
         ai_set_mode(uid, "image_ai")
         await safe_edit(q, T("send_text", lang=lang), kb=ai_stop_kb(lang)); return
@@ -1506,16 +1356,23 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]
         ])); return
 
+    # >>>>>>> تعديل: رسائل التوجيه داخل الأمن حسب اللغة <<<<<<<
     if q.data == "sec_security_url":
-        ai_set_mode(uid, "link_scan"); await safe_edit(q, T("send_url_scan", lang=lang), kb=ai_stop_kb(lang)); return
+        ai_set_mode(uid, "link_scan")
+        await safe_edit(q, ("🛡️ أرسل الرابط للفحص." if lang=="ar" else "🛡️ Send the URL to scan."),
+                        kb=ai_stop_kb(lang)); return
     if q.data == "sec_security_email":
-        ai_set_mode(uid, "email_check"); await safe_edit(q, T("send_email_check", lang=lang), kb=ai_stop_kb(lang)); return
+        ai_set_mode(uid, "email_check")
+        await safe_edit(q, ("✉️ أرسل الإيميل للفحص." if lang=="ar" else "✉️ Send the email to check."),
+                        kb=ai_stop_kb(lang)); return
     if q.data == "sec_security_geo":
-        ai_set_mode(uid, "geo_ip"); await safe_edit(q, T("send_ip_or_domain", lang=lang), kb=ai_stop_kb(lang)); return
+        ai_set_mode(uid, "geo_ip")
+        await safe_edit(q, ("📍 أرسل IP أو دومين." if lang=="ar" else "📍 Send an IP or domain."),
+                        kb=ai_stop_kb(lang)); return
 
     # الخدمات (قائمتان داخليًا)
     if q.data == "sec_services":
-        await safe_edit(q, T("page_services", lang=lang) + "\n\n" + T("services_desc", lang=lang),
+        await safe_edit(q, T("page_services", lang=lang) + "\n\n" + T("choose_option", lang=lang),
                         kb=InlineKeyboardMarkup([
                             [InlineKeyboardButton(T("btn_numbers", lang=lang), callback_data="serv_numbers")],
                             [InlineKeyboardButton(T("btn_vcc", lang=lang), callback_data="serv_vcc")],
@@ -1548,7 +1405,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         key = q.data.replace("unban_","")
         msg = UNBAN_TEMPLATES.get(key,"")
         link = UNBAN_LINKS.get(key,"")
-        await safe_edit(q, f"📋 Message:\n<code>{h(msg)}</code>\n\n🔗 {h(link)}", kb=InlineKeyboardMarkup([
+        await safe_edit(q, f"📋 Message:\n<code>{msg}</code>\n\n🔗 {link}", kb=InlineKeyboardMarkup([
             [InlineKeyboardButton(T("back", lang=lang), callback_data="sec_unban")]
         ])); return
 
@@ -1561,12 +1418,8 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (T("course_ecom", lang=lang),   COURSE_ECOM_URL),
         ]
         rows = [[InlineKeyboardButton(title, url=url)] for title,url in courses]
-        # ملاحظة للروابط المؤقتة (S3)
-        note = ""
-        if any("X-Amz-Expires=" in (COURSE_PYTHON_URL+COURSE_CYBER_URL) for _ in [0]):
-            note = "\n\n" + T("note_maybe_expire", lang=lang)
         rows.append([InlineKeyboardButton(T("back", lang=lang), callback_data="sections")])
-        await safe_edit(q, T("page_courses", lang=lang) + (note or ""), kb=InlineKeyboardMarkup(rows)); return
+        await safe_edit(q, T("page_courses", lang=lang), kb=InlineKeyboardMarkup(rows)); return
 
     # الملفات
     if q.data == "sec_files":
@@ -1579,13 +1432,13 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if q.data == "file_jpg2pdf":
         ai_set_mode(uid, "file_img_to_pdf", {"paths":[]})
-        await safe_edit(q, T("prompt_img2pdf", lang=lang), kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
+        await safe_edit(q, "📌 أرسل صورة واحدة أو أكثر وسأحوّلها إلى PDF. ثم اضغط /makepdf", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
     if q.data == "file_pdf2word":
         ai_set_mode(uid, "file_pdf2word")
-        await safe_edit(q, T("prompt_pdf2word", lang=lang), kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
+        await safe_edit(q, "📌 أرسل ملف PDF وسيتم تحويله إلى Word (باستخدام PDF.co عند وجود المفتاح).", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
     if q.data == "file_word2pdf":
         ai_set_mode(uid, "file_word2pdf")
-        await safe_edit(q, T("prompt_word2pdf", lang=lang), kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
+        await safe_edit(q, "📌 أرسل ملف DOC أو DOCX وسيُحوّل إلى PDF (PDF.co).", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
 
     # تنزيل الفيديو
     if q.data == "sec_downloader":
@@ -1625,15 +1478,11 @@ def images_to_pdf(image_paths: list[Path]) -> Path|None:
         log.error("[img->pdf] %s", e)
         return None
 
-# ================== حارس الرسائل ==================
+# ==== حارس الرسائل ====
 async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     u = user_get(uid)
     lang = u.get("pref_lang","ar")
-
-    # Anti-flood
-    if not _allow_message(uid):
-        await update.message.reply_text(T("slow_down", lang=lang)); return
 
     if not await must_be_member_or_vip(context, uid):
         await update.message.reply_text(T("gate_join", lang=lang), reply_markup=gate_kb(lang)); return
@@ -1641,30 +1490,20 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mode, extra = ai_get_mode(uid)
     msg = update.message
 
-    # قفل المهام الثقيلة (تنزيل/صورة AI) لكل مستخدم
-    lock = _user_locks[uid]
-
     if msg.text and not msg.text.startswith("/"):
         text = msg.text.strip()
-        log_event(uid, "msg", {"mode": mode})
-
         if mode == "ai_chat":
             await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
             await update.message.reply_text(ai_chat_reply(text), reply_markup=ai_stop_kb(lang)); return
-
         if mode == "writer":
             out = await ai_write(text); await update.message.reply_text(out, parse_mode="HTML"); return
-
         if mode == "translate":
             to = (extra or {}).get("to","ar")
             out = await translate_text(text, to); await update.message.reply_text(out); return
-
         if mode == "link_scan":
             out = await link_scan(text); await update.message.reply_text(out, parse_mode="HTML", disable_web_page_preview=True); return
-
         if mode == "email_check":
             out = await osint_email(text); await update.message.reply_text(out, parse_mode="HTML"); return
-
         if mode == "geo_ip":
             target = text
             query = target
@@ -1673,36 +1512,28 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if ip: query = ip
             data = await fetch_geo(query)
             await update.message.reply_text(fmt_geo(data), parse_mode="HTML"); return
-
         if mode == "media_dl":
             if not _URL_RE.search(text):
-                await update.message.reply_text(T("valid_url_required", lang=lang)); return
-            if HEAVY_TASK_LOCK and lock.locked():
-                await update.message.reply_text(T("busy_task", lang=lang)); return
-            async with lock:
-                await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_DOCUMENT)
-                path = await download_media(text)
-                if path and path.exists() and path.stat().st_size <= MAX_UPLOAD_BYTES:
-                    try:
-                        await update.message.reply_document(document=InputFile(str(path)))
-                    except Exception:
-                        await update.message.reply_text(T("doc_send_fail", lang=lang))
-                else:
-                    await update.message.reply_text(T("download_fail_too_big", lang=lang))
+                await update.message.reply_text("أرسل رابط صالح (http/https)."); return
+            await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_DOCUMENT)
+            path = await download_media(text)
+            if path and path.exists() and path.stat().st_size <= MAX_UPLOAD_BYTES:
+                try:
+                    await update.message.reply_document(document=InputFile(str(path)))
+                except Exception:
+                    await update.message.reply_text("⚠️ تعذّر إرسال الملف.")
+            else:
+                await update.message.reply_text("⚠️ تعذّر التحميل أو أن الملف كبير.")
             return
-
         if mode == "image_ai":
-            if HEAVY_TASK_LOCK and lock.locked():
-                await update.message.reply_text(T("busy_task", lang=lang)); return
             prompt = text
-            async with lock:
-                await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_PHOTO)
-                img_bytes = await ai_image_generate(prompt)
+            await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_PHOTO)
+            img_bytes = await ai_image_generate(prompt)
             if img_bytes:
                 bio = BytesIO(img_bytes); bio.name = "ai.png"
                 await update.message.reply_photo(photo=InputFile(bio))
             else:
-                await update.message.reply_text(T("img_gen_fail", lang=lang))
+                await update.message.reply_text("⚠️ تعذّر توليد الصورة.")
             return
 
     # ملفات/صوت/صور
@@ -1723,7 +1554,7 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             st_paths = (extra or {}).get("paths", [])
             st_paths.append(str(p))
             ai_set_mode(uid, "file_img_to_pdf", {"paths": st_paths})
-            await update.message.reply_text(T("img_added_count", lang=lang, n=len(st_paths)))
+            await update.message.reply_text(f"✅ تم إضافة صورة ({len(st_paths)}). أرسل /makepdf للإخراج أو أرسل صورًا إضافية.")
             return
 
     if msg.document:
@@ -1732,11 +1563,11 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             st_paths = (extra or {}).get("paths", [])
             st_paths.append(str(p))
             ai_set_mode(uid, "file_img_to_pdf", {"paths": st_paths})
-            await update.message.reply_text(T("img_added_count", lang=lang, n=len(st_paths)))
+            await update.message.reply_text(f"✅ تم إضافة ملف صورة ({len(st_paths)}). أرسل /makepdf للإخراج أو أرسل صورًا إضافية.")
             return
         if mode == "file_pdf2word":
             if not PDFCO_API_KEY:
-                await update.message.reply_text(T("pdf2word_need_key", lang=lang)); return
+                await update.message.reply_text("⚠️ تحتاج PDFCO_API_KEY لتفعيل PDF → Word."); return
             with open(p, "rb") as f: data = f.read()
             out = await pdfco_convert("pdf/convert/to/doc", data, "convert.doc")
             if out:
@@ -1744,11 +1575,11 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 path.write_bytes(out)
                 await update.message.reply_document(InputFile(str(path)))
             else:
-                await update.message.reply_text(T("pdf2word_fail", lang=lang))
+                await update.message.reply_text("⚠️ فشل التحويل (PDF → Word).")
             return
         if mode == "file_word2pdf":
             if not PDFCO_API_KEY:
-                await update.message.reply_text(T("word2pdf_need_key", lang=lang)); return
+                await update.message.reply_text("⚠️ تحتاج PDFCO_API_KEY لتفعيل Word → PDF."); return
             with open(p, "rb") as f: data = f.read()
             out = await pdfco_convert("pdf/convert/from/doc", data, "document.pdf")
             if out:
@@ -1756,34 +1587,33 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 path.write_bytes(out)
                 await update.message.reply_document(InputFile(str(path)))
             else:
-                await update.message.reply_text(T("word2pdf_fail", lang=lang))
+                await update.message.reply_text("⚠️ فشل التحويل (Word → PDF).")
             return
 
     if not mode:
         await update.message.reply_text(T("main_menu", lang=lang), reply_markup=main_menu_kb(uid, lang))
 
-# ==== أوامر إضافية للمستخدم ====
+# ==== أوامر إضافية ====
 async def makepdf_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     mode, extra = ai_get_mode(uid)
-    lang = user_get(uid).get("pref_lang","ar")
     if mode != "file_img_to_pdf":
-        await update.message.reply_text(T("makepdf_needed", lang=lang))
+        await update.message.reply_text("هذه الأداة تعمل بعد اختيار (JPG → PDF) من الأقسام.")
         return
     paths = (extra or {}).get("paths", [])
     if not paths:
-        await update.message.reply_text(T("makepdf_no_images", lang=lang)); return
+        await update.message.reply_text("لم يتم استلام أي صور بعد. أرسل صورًا ثم /makepdf."); return
     pdf = images_to_pdf([Path(p) for p in paths])
     if pdf and pdf.exists() and pdf.stat().st_size <= MAX_UPLOAD_BYTES:
         await update.message.reply_document(InputFile(str(pdf)))
     else:
-        await update.message.reply_text(T("makepdf_failed", lang=lang))
+        await update.message.reply_text("⚠️ فشل إنشاء PDF أو الحجم كبير.")
     ai_set_mode(uid, None, {})
 
 # ==== أوامر المالك ====
 async def help_cmd_owner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
-    await update.message.reply_text("Admin: /id /grant /revoke /vipinfo /refreshcmds /aidiag /libdiag /paylist /stats /broadcast /restart")
+    await update.message.reply_text("Admin: /id /grant /revoke /vipinfo /refreshcmds /aidiag /secdiag /libdiag /paylist /restart")
 
 async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
@@ -1828,6 +1658,64 @@ async def aidiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"aidiag error: {e}")
 
+# >>>>>>> جديد: أمر تشخيص مفاتيح وخدمات الأمن /secdiag <<<<<<<
+async def secdiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != OWNER_ID:
+        return
+
+    def present(name):
+        v = (os.getenv(name) or "").strip()
+        return f"{name}={'set('+str(len(v))+' chars)' if v else 'MISSING'}"
+
+    lines = [
+        "— Security keys —",
+        present("URLSCAN_API_KEY"),
+        present("KICKBOX_API_KEY"),
+        present("IPINFO_TOKEN"),
+        "",
+        "— Probes —",
+    ]
+
+    # urlscan quota probe
+    try:
+        key = (os.getenv("URLSCAN_API_KEY") or "").strip()
+        if key:
+            headers = {"API-Key": key, "Content-Type": "application/json"}
+            async with aiohttp.ClientSession() as s:
+                async with s.get("https://urlscan.io/user/quotas", headers=headers, timeout=15) as r:
+                    lines.append(f"urlscan quotas HTTP {r.status}")
+        else:
+            lines.append("urlscan: no key")
+    except Exception as e:
+        lines.append(f"urlscan error: {e}")
+
+    # kickbox probe
+    try:
+        key = (os.getenv("KICKBOX_API_KEY") or "").strip()
+        if key:
+            params = {"email": "test@example.com", "apikey": key}
+            async with aiohttp.ClientSession() as s:
+                async with s.get("https://api.kickbox.com/v2/verify", params=params, timeout=15) as r:
+                    lines.append(f"kickbox verify HTTP {r.status}")
+        else:
+            lines.append("kickbox: no key")
+    except Exception as e:
+        lines.append(f"kickbox error: {e}")
+
+    # ipinfo probe
+    try:
+        key = (os.getenv("IPINFO_TOKEN") or "").strip()
+        if key:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(f"https://ipinfo.io/8.8.8.8?token={key}", timeout=15) as r:
+                    lines.append(f"ipinfo probe HTTP {r.status}")
+        else:
+            lines.append("ipinfo: no token")
+    except Exception as e:
+        lines.append(f"ipinfo error: {e}")
+
+    await update.message.reply_text("\n".join(lines))
+
 async def libdiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
     try:
@@ -1857,61 +1745,13 @@ async def paylist(update: Update, context: ContextTypes.DEFAULT_TYPE):
         txt.append(f"ref={r['ref']}  user={r['user_id']}  {r['status']}  at={ts}")
     await update.message.reply_text("\n".join(txt))
 
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID: return
-    with _conn_lock:
-        c = _db().cursor()
-        c.execute("SELECT COUNT(*) AS n FROM users"); total = c.fetchone()["n"]
-        c.execute("SELECT COUNT(*) AS n FROM users WHERE vip_forever=1"); vip = c.fetchone()["n"]
-        c.execute("SELECT COUNT(*) AS n FROM users WHERE verified_ok=1"); verified = c.fetchone()["n"]
-        since = int(time.time()) - 24*3600
-        c.execute("SELECT etype, COUNT(*) n FROM events WHERE ts>=? GROUP BY etype ORDER BY n DESC LIMIT 10", (since,))
-        rows = c.fetchall()
-    top = "\n".join([f"- {r['etype']}: {r['n']}" for r in rows]) or "no events"
-    msg = (f"👥 Users: {total}\n"
-           f"⭐ VIP: {vip}\n"
-           f"✅ Verified: {verified}\n"
-           f"⏱️ Events (24h):\n{top}")
-    await update.message.reply_text(msg)
-
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != OWNER_ID: return
-    text = " ".join(context.args).strip()
-    if not text and update.message.reply_to_message:
-        text = update.message.reply_to_message.text_html or update.message.reply_to_message.text or ""
-    if not text:
-        await update.message.reply_text("Usage: /broadcast <text> (or reply to a text)"); return
-    with _conn_lock:
-        ids = [r["id"] for r in _db().execute("SELECT id FROM users").fetchall()]
-    ok = 0; fail = 0
-    for i, uid in enumerate(ids, 1):
-        try:
-            await context.bot.send_message(int(uid), text, parse_mode="HTML", disable_web_page_preview=True)
-            ok += 1
-        except Exception:
-            fail += 1
-        if i % 25 == 0:
-            await asyncio.sleep(0.7)
-        else:
-            await asyncio.sleep(0.05)
-    await update.message.reply_text(f"Broadcast done. OK={ok} FAIL={fail}")
-
 async def restart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
     await update.message.reply_text("🔄 Restarting...")
     os._exit(0)
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
-    err = getattr(context, 'error', 'unknown')
-    log.error("⚠️ Error: %s", err)
-    # أرسل للمالك إشعار مختصر عن الخطأ
-    try:
-        if OWNER_ID:
-            tb = "".join(traceback.format_exception_only(type(err), err)) if isinstance(err, BaseException) else str(err)
-            tb = tb[:900]
-            await context.bot.send_message(OWNER_ID, f"⚠️ Error:\n<code>{h(tb)}</code>", parse_mode="HTML")
-    except Exception:
-        pass
+    log.error("⚠️ Error: %s", getattr(context, 'error', 'unknown'))
 
 # ==== Main ====
 def main():
@@ -1934,10 +1774,9 @@ def main():
     app.add_handler(CommandHandler("vipinfo", vipinfo))
     app.add_handler(CommandHandler("refreshcmds", refresh_cmds))
     app.add_handler(CommandHandler("aidiag", aidiag))
+    app.add_handler(CommandHandler("secdiag", secdiag))  # << جديد
     app.add_handler(CommandHandler("libdiag", libdiag))
     app.add_handler(CommandHandler("paylist", paylist))
-    app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(CommandHandler("broadcast", broadcast))
     app.add_handler(CommandHandler("restart", restart_cmd))
     app.add_handler(CommandHandler("ownerhelp", help_cmd_owner))
 
