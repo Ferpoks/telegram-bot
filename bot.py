@@ -1,11 +1,17 @@
 # -*- coding: utf-8 -*-
-import os, sqlite3, threading, time, asyncio, re, json, logging, base64, hashlib, socket, tempfile, subprocess, shutil, math
+import os, sqlite3, threading, time, asyncio, re, json, logging, base64, hashlib, socket, tempfile, subprocess, shutil, math, html
 from pathlib import Path
 from io import BytesIO
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("bot")
+
+def esc(s):
+    try:
+        return html.escape(str(s)) if s is not None else ""
+    except Exception:
+        return str(s) if s is not None else ""
 
 # ==== OpenAI (اختياري) ====
 try:
@@ -109,7 +115,7 @@ URLSCAN_API_KEY = (os.getenv("URLSCAN_API_KEY") or "").strip()
 KICKBOX_API_KEY = (os.getenv("KICKBOX_API_KEY") or "").strip()
 IPINFO_TOKEN    = (os.getenv("IPINFO_TOKEN") or "").strip()
 
-# PDF.co لتحويل PDF↔Word/Images
+# PDF.co لتحويل PDF↔Word/JPG (المسارات الصحيحة)
 PDFCO_API_KEY   = (os.getenv("PDFCO_API_KEY") or "").strip()
 
 # ======= روابط حسب طلبك =======
@@ -130,8 +136,8 @@ SERV_VCC_LINKS = [
         os.getenv("VCC_LINK_1","https://fake-card.com/virtual-card-mastercard-free-card-bin/228757973743900/"),
     ] if u
 ]
-COURSE_PYTHON_URL = os.getenv("COURSE_PYTHON_URL","https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/Y8WctvBLiA6u6AASeZX2IUfDQAolTJ4QFGx9WRCu.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250815%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250815T021202Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=b7e556dd4c8a23f56f5e7cba1a29eadb6c48fa7a7d665c5d82e453241dea50c9")
-COURSE_CYBER_URL  = os.getenv("COURSE_CYBER_URL","https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/pZ0spOmm1K0dA2qAzUuWUb4CcMMjUPTbn7WMRwAc.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250815%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250815T021253Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=bc11797f9de3cb6f391937936f73f8f2acded12a7d665c5d82e453241dea50c9")
+COURSE_PYTHON_URL = os.getenv("COURSE_PYTHON_URL","https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/Y8WctvBLiA6u6AASeZX2IUfDQAolTJ4QFGx9WRCu.pdf?X-Amz-...")
+COURSE_CYBER_URL  = os.getenv("COURSE_CYBER_URL","https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/pZ0spOmm1K0dA2qAzUuWUb4CcMMjUPTbn7WMRwAc.pdf?X-Amz-...")
 COURSE_EH_URL     = os.getenv("COURSE_EH_URL","https://www.mediafire.com/folder/r26pp5mpduvnx/%D8%AF%D9%88%D8%B1%D8%A9_%D8%A7%D9%84%D9%87%D8%A7%D9%83%D8%B1_%D8%A7%D9%84%D8%A7%D8%AE%D9%84%D8%A7%D9%82%D9%8A_%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D8%B1%D8%AD%D9%85%D9%86_%D9%88%D8%B5%D9%81%D9%8A")
 COURSE_ECOM_URL   = os.getenv("COURSE_ECOM_URL","https://drive.google.com/drive/folders/1-UADEMHUswoCyo853FdTu4R4iuUx_f3I?hl=ar")
 
@@ -221,7 +227,7 @@ def _run_http_server():
         async def _favicon(_): return web.Response(status=204)
         app.router.add_get("/favicon.ico", _favicon)
         if SERVE_HEALTH:
-            async def _health(_): return web.json_response({"ok": True})
+            async def _health(_): return web.json_response({"ok": True}, headers={"Cache-Control":"no-store"})
             app.router.add_get("/", _health)
             app.router.add_get("/health", _health)
         if PAY_WEBHOOK_ENABLE:
@@ -251,11 +257,9 @@ _run_http_server()
 
 # ==== ffmpeg helpers ====
 def _ensure_bin_on_path():
-    """ضع bin/ في PATH إذا موجود."""
     bin_dir = Path.cwd() / "bin"
     if bin_dir.exists():
         os.environ["PATH"] = f"{str(bin_dir)}:{os.environ.get('PATH','')}"
-
 _ensure_bin_on_path()
 
 def ffmpeg_path() -> str|None:
@@ -320,7 +324,7 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "ai_chat_off": "🔚 تم إنهاء وضع الذكاء الاصطناعي.",
         "security_desc": "أرسل رابط/دومين/إيميل للفحص. (urlscan, kickbox, ipinfo) – يتطلب مفاتيح.",
         "services_desc": "اختر خدمة:",
-        "files_desc": "تحويلات ملفات: JPG→PDF (محلي)، و PDF↔Word عبر PDF.co إن وُجد المفتاح. متاح أيضاً PDF→JPG.",
+        "files_desc": "تحويلات ملفات: JPG→PDF (محلي)، و PDF↔Word و PDF→JPG عبر PDF.co إن وُجد المفتاح.",
         "unban_desc": "قوالب جاهزة ورسائل دعم للمنصات.",
         "courses_desc": "دورات مختارة بروابط مباشرة.",
         "downloader_desc": "أرسل رابط فيديو/صوت (YouTube/Twitter/Instagram...).",
@@ -401,7 +405,7 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "check_pay": "✅ Verify payment",
         "security_desc": "Send URL/domain/email to check (urlscan, kickbox, ipinfo) – needs API keys.",
         "services_desc": "Pick a service:",
-        "files_desc": "File conversions: JPG→PDF (local), PDF↔Word via PDF.co if key set. Also PDF→JPG.",
+        "files_desc": "File conversions: JPG→PDF (local), PDF↔Word and PDF→JPG via PDF.co if key set.",
         "unban_desc": "Ready-made support templates & links.",
         "courses_desc": "Curated courses (links).",
         "downloader_desc": "Send video/audio link (YouTube/Twitter/Instagram...).",
@@ -718,14 +722,14 @@ def fmt_geo(data: dict) -> str:
     if not data: return "⚠️ تعذّر جلب البيانات."
     if data.get("error"): return f"⚠️ {data['error']}"
     parts = []
-    parts.append(f"🔎 query: <code>{data.get('query','')}</code>")
-    parts.append(f"🌍 {data.get('country','?')} — {data.get('regionName','?')}")
-    parts.append(f"🏙️ {data.get('city','?')} — {data.get('zip','-')}")
-    parts.append(f"⏰ {data.get('timezone','-')}")
-    parts.append(f"📡 ISP/ORG: {data.get('isp','-')} / {data.get('org','-')}")
-    parts.append(f"🛰️ AS: {data.get('as','-')}")
-    parts.append(f"📍 {data.get('lat','?')}, {data.get('lon','?')}")
-    if data.get("reverse"): parts.append(f"🔁 Reverse: {data['reverse']}")
+    parts.append(f"🔎 query: <code>{esc(data.get('query',''))}</code>")
+    parts.append(f"🌍 {esc(data.get('country','?'))} — {esc(data.get('regionName','?'))}")
+    parts.append(f"🏙️ {esc(data.get('city','?'))} — {esc(data.get('zip','-'))}")
+    parts.append(f"⏰ {esc(data.get('timezone','-'))}")
+    parts.append(f"📡 ISP/ORG: {esc(data.get('isp','-'))} / {esc(data.get('org','-'))}")
+    parts.append(f"🛰️ AS: {esc(data.get('as','-'))}")
+    parts.append(f"📍 {esc(data.get('lat','?'))}, {esc(data.get('lon','?'))}")
+    if data.get("reverse"): parts.append(f"🔁 Reverse: {esc(data['reverse'])}")
     parts.append("\nℹ️ استخدم هذه المعلومات لأغراض مشروعة فقط.")
     return "\n".join(parts)
 
@@ -808,7 +812,7 @@ async def ipinfo_lookup(query: str) -> str:
             async with s.get(url, timeout=15) as r:
                 data = await r.json(content_type=None)
         keys = ["ip","hostname","city","region","country","loc","org","asn"]
-        parts = [f"{k}: {data.get(k,'-')}" for k in keys if k in data]
+        parts = [f"{k}: {esc(data.get(k,'-'))}" for k in keys if k in data]
         return "ipinfo:\n" + "\n".join(parts)
     except Exception as e:
         return f"ipinfo error: {e}"
@@ -836,10 +840,10 @@ async def osint_email(email: str) -> str:
     geo_text = fmt_geo(await fetch_geo(ip)) if ip else "⚠️ تعذّر حلّ IP للدومين."
     # WHOIS
     w = whois_domain(domain)
-    w_txt = "WHOIS: غير متاح" if not w else (f"WHOIS: {w['error']}" if w.get("error") else f"WHOIS:\n- Registrar: {w.get('registrar')}\n- Created: {w.get('creation_date')}\n- Expires: {w.get('expiration_date')}")
+    w_txt = "WHOIS: غير متاح" if not w else (f"WHOIS: {w['error']}" if w.get("error") else f"WHOIS:\n- Registrar: {esc(w.get('registrar'))}\n- Created: {esc(w.get('creation_date'))}\n- Expires: {esc(w.get('expiration_date'))}")
     out = [
-        f"📧 {email}",
-        f"📮 MX: {mx_txt}",
+        f"📧 {esc(email)}",
+        f"📮 MX: {esc(mx_txt)}",
         f"🖼️ Gravatar: {grav}",
         w_txt,
         f"\n{geo_text}"
@@ -871,10 +875,16 @@ async def link_scan(u: str) -> str:
         issues.append(us)
     except Exception:
         pass
-    return f"🔗 <code>{u}</code>\nالمضيف: <code>{host}</code>\n" + "\n".join(issues) + f"\n\n{geo_txt}"
+    return f"🔗 <code>{esc(u)}</code>\nالمضيف: <code>{esc(host)}</code>\n" + "\n".join(issues) + f"\n\n{geo_txt}"
 
-# PDF.co تحويلات PDF↔Word/Images (تنزيل داخلي ثم إرجاع bytes)
+# PDF.co تحويلات PDF↔Word/JPG (تصحيح endpoints)
 async def pdfco_convert(endpoint: str, file_bytes: bytes, out_name: str) -> bytes|None:
+    """
+    endpoint أمثلة:
+      - 'pdf/convert/to/docx'   => PDF → DOCX
+      - 'pdf/convert/to/jpg'    => PDF → JPG (قد يرجع ZIP إذا صفحات متعددة)
+      - 'pdf/convert/from/doc'  => DOC/DOCX → PDF
+    """
     if not PDFCO_API_KEY:
         return None
     headers = {"x-api-key": PDFCO_API_KEY}
@@ -1062,7 +1072,7 @@ def _safe_filename(title: str, ext: str) -> Path:
 def _estimate_target_bitrate(target_size_bytes: int, duration_sec: float) -> tuple[int,int]:
     if duration_sec <= 0:
         return (900_000, 128_000)
-    total_br = int((target_size_bytes * 8) / duration_sec)  # bits/s
+    total_br = int((target_size_bytes * 8) / duration_sec)
     audio_br = min(160_000, max(96_000, total_br // 8))
     video_br = max(200_000, total_br - audio_br)
     return (video_br, audio_br)
@@ -1078,7 +1088,6 @@ def _probe_duration(filepath: Path) -> float:
         return 0.0
 
 def _transcode_to_mp4(input_path: Path, out_path: Path, target_bytes: int|None=None) -> Path|None:
-    """حوّل إلى MP4 (H.264 + AAC) مع +faststart. لو target_bytes موجود حاول ضغط مناسب."""
     args = ["-y", "-i", str(input_path), "-movflags", "+faststart", "-pix_fmt", "yuv420p",
             "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-b:a", "128k", str(out_path)]
     if target_bytes:
@@ -1099,10 +1108,6 @@ def _transcode_audio_only(input_path: Path, out_path: Path) -> Path|None:
     return out_path if ok and out_path.exists() else None
 
 async def download_media(url: str) -> Path|None:
-    """
-    يحاول تنزيل الفيديو بأفضل صيغة ممكنة، دمج الفيديو+الصوت، تحويل ل MP4،
-    ثم يضمن الحجم أقل من حد تيليجرام. يسقط إلى صوت فقط عند الضرورة.
-    """
     if yt_dlp is None:
         log.warning("yt_dlp غير مثبت")
         return None
@@ -1358,7 +1363,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         new = "ar" if q.data.endswith("_ar") else "en"
         prefs_set_lang(uid, new)
         name = (q.from_user.username and "@"+q.from_user.username) or (q.from_user.first_name or "صديقي")
-        greeting = T("hello_name", lang=new, name=name)
+        greeting = T("hello_name", lang=new, name=esc(name))
         text = f"{greeting}\n\n{T('main_menu', lang=new)}"
         await safe_edit(q, text, kb=main_menu_kb(uid, new))
         return
@@ -1386,7 +1391,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit(q, T("must_join", lang=lang), kb=gate_kb(lang)); return
 
     if q.data == "myinfo":
-        await safe_edit(q, T("myinfo", lang=lang, name=q.from_user.full_name, uid=uid, lng=lang.upper()), kb=main_menu_kb(uid, lang)); return
+        await safe_edit(q, T("myinfo", lang=lang, name=esc(q.from_user.full_name), uid=uid, lng=lang.upper()), kb=main_menu_kb(uid, lang)); return
 
     if q.data == "back_home":
         await safe_edit(q, T("main_menu", lang=lang), kb=main_menu_kb(uid, lang)); return
@@ -1401,7 +1406,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pay_url, _ = await paylink_create_invoice(ref, VIP_PRICE_SAR, q.from_user.full_name or "Telegram User")
             else:
                 pay_url = _build_pay_link(ref)
-            txt = T("vip_pay_title", lang=lang, price=VIP_PRICE_SAR) + "\n" + T("vip_ref", lang=lang, ref=ref)
+            txt = T("vip_pay_title", lang=lang, price=VIP_PRICE_SAR) + "\n" + T("vip_ref", lang=lang, ref=esc(ref))
             await safe_edit(q, txt, kb=InlineKeyboardMarkup([
                 [InlineKeyboardButton(T("go_pay", lang=lang), url=pay_url or "https://paylink.sa")],
                 [InlineKeyboardButton(T("check_pay", lang=lang), callback_data=f"verify_pay_{ref}")],
@@ -1418,7 +1423,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if st == "paid" or user_is_premium(uid):
             await safe_edit(q, T("vip_status_on", lang=lang), kb=main_menu_kb(uid, lang))
         else:
-            await safe_edit(q, T("not_verified", lang=lang)+"\n"+T("vip_ref", lang=lang, ref=ref), kb=InlineKeyboardMarkup([
+            await safe_edit(q, T("not_verified", lang=lang)+"\n"+T("vip_ref", lang=lang, ref=esc(ref)), kb=InlineKeyboardMarkup([
                 [InlineKeyboardButton(T("check_pay", lang=lang), callback_data=f"verify_pay_{ref}")],
                 [InlineKeyboardButton(T("back", lang=lang), callback_data="back_home")]
             ]))
@@ -1477,7 +1482,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "sec_security_geo":
         ai_set_mode(uid, "geo_ip"); await safe_edit(q, "📍 أرسل IP أو دومين.", kb=ai_stop_kb(lang)); return
 
-    # الخدمات (قائمتان داخليًا)
+    # الخدمات
     if q.data == "sec_services":
         await safe_edit(q, T("page_services", lang=lang) + "\n\n" + T("choose_option", lang=lang),
                         kb=InlineKeyboardMarkup([
@@ -1498,7 +1503,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rows.append([InlineKeyboardButton(T("back", lang=lang), callback_data="sec_services")])
         await safe_edit(q, T("services_vcc", lang=lang), kb=InlineKeyboardMarkup(rows)); return
 
-    # فك الباند
+    # فك الباند — إصلاح زر الرجوع
     if q.data == "sec_unban":
         await safe_edit(q, T("unban_desc", lang=lang), kb=InlineKeyboardMarkup([
             [InlineKeyboardButton("Instagram", callback_data="unban_instagram")],
@@ -1512,7 +1517,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         key = q.data.replace("unban_","")
         msg = UNBAN_TEMPLATES.get(key,"")
         link = UNBAN_LINKS.get(key,"")
-        await safe_edit(q, f"📋 Message:\n<code>{msg}</code>\n\n🔗 {link}", kb=InlineKeyboardMarkup([
+        await safe_edit(q, f"📋 Message:\n<code>{esc(msg)}</code>\n\n🔗 {esc(link)}", kb=InlineKeyboardMarkup([
             [InlineKeyboardButton(T("back", lang=lang), callback_data="sec_unban")]
         ])); return
 
@@ -1528,7 +1533,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rows.append([InlineKeyboardButton(T("back", lang=lang), callback_data="sections")])
         await safe_edit(q, T("page_courses", lang=lang), kb=InlineKeyboardMarkup(rows)); return
 
-    # الملفات
+    # الملفات — إضافة PDF→JPG
     if q.data == "sec_files":
         await safe_edit(q, T("page_files", lang=lang) + "\n" + T("files_desc", lang=lang), kb=InlineKeyboardMarkup([
             [InlineKeyboardButton(T("btn_jpg2pdf", lang=lang), callback_data="file_jpg2pdf")],
@@ -1543,13 +1548,13 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit(q, "📌 أرسل صورة واحدة أو أكثر وسأحوّلها إلى PDF. ثم اضغط /makepdf", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
     if q.data == "file_pdf2word":
         ai_set_mode(uid, "file_pdf2word")
-        await safe_edit(q, "📌 أرسل ملف PDF وسيتم تحويله إلى Word (DOCX) عبر PDF.co.", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
+        await safe_edit(q, "📌 أرسل ملف PDF وسيتم تحويله إلى Word (DOCX via PDF.co).", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
     if q.data == "file_word2pdf":
         ai_set_mode(uid, "file_word2pdf")
-        await safe_edit(q, "📌 أرسل ملف DOCX وسيُحوّل إلى PDF (PDF.co).", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
+        await safe_edit(q, "📌 أرسل ملف DOC أو DOCX وسيُحوّل إلى PDF (PDF.co).", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
     if q.data == "file_pdf2jpg":
         ai_set_mode(uid, "file_pdf2jpg")
-        await safe_edit(q, "📌 أرسل ملف PDF وسأحوّل كل صفحة إلى صورة JPG داخل ملف ZIP.", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
+        await safe_edit(q, "📌 أرسل ملف PDF وسأحوله إلى صور JPG (قد يصلك ملف ZIP إن كانت صفحات متعددة).", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
 
     # تنزيل الفيديو
     if q.data == "sec_downloader":
@@ -1572,7 +1577,7 @@ async def tg_download_to_path(bot, file_id: str, suffix: str = "") -> Path:
     await f.download_to_drive(tmp_path)
     return Path(tmp_path)
 
-# ==== أدوات ملفات: JPG->PDF + PDF↔Word + PDF->JPG ====
+# ==== أدوات ملفات: JPG->PDF + PDF↔Word + PDF→JPG ====
 def images_to_pdf(image_paths: list[Path]) -> Path|None:
     try:
         imgs = []
@@ -1684,7 +1689,6 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not PDFCO_API_KEY:
                 await update.message.reply_text("⚠️ تحتاج PDFCO_API_KEY لتفعيل PDF → Word."); return
             with open(p, "rb") as f: data = f.read()
-            # ✅ المسار الصحيح DOCX
             out = await pdfco_convert("pdf/convert/to/docx", data, "convert.docx")
             if out:
                 path = TMP_DIR / f"out_{int(time.time())}.docx"
@@ -1697,8 +1701,7 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not PDFCO_API_KEY:
                 await update.message.reply_text("⚠️ تحتاج PDFCO_API_KEY لتفعيل Word → PDF."); return
             with open(p, "rb") as f: data = f.read()
-            # ✅ DOCX → PDF
-            out = await pdfco_convert("pdf/convert/from/docx", data, "document.pdf")
+            out = await pdfco_convert("pdf/convert/from/doc", data, "document.pdf")
             if out:
                 path = TMP_DIR / f"out_{int(time.time())}.pdf"
                 path.write_bytes(out)
@@ -1712,7 +1715,9 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             with open(p, "rb") as f: data = f.read()
             out = await pdfco_convert("pdf/convert/to/jpg", data, "pages.zip")
             if out:
-                path = TMP_DIR / f"pages_{int(time.time())}.zip"
+                # قد يرجع JPG واحد أو ZIP؛ سنحفظ كما هو
+                ext = ".zip" if out[:4] == b"PK\x03\x04" else ".jpg"
+                path = TMP_DIR / f"pages_{int(time.time())}{ext}"
                 path.write_bytes(out)
                 await update.message.reply_document(InputFile(str(path)))
             else:
@@ -1869,8 +1874,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
 
 
 
