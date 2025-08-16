@@ -255,6 +255,7 @@ def _ensure_bin_on_path():
     bin_dir = Path.cwd() / "bin"
     if bin_dir.exists():
         os.environ["PATH"] = f"{str(bin_dir)}:{os.environ.get('PATH','')}"
+
 _ensure_bin_on_path()
 
 def ffmpeg_path() -> str|None:
@@ -275,6 +276,16 @@ if FFMPEG_FOUND:
     log.info("[ffmpeg] FOUND at %s", ffmpeg_path())
 else:
     log.warning("[ffmpeg] MISSING")
+
+# === (جديد) ffprobe JSON ===
+def _probe_json(filepath: Path) -> dict:
+    """إرجاع معلومات تفصيلية عن الوسائط عبر ffprobe بصيغة JSON."""
+    try:
+        cmd = [_ffprobe_cmd(), "-v", "error", "-print_format", "json", "-show_streams", "-show_format", str(filepath)]
+        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+        return json.loads(p.stdout.decode() or "{}")
+    except Exception:
+        return {}
 
 # ==== i18n ====
 def T(key: str, lang: str | None = None, **kw) -> str:
@@ -1032,7 +1043,6 @@ async def ai_write(prompt: str) -> str:
     return (r.choices[0].message.content or "").strip()
 
 # ==== تنزيل وسائط (محسّن) ====
-
 def _ffmpeg_cmd():
     p = ffmpeg_path()
     return p if p else "ffmpeg"
@@ -1045,7 +1055,7 @@ def _run_ffmpeg(args: list[str]) -> bool:
     try:
         cmd = [_ffmpeg_cmd()] + args
         log.info("[ffmpeg] run: %s", " ".join(cmd))
-        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=900)
+        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600)
         if p.returncode != 0:
             log.error("[ffmpeg] error rc=%s stderr=%s", p.returncode, p.stderr.decode(errors="ignore")[:4000])
             return False
@@ -1059,6 +1069,7 @@ def _safe_filename(title: str, ext: str) -> Path:
     return TMP_DIR / f"{title}.{ext}"
 
 def _estimate_target_bitrate(target_size_bytes: int, duration_sec: float) -> tuple[int,int]:
+    # بسيط: خصص 128k للصوت والباقي للفيديو
     if duration_sec <= 0:
         return (900_000, 128_000)
     total_br = int((target_size_bytes * 8) / duration_sec)  # bits/s
@@ -1066,25 +1077,9 @@ def _estimate_target_bitrate(target_size_bytes: int, duration_sec: float) -> tup
     video_br = max(200_000, total_br - audio_br)
     return (video_br, audio_br)
 
-def _probe_json(filepath: Path) -> dict:
-    try:
-        cmd = [
-            _ffprobe_cmd(), "-v", "error",
-            "-print_format", "json",
-            "-show_format", "-show_streams",
-            str(filepath)
-        ]
-        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=40)
-        if p.returncode != 0:
-            return {}
-        return json.loads(p.stdout.decode() or "{}")
-    except Exception:
-        return {}
-
 def _probe_duration(filepath: Path) -> float:
     try:
-        cmd = [_ffprobe_cmd(), "-v", "error", "-select_streams", "v:0",
-               "-show_entries", "format=duration",
+        cmd = [_ffprobe_cmd(), "-v", "error", "-select_streams", "v:0", "-show_entries", "format=duration",
                "-of", "default=noprint_wrappers=1:nokey=1", str(filepath)]
         p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
         d = float(p.stdout.decode().strip() or "0")
@@ -1092,60 +1087,83 @@ def _probe_duration(filepath: Path) -> float:
     except Exception:
         return 0.0
 
+# === (جديد) استخراج صورة مصغّرة ===
+def _make_thumbnail(video_path: Path) -> Path|None:
+    """يستخلص فريم من الثانية 1 كصورة JPEG مصغّرة لإرسالها مع الفيديو"""
+    thumb = video_path.with_suffix(".jpg")
+    try:
+        ok = _run_ffmpeg([
+            "-y",
+            "-ss","00:00:01.000",
+            "-i", str(video_path),
+            "-frames:v","1",
+            "-q:v","3",
+            "-vf","scale=320:-2",
+            str(thumb)
+        ])
+        return thumb if ok and thumb.exists() else None
+    except Exception:
+        return None
+
+# === (معدل) تحويل إلى MP4 متوافق مع تيليجرام ===
 def _transcode_to_mp4(input_path: Path, out_path: Path, target_bytes: int|None=None) -> Path|None:
     """
-    تحويل إلى MP4 متوافق مع تيليجرام.
-    - توليد PTS عند الحاجة (+genpts)
-    - CFR fps=30, gop=60
-    - yuv420p + faststart + profile main level 3.1
-    - ضغط اختياري بحسب target_bytes
+    حوّل إلى MP4 (H.264 + AAC) مع +faststart، وضبط mapping وbaseline لزيادة التوافق.
     """
     base_args = [
         "-y",
         "-fflags", "+genpts",
         "-i", str(input_path),
-        "-vf", "scale='trunc(min(854,iw)/2)*2':'trunc(ih/2)*2',fps=30",
+
+        # أول مسار فيديو وأول مسار صوت (إن وجد) وتعطيل الترجمة
+        "-map", "0:v:0",
+        "-map", "0:a:0?",
+        "-sn",
+
+        # قياس آمن + تثبيت fps
+        "-vf", "scale='trunc(min(720,iw)/2)*2':'trunc(min(1280,ih)/2)*2',fps=30",
+
         "-movflags", "+faststart",
         "-pix_fmt", "yuv420p",
+
         "-c:v", "libx264",
         "-preset", "veryfast",
-        "-profile:v", "main",
-        "-level", "3.1",
+        "-profile:v", "baseline",
+        "-level", "3.0",
         "-g", "60",
         "-vsync", "cfr",
+
         "-c:a", "aac",
         "-b:a", "128k",
+        "-ac", "2",
+        "-max_muxing_queue_size", "1024",
     ]
 
     if target_bytes:
         dur = _probe_duration(input_path)
         vbr, abr = _estimate_target_bitrate(target_bytes, dur)
-        args = base_args[:] + ["-b:v", str(vbr), "-maxrate", str(int(vbr*1.2)), "-bufsize", str(int(vbr*2))]
-    else:
-        args = base_args[:]
+        base_args += ["-b:v", str(vbr), "-maxrate", str(int(vbr*1.2)), "-bufsize", str(int(vbr*2))]
 
-    args += [str(out_path)]
-
+    args = base_args + [str(out_path)]
     ok = _run_ffmpeg(args)
     if not ok or not out_path.exists():
         return None
 
-    # تحقق سريع: أن الكودك h264/aac والمدة > 0
+    # تحقق أساسي
     meta = _probe_json(out_path)
     v_ok = any(s.get("codec_name") == "h264" for s in meta.get("streams", []) if s.get("codec_type") == "video")
-    a_ok = any(s.get("codec_name") in ("aac","mp3") for s in meta.get("streams", []) if s.get("codec_type") == "audio")
     dur  = float((meta.get("format") or {}).get("duration") or 0)
-    if not (v_ok and a_ok and dur > 0.3):
-        # إعادة محاولة أقوى
-        log.warning("[ffmpeg] re-encode stricter due to bad probe (v_ok=%s a_ok=%s dur=%.3f)", v_ok, a_ok, dur)
+    if not (v_ok and dur > 0.3):
+        log.warning("[ffmpeg] re-encode stricter (v_ok=%s, dur=%.3f)", v_ok, dur)
         tmp2 = out_path.with_name(out_path.stem + "_fix.mp4")
         strict = [
-            "-y", "-fflags", "+genpts", "-i", str(input_path),
-            "-vf", "scale='trunc(min(854,iw)/2)*2':'trunc(ih/2)*2',fps=30",
-            "-movflags", "+faststart", "-pix_fmt", "yuv420p",
-            "-c:v", "libx264", "-preset", "faster", "-profile:v", "main", "-level", "3.1", "-g", "60", "-vsync", "cfr",
-            "-c:a", "aac", "-b:a", "128k",
-            "-f", "mp4", str(tmp2)
+            "-y","-fflags","+genpts","-i",str(input_path),
+            "-map","0:v:0","-map","0:a:0?","-sn",
+            "-vf","scale='trunc(min(720,iw)/2)*2':'trunc(min(1280,ih)/2)*2',fps=30",
+            "-movflags","+faststart","-pix_fmt","yuv420p",
+            "-c:v","libx264","-preset","faster","-profile:v","baseline","-level","3.0","-g","60","-vsync","cfr",
+            "-c:a","aac","-b:a","128k","-ac","2",
+            str(tmp2)
         ]
         if _run_ffmpeg(strict) and tmp2.exists():
             out_path.unlink(missing_ok=True)
@@ -1158,25 +1176,40 @@ def _transcode_audio_only(input_path: Path, out_path: Path) -> Path|None:
     ok = _run_ffmpeg(args)
     return out_path if ok and out_path.exists() else None
 
+def _get_media_meta(path: Path):
+    """مدة وأبعاد الفيديو (اختياري عند الإرسال)."""
+    try:
+        meta = _probe_json(path)
+        dur = float((meta.get("format") or {}).get("duration") or 0)
+        w = h = None
+        for s in meta.get("streams", []):
+            if s.get("codec_type") == "video":
+                w = s.get("width"); h = s.get("height")
+                break
+        return dur, w, h
+    except Exception:
+        return 0, None, None
+
 async def download_media(url: str) -> Path|None:
     """
-    يحاول تنزيل الفيديو، دمجه إن لزم، تحويله إلى MP4 متوافق،
-    وضمان الحجم أقل من حد تيليجرام. يسقط إلى صوت فقط عند الضرورة.
+    يحاول تنزيل الفيديو بأفضل صيغة ممكنة، دمج الفيديو+الصوت، تحويل ل MP4،
+    ثم يضمن الحجم أقل من حد تيليجرام. يسقط إلى صوت فقط عند الضرورة.
     """
     if yt_dlp is None:
         log.warning("yt_dlp غير مثبت")
         return None
 
     TMP_DIR.mkdir(parents=True, exist_ok=True)
-
-    # تفضيل mp4 إن أمكن
+    # نجرب أكثر من اختيار للصيغ لتفادي مشاكل تويتر/تيك توك
     format_candidates = [
-        "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]",
-        "bestvideo[ext=mp4]+bestaudio/best",
-        "best[ext=mp4]/best"
+        "bv*+ba/best",  # أفضل فيديو+صوت
+        "bestvideo+bestaudio/best",
+        "best[ext=mp4]/best",
+        "best"  # آخر الحلول
     ]
-
+    # مسارات مؤقتة
     ydl_out = str(TMP_DIR / "%(id)s.%(ext)s")
+
     last_err = None
     downloaded_path = None
     chosen_info = None
@@ -1195,6 +1228,7 @@ async def download_media(url: str) -> Path|None:
             ],
             "postprocessor_args": ["-movflags", "+faststart"],
         }
+        # مرر مكان ffmpeg لو موجود
         fp = ffmpeg_path()
         if fp:
             ydl_opts["ffmpeg_location"] = str(Path(fp).parent)
@@ -1202,8 +1236,10 @@ async def download_media(url: str) -> Path|None:
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
+                # مسار الملف الناتج
                 fname = ydl.prepare_filename(info)
                 base, _ = os.path.splitext(fname)
+                # تحقق من الامتدادات الأكثر شيوعًا
                 for ext in (".mp4",".mkv",".webm",".m4a",".mp3"):
                     p = Path(base + ext)
                     if p.exists():
@@ -1221,24 +1257,26 @@ async def download_media(url: str) -> Path|None:
         log.error("[ydl] failed to download any format. last_err=%s", last_err)
         return None
 
-    # لو مش MP4 نحول ل MP4 أكيد
+    # لو الملف ليس MP4 حوّله
     final_path = downloaded_path
     if downloaded_path.suffix.lower() != ".mp4":
         final_path = _safe_filename(chosen_info.get("title","video"), "mp4")
         out = _transcode_to_mp4(downloaded_path, final_path)
         if not out:
-            # كحل أخير: استخدم الملف كما هو ولكن سنرسله كمستند
+            # كحل أخير: أعد الاسم فقط كوثيقة
             final_path = downloaded_path
 
-    # ضغط إن الحجم أكبر من حد تيليجرام
+    # لو الحجم أكبر من حد تيليجرام -> اضغط ليتوافق
     if final_path.exists() and final_path.stat().st_size > MAX_UPLOAD_BYTES and FFMPEG_FOUND:
+        # جرّب نسب ضغط متعددة
         attempts = [
-            {"note": "540p", "target": MAX_UPLOAD_BYTES - 250*1024},
-            {"note": "360p", "target": MAX_UPLOAD_BYTES - 300*1024},
+            {"scale": "854:-2", "note": "480-540p"},
+            {"scale": "640:-2", "note": "360-400p"},
         ]
         for a in attempts:
             tmp_out = _safe_filename(chosen_info.get("title","video") + "_small", "mp4")
-            out = _transcode_to_mp4(final_path, tmp_out, target_bytes=a["target"])
+            target = MAX_UPLOAD_BYTES - 200*1024  # هامش صغير
+            out = _transcode_to_mp4(final_path, tmp_out, target_bytes=target)
             if out and out.stat().st_size <= MAX_UPLOAD_BYTES:
                 final_path = out
                 break
@@ -1250,6 +1288,7 @@ async def download_media(url: str) -> Path|None:
             if out and out.stat().st_size <= MAX_UPLOAD_BYTES:
                 final_path = out
             else:
+                # كحل أخير: لا شيء
                 log.error("[ydl] even audio-only too large or failed.")
                 return None
 
@@ -1619,7 +1658,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # الرشق
     if q.data == "sec_boost":
         links = FOLLOWERS_LINKS or ["https://smmcpan.com/","https://saudifollow.com/","https://drd3m.me/"]
-        rows = [[InlineKeyboardButton(u, url=u)] for u in links]
+        rows = [[InlineKeyboardButton(u.replace("https://","").rstrip("/"), url=u)] for u in links]
         rows.append([InlineKeyboardButton(T("back", lang=lang), callback_data="sections")])
         await safe_edit(q, T("page_boost", lang=lang) + "\n" + T("boost_desc", lang=lang), kb=InlineKeyboardMarkup(rows)); return
 
@@ -1661,20 +1700,6 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mode, extra = ai_get_mode(uid)
     msg = update.message
 
-    # مساعدات: دالة ترجع معلومات الفيديو من ffprobe
-    def _video_meta(p: Path):
-        meta = _probe_json(p)
-        fmt = meta.get("format") or {}
-        streams = meta.get("streams") or []
-        v = next((s for s in streams if s.get("codec_type")=="video"), {})
-        a = next((s for s in streams if s.get("codec_type")=="audio"), {})
-        width, height = v.get("width"), v.get("height")
-        try:
-            duration = float(fmt.get("duration") or v.get("duration") or 0)
-        except Exception:
-            duration = 0
-        return int(duration or 0), int(width or 0), int(height or 0)
-
     if msg.text and not msg.text.startswith("/"):
         text = msg.text.strip()
         if mode == "ai_chat":
@@ -1704,26 +1729,24 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             path = await download_media(text)
             if path and path.exists() and path.stat().st_size <= MAX_UPLOAD_BYTES:
                 try:
-                    if path.suffix.lower() == ".mp4":
-                        dur, w, h = _video_meta(path)
+                    # أرسل كـ فيديو إن أمكن
+                    if path.suffix.lower() in (".mp4", ".mkv", ".webm", ".mov"):
+                        # (جديد) صورة مصغّرة + مدة/أبعاد اختيارية
+                        thumb = _make_thumbnail(path) if path.suffix.lower() == ".mp4" else None
+                        dur, w, h = _get_media_meta(path) if path.suffix.lower() == ".mp4" else (0, None, None)
                         await update.message.reply_video(
                             video=InputFile(str(path)),
+                            thumbnail=InputFile(str(thumb)) if thumb else None,
                             supports_streaming=True,
-                            duration=dur or None,
+                            duration=int(dur) if dur else None,
                             width=w or None,
                             height=h or None
                         )
                     else:
-                        # غير mp4 -> أرسله كمستند
                         await update.message.reply_document(document=InputFile(str(path)))
                 except Exception as e:
-                    log.error("[send] video send error: %s", e)
-                    # fallback: كمستند دائماً
-                    try:
-                        await update.message.reply_document(document=InputFile(str(path)))
-                    except Exception as e2:
-                        log.error("[send] document send error: %s", e2)
-                        await update.message.reply_text("⚠️ تعذّر إرسال الملف.")
+                    log.error("[send] error: %s", e)
+                    await update.message.reply_text("⚠️ تعذّر إرسال الملف.")
             else:
                 await update.message.reply_text("⚠️ تعذّر التحميل أو أن الملف كبير.")
             return
