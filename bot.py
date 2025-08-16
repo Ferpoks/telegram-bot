@@ -109,9 +109,8 @@ URLSCAN_API_KEY = (os.getenv("URLSCAN_API_KEY") or "").strip()
 KICKBOX_API_KEY = (os.getenv("KICKBOX_API_KEY") or "").strip()
 IPINFO_TOKEN    = (os.getenv("IPINFO_TOKEN") or "").strip()
 
-# PDF.co لتحويل PDF↔Word
-# (يدعم أيضًا اسم بديل PFCO_API_KEY لو موجود)
-PDFCO_API_KEY   = ((os.getenv("PDFCO_API_KEY") or os.getenv("PFCO_API_KEY") or "").strip())
+# PDF.co لتحويل PDF↔Word/Images
+PDFCO_API_KEY   = (os.getenv("PDFCO_API_KEY") or "").strip()
 
 # ======= روابط حسب طلبك =======
 FOLLOWERS_LINKS = [
@@ -131,7 +130,7 @@ SERV_VCC_LINKS = [
         os.getenv("VCC_LINK_1","https://fake-card.com/virtual-card-mastercard-free-card-bin/228757973743900/"),
     ] if u
 ]
-COURSE_PYTHON_URL = os.getenv("COURSE_PYTHON_URL","https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/Y8WctvBLiA6u6AASeZX2IUfDQAolTJ4QFGx9WRCu.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250815%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250815T021202Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=b7e556dd4c8a23f56f5e7cba1a29eadb6c48fa7c0656f463d47a64cd10ebfa81")
+COURSE_PYTHON_URL = os.getenv("COURSE_PYTHON_URL","https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/Y8WctvBLiA6u6AASeZX2IUfDQAolTJ4QFGx9WRCu.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250815%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250815T021202Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=b7e556dd4c8a23f56f5e7cba1a29eadb6c48fa7a7d665c5d82e453241dea50c9")
 COURSE_CYBER_URL  = os.getenv("COURSE_CYBER_URL","https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/pZ0spOmm1K0dA2qAzUuWUb4CcMMjUPTbn7WMRwAc.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250815%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250815T021253Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=bc11797f9de3cb6f391937936f73f8f2acded12a7d665c5d82e453241dea50c9")
 COURSE_EH_URL     = os.getenv("COURSE_EH_URL","https://www.mediafire.com/folder/r26pp5mpduvnx/%D8%AF%D9%88%D8%B1%D8%A9_%D8%A7%D9%84%D9%87%D8%A7%D9%83%D8%B1_%D8%A7%D9%84%D8%A7%D8%AE%D9%84%D8%A7%D9%82%D9%8A_%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D8%B1%D8%AD%D9%85%D9%86_%D9%88%D8%B5%D9%81%D9%8A")
 COURSE_ECOM_URL   = os.getenv("COURSE_ECOM_URL","https://drive.google.com/drive/folders/1-UADEMHUswoCyo853FdTu4R4iuUx_f3I?hl=ar")
@@ -256,6 +255,7 @@ def _ensure_bin_on_path():
     bin_dir = Path.cwd() / "bin"
     if bin_dir.exists():
         os.environ["PATH"] = f"{str(bin_dir)}:{os.environ.get('PATH','')}"
+
 _ensure_bin_on_path()
 
 def ffmpeg_path() -> str|None:
@@ -320,7 +320,7 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "ai_chat_off": "🔚 تم إنهاء وضع الذكاء الاصطناعي.",
         "security_desc": "أرسل رابط/دومين/إيميل للفحص. (urlscan, kickbox, ipinfo) – يتطلب مفاتيح.",
         "services_desc": "اختر خدمة:",
-        "files_desc": "تحويلات ملفات: JPG→PDF (محلي)، و PDF↔Word عبر PDF.co إن وُجد المفتاح.",
+        "files_desc": "تحويلات ملفات: JPG→PDF (محلي)، و PDF↔Word عبر PDF.co إن وُجد المفتاح. متاح أيضاً PDF→JPG.",
         "unban_desc": "قوالب جاهزة ورسائل دعم للمنصات.",
         "courses_desc": "دورات مختارة بروابط مباشرة.",
         "downloader_desc": "أرسل رابط فيديو/صوت (YouTube/Twitter/Instagram...).",
@@ -329,7 +329,6 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "choose_lang_done": "✅ تم ضبط اللغة: {chosen}",
         "myinfo": "👤 اسمك: {name}\n🆔 معرفك: {uid}\n🌐 اللغة: {lng}",
 
-        # صفحات داخلية مع أزرار ملوّنة باللغة المختارة
         "page_ai": "🤖 أدوات الذكاء الاصطناعي:",
         "btn_ai_chat": "🤖 دردشة",
         "btn_ai_write": "✍️ كتابة",
@@ -358,6 +357,7 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "btn_jpg2pdf": "JPG → PDF",
         "btn_pdf2word": "PDF → Word",
         "btn_word2pdf": "Word → PDF",
+        "btn_pdf2jpg": "PDF → JPG",
 
         "page_downloader": "⬇️ تنزيل الفيديو:",
         "page_boost": "📈 رشق متابعين:",
@@ -401,7 +401,7 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "check_pay": "✅ Verify payment",
         "security_desc": "Send URL/domain/email to check (urlscan, kickbox, ipinfo) – needs API keys.",
         "services_desc": "Pick a service:",
-        "files_desc": "File conversions: JPG→PDF (local), PDF↔Word via PDF.co if key set.",
+        "files_desc": "File conversions: JPG→PDF (local), PDF↔Word via PDF.co if key set. Also PDF→JPG.",
         "unban_desc": "Ready-made support templates & links.",
         "courses_desc": "Curated courses (links).",
         "downloader_desc": "Send video/audio link (YouTube/Twitter/Instagram...).",
@@ -438,6 +438,7 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "btn_jpg2pdf": "JPG → PDF",
         "btn_pdf2word": "PDF → Word",
         "btn_word2pdf": "Word → PDF",
+        "btn_pdf2jpg": "PDF → JPG",
 
         "page_downloader": "⬇️ Downloader:",
         "page_boost": "📈 Followers:",
@@ -872,7 +873,7 @@ async def link_scan(u: str) -> str:
         pass
     return f"🔗 <code>{u}</code>\nالمضيف: <code>{host}</code>\n" + "\n".join(issues) + f"\n\n{geo_txt}"
 
-# PDF.co تحويلات PDF↔Word
+# PDF.co تحويلات PDF↔Word/Images (تنزيل داخلي ثم إرجاع bytes)
 async def pdfco_convert(endpoint: str, file_bytes: bytes, out_name: str) -> bytes|None:
     if not PDFCO_API_KEY:
         return None
@@ -1059,7 +1060,6 @@ def _safe_filename(title: str, ext: str) -> Path:
     return TMP_DIR / f"{title}.{ext}"
 
 def _estimate_target_bitrate(target_size_bytes: int, duration_sec: float) -> tuple[int,int]:
-    # بسيط: خصص 128k للصوت والباقي للفيديو
     if duration_sec <= 0:
         return (900_000, 128_000)
     total_br = int((target_size_bytes * 8) / duration_sec)  # bits/s
@@ -1108,14 +1108,12 @@ async def download_media(url: str) -> Path|None:
         return None
 
     TMP_DIR.mkdir(parents=True, exist_ok=True)
-    # نجرب أكثر من اختيار للصيغ لتفادي مشاكل تويتر/تيك توك
     format_candidates = [
-        "bv*+ba/best",  # أفضل فيديو+صوت
+        "bv*+ba/best",
         "bestvideo+bestaudio/best",
         "best[ext=mp4]/best",
-        "best"  # آخر الحلول
+        "best"
     ]
-    # مسارات مؤقتة
     ydl_out = str(TMP_DIR / "%(id)s.%(ext)s")
 
     last_err = None
@@ -1136,7 +1134,6 @@ async def download_media(url: str) -> Path|None:
             ],
             "postprocessor_args": ["-movflags", "+faststart"],
         }
-        # مرر مكان ffmpeg لو موجود
         fp = ffmpeg_path()
         if fp:
             ydl_opts["ffmpeg_location"] = str(Path(fp).parent)
@@ -1144,10 +1141,8 @@ async def download_media(url: str) -> Path|None:
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
-                # مسار الملف الناتج
                 fname = ydl.prepare_filename(info)
                 base, _ = os.path.splitext(fname)
-                # تحقق من الامتدادات الأكثر شيوعًا
                 for ext in (".mp4",".mkv",".webm",".m4a",".mp3"):
                     p = Path(base + ext)
                     if p.exists():
@@ -1165,38 +1160,32 @@ async def download_media(url: str) -> Path|None:
         log.error("[ydl] failed to download any format. last_err=%s", last_err)
         return None
 
-    # لو الملف ليس MP4 حوّله
     final_path = downloaded_path
     if downloaded_path.suffix.lower() != ".mp4":
         final_path = _safe_filename(chosen_info.get("title","video"), "mp4")
         out = _transcode_to_mp4(downloaded_path, final_path)
         if not out:
-            # كحل أخير: أعد الاسم فقط كوثيقة
             final_path = downloaded_path
 
-    # لو الحجم أكبر من حد تيليجرام -> اضغط ليتوافق
     if final_path.exists() and final_path.stat().st_size > MAX_UPLOAD_BYTES and FFMPEG_FOUND:
-        # جرّب نسب ضغط متعددة
         attempts = [
             {"scale": "854:-2", "note": "480-540p"},
             {"scale": "640:-2", "note": "360-400p"},
         ]
         for a in attempts:
             tmp_out = _safe_filename(chosen_info.get("title","video") + "_small", "mp4")
-            target = MAX_UPLOAD_BYTES - 200*1024  # هامش صغير
+            target = MAX_UPLOAD_BYTES - 200*1024
             out = _transcode_to_mp4(final_path, tmp_out, target_bytes=target)
             if out and out.stat().st_size <= MAX_UPLOAD_BYTES:
                 final_path = out
                 break
 
-        # لو ما نفع، حوّل لصوت فقط
         if final_path.stat().st_size > MAX_UPLOAD_BYTES:
             audio_only = _safe_filename(chosen_info.get("title","audio"), "m4a")
             out = _transcode_audio_only(final_path, audio_only)
             if out and out.stat().st_size <= MAX_UPLOAD_BYTES:
                 final_path = out
             else:
-                # كحل أخير: لا شيء
                 log.error("[ydl] even audio-only too large or failed.")
                 return None
 
@@ -1545,6 +1534,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton(T("btn_jpg2pdf", lang=lang), callback_data="file_jpg2pdf")],
             [InlineKeyboardButton(T("btn_pdf2word", lang=lang), callback_data="file_pdf2word")],
             [InlineKeyboardButton(T("btn_word2pdf", lang=lang), callback_data="file_word2pdf")],
+            [InlineKeyboardButton(T("btn_pdf2jpg", lang=lang), callback_data="file_pdf2jpg")],
             [InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]
         ])); return
 
@@ -1553,10 +1543,13 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit(q, "📌 أرسل صورة واحدة أو أكثر وسأحوّلها إلى PDF. ثم اضغط /makepdf", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
     if q.data == "file_pdf2word":
         ai_set_mode(uid, "file_pdf2word")
-        await safe_edit(q, "📌 أرسل ملف PDF وسيتم تحويله إلى Word (باستخدام PDF.co عند وجود المفتاح).", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
+        await safe_edit(q, "📌 أرسل ملف PDF وسيتم تحويله إلى Word (DOCX) عبر PDF.co.", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
     if q.data == "file_word2pdf":
         ai_set_mode(uid, "file_word2pdf")
-        await safe_edit(q, "📌 أرسل ملف DOC أو DOCX وسيُحوّل إلى PDF (PDF.co).", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
+        await safe_edit(q, "📌 أرسل ملف DOCX وسيُحوّل إلى PDF (PDF.co).", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
+    if q.data == "file_pdf2jpg":
+        ai_set_mode(uid, "file_pdf2jpg")
+        await safe_edit(q, "📌 أرسل ملف PDF وسأحوّل كل صفحة إلى صورة JPG داخل ملف ZIP.", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
 
     # تنزيل الفيديو
     if q.data == "sec_downloader":
@@ -1579,7 +1572,7 @@ async def tg_download_to_path(bot, file_id: str, suffix: str = "") -> Path:
     await f.download_to_drive(tmp_path)
     return Path(tmp_path)
 
-# ==== أدوات ملفات: JPG->PDF + PDF↔Word ====
+# ==== أدوات ملفات: JPG->PDF + PDF↔Word + PDF->JPG ====
 def images_to_pdf(image_paths: list[Path]) -> Path|None:
     try:
         imgs = []
@@ -1637,7 +1630,6 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             path = await download_media(text)
             if path and path.exists() and path.stat().st_size <= MAX_UPLOAD_BYTES:
                 try:
-                    # أرسل كـ فيديو إن أمكن
                     if path.suffix.lower() in (".mp4", ".mkv", ".webm", ".mov"):
                         await update.message.reply_video(video=InputFile(str(path)), supports_streaming=True)
                     else:
@@ -1692,7 +1684,7 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not PDFCO_API_KEY:
                 await update.message.reply_text("⚠️ تحتاج PDFCO_API_KEY لتفعيل PDF → Word."); return
             with open(p, "rb") as f: data = f.read()
-            # ⬇️ تم التعديل: استخدام to/docx
+            # ✅ المسار الصحيح DOCX
             out = await pdfco_convert("pdf/convert/to/docx", data, "convert.docx")
             if out:
                 path = TMP_DIR / f"out_{int(time.time())}.docx"
@@ -1705,16 +1697,26 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not PDFCO_API_KEY:
                 await update.message.reply_text("⚠️ تحتاج PDFCO_API_KEY لتفعيل Word → PDF."); return
             with open(p, "rb") as f: data = f.read()
-            # ⬇️ تم التعديل: اختيار endpoint حسب الامتداد
-            name = (msg.document.file_name or "").lower()
-            endpoint = "pdf/convert/from/docx" if name.endswith(".docx") else "pdf/convert/from/doc"
-            out = await pdfco_convert(endpoint, data, "document.pdf")
+            # ✅ DOCX → PDF
+            out = await pdfco_convert("pdf/convert/from/docx", data, "document.pdf")
             if out:
                 path = TMP_DIR / f"out_{int(time.time())}.pdf"
                 path.write_bytes(out)
                 await update.message.reply_document(InputFile(str(path)))
             else:
                 await update.message.reply_text("⚠️ فشل التحويل (Word → PDF).")
+            return
+        if mode == "file_pdf2jpg":
+            if not PDFCO_API_KEY:
+                await update.message.reply_text("⚠️ تحتاج PDFCO_API_KEY لتفعيل PDF → JPG."); return
+            with open(p, "rb") as f: data = f.read()
+            out = await pdfco_convert("pdf/convert/to/jpg", data, "pages.zip")
+            if out:
+                path = TMP_DIR / f"pages_{int(time.time())}.zip"
+                path.write_bytes(out)
+                await update.message.reply_document(InputFile(str(path)))
+            else:
+                await update.message.reply_text("⚠️ فشل التحويل (PDF → JPG).")
             return
 
     if not mode:
