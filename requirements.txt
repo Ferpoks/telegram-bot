@@ -1,11 +1,27 @@
 python-telegram-bot==21.6
-aiohttp>=3.9
-openai>=1.43.0
-Pillow>=10.4.0
+# Stick to 3.9.x – stable with PTB and our aiohttp ClientSession usage
+aiohttp==3.9.5
+
+# OpenAI SDK works fine; the proxies error you saw is from httpx 0.28+, so pin httpx < 0.28
+openai>=1.43.0,<2
+httpx<0.28
+
+# Imaging & PDF export
+Pillow==10.4.0
+
+# Media downloader (optional for your Downloader section)
 yt-dlp>=2024.12.31
-python-whois>=0.9.4
-dnspython>=2.6.1
-python-dotenv>=1.0.1
+
+# OSINT helpers
+python-whois==0.9.4
+dnspython==2.6.1
+
+# Env loader
+python-dotenv==1.0.1
+
+# Optional but recommended for SSL CA updates on some hosts
+certifi>=2024.7.4
+
 
 
 
