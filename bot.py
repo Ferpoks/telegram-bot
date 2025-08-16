@@ -328,7 +328,7 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "choose_lang_done": "✅ تم ضبط اللغة: {chosen}",
         "myinfo": "👤 اسمك: {name}\n🆔 معرفك: {uid}\n🌐 اللغة: {lng}",
 
-        # صفحات داخلية مع أزرار ملوّنة باللغة المختارة
+        # صفحات
         "page_ai": "🤖 أدوات الذكاء الاصطناعي:",
         "btn_ai_chat": "🤖 دردشة",
         "btn_ai_write": "✍️ كتابة",
@@ -1156,7 +1156,7 @@ async def download_media(url: str) -> tuple[Path|None, dict]:
             "http_headers": headers,
             "postprocessors": [
                 {"key": "FFmpegVideoConvertor", "preferedformat": "mp4"},
-                {"key": "FFmpegMetadata"},  # يضمن moov atom
+                {"key": "FFmpegMetadata"},
             ],
             "postprocessor_args": ["-movflags", "+faststart"],
             "concurrent_fragment_downloads": 3,
@@ -1171,10 +1171,8 @@ async def download_media(url: str) -> tuple[Path|None, dict]:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 chosen_info = info or {}
-                # مسار الملف الناتج
                 fname = ydl.prepare_filename(info)
                 base, _ = os.path.splitext(fname)
-                # تحقق من الامتدادات الأكثر شيوعًا
                 for ext in (".mp4",".mkv",".webm",".m4a",".mp3"):
                     p = Path(base + ext)
                     if p.exists():
@@ -1197,19 +1195,17 @@ async def download_media(url: str) -> tuple[Path|None, dict]:
         final_path = _safe_filename(chosen_info.get("title","video"), "mp4")
         out = _transcode_to_mp4(downloaded_path, final_path)
         if not out:
-            # كحل أخير: أعد الاسم فقط كوثيقة
             final_path = downloaded_path
 
     # لو الحجم أكبر من حد تيليجرام -> اضغط ليتوافق
     if final_path.exists() and final_path.stat().st_size > MAX_UPLOAD_BYTES and FFMPEG_FOUND:
-        # جرّب نسب ضغط متعددة
         attempts = [
             {"scale": "854:-2", "note": "480-540p"},
             {"scale": "640:-2", "note": "360-400p"},
         ]
         for a in attempts:
             tmp_out = _safe_filename(chosen_info.get("title","video") + "_small", "mp4")
-            target = MAX_UPLOAD_BYTES - 200*1024  # هامش صغير
+            target = MAX_UPLOAD_BYTES - 200*1024  # هامش
             out = _transcode_to_mp4(final_path, tmp_out, target_bytes=target)
             if out and out.stat().st_size <= MAX_UPLOAD_BYTES:
                 final_path = out
@@ -1493,7 +1489,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "ai_stt":
         ai_set_mode(uid, "stt")
         await safe_edit(q, T("send_text", lang=lang), kb=ai_stop_kb(lang)); return
-    if q.data == "ai_image"):
+    if q.data == "ai_image":
         ai_set_mode(uid, "image_ai")
         await safe_edit(q, T("send_text", lang=lang), kb=ai_stop_kb(lang)); return
 
@@ -1513,7 +1509,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "sec_security_geo":
         ai_set_mode(uid, "geo_ip"); await safe_edit(q, "📍 أرسل IP أو دومين.", kb=ai_stop_kb(lang)); return
 
-    # الخدمات (قائمتان داخليًا)
+    # الخدمات
     if q.data == "sec_services":
         await safe_edit(q, T("page_services", lang=lang) + "\n\n" + T("choose_option", lang=lang),
                         kb=InlineKeyboardMarkup([
