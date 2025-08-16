@@ -112,7 +112,7 @@ IPINFO_TOKEN    = (os.getenv("IPINFO_TOKEN") or "").strip()
 # PDF.co لتحويل PDF↔Word
 PDFCO_API_KEY   = (os.getenv("PDFCO_API_KEY") or "").strip()
 
-# ======= روابط حسب طلبك (مع إمكانية التغيير من متغيرات البيئة) =======
+# ======= روابط حسب طلبك =======
 FOLLOWERS_LINKS = [
     u for u in [
         os.getenv("FOLLOW_LINK_1","https://smmcpan.com/"),
@@ -826,11 +826,17 @@ async def osint_email(email: str) -> str:
     return "\n".join(out)
 
 # =================== تنزيل وسائط (بدون ffmpeg) ===================
+def _is_tiktok(u: str) -> bool:
+    u = (u or "").lower()
+    return ("tiktok.com" in u) or ("vm.tiktok.com" in u)
+
 async def download_media(url: str) -> Path|None:
     """
-    نحاول تنزيل فيديو واحد جاهز (MP4 بصوت وفيديو) بدون الحاجة لـ ffmpeg.
-    نختار فورمات mp4 تقدّم صوت+فيديو (مثل TikTok/Instagram/X).
-    لليوتيوب نفضّل itag=18 (360p) لأنه مدمج Audio+Video ولا يحتاج دمج.
+    نحاول تنزيل فيديو جاهز (MP4 بصوت وفيديو) بدون ffmpeg.
+    - نمنع بروتوكول m3u8/m3u8_native (HLS) لأنه يحتاج ffmpeg.
+    - نُفضّل ext=mp4 + vcodec!=none + acodec!=none + protocol يبدأ بـ http.
+    - ليوتيوب نضيف itag=18 كخيار واضح.
+    - لتيك توك: نضيف Referer/UA وقد نمرر كوكيز من env (TIKTOK_COOKIES) لو لزم.
     """
     if yt_dlp is None:
         log.warning("yt_dlp غير مثبت")
@@ -838,10 +844,27 @@ async def download_media(url: str) -> Path|None:
 
     TMP_DIR.mkdir(parents=True, exist_ok=True)
 
-    # قالب اسم الملف
     outtmpl = str(TMP_DIR / "%(title).50s-%(id)s.%(ext)s")
 
-    # تهيئة عامة
+    # بيئة اختيارية
+    TIKTOK_COOKIES = (os.getenv("TIKTOK_COOKIES") or "").strip()  # Cookie header string
+    TIKTOK_UA = (os.getenv("TIKTOK_USER_AGENT") or
+                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36")
+
+    # لو حاب تفرض فورمات بنفسك من env
+    FORMAT_OVERRIDE = (os.getenv("YTDLP_FORMAT_OVERRIDE") or "").strip() or None
+
+    base_headers = {
+        "User-Agent": TIKTOK_UA,
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.9,ar;q=0.8",
+        "Connection": "keep-alive",
+    }
+    if _is_tiktok(url):
+        base_headers["Referer"] = "https://www.tiktok.com/"
+        if TIKTOK_COOKIES:
+            base_headers["Cookie"] = TIKTOK_COOKIES
+
     base_opts = {
         "outtmpl": outtmpl,
         "quiet": True,
@@ -849,57 +872,54 @@ async def download_media(url: str) -> Path|None:
         "nocheckcertificate": True,
         "retries": 2,
         "noplaylist": True,
-        "merge_output_format": None,   # لا دمج
-        "postprocessors": [],          # لا بوست-بروسسور (لا ffmpeg)
-        "prefer_free_formats": False,  # لا تفضّل webm
-        "http_headers": {              # UA حديث لتفادي حظر بعض المواقع
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36"
-        },
+        "merge_output_format": None,  # لا دمج (بدون ffmpeg)
+        "postprocessors": [],
+        "prefer_free_formats": False,
+        "http_headers": base_headers,
+        # لا نريد تنزيل HLS أصلاً
+        "hls_prefer_native": True,
+        "skip_unavailable_fragments": True,
     }
 
-    # 1) محاولة “آمنة”: MP4 فقط، وإن وجد itag=18 ليوتيوب
-    try_order = [
-        # يوتيوب: 18 (AVC+AAC 360p) غالبًا متوفر ومضمن
-        "18/best[ext=mp4][vcodec*=avc1][acodec*=mp4a]/best[ext=mp4]",
-        # تيك توك/انستغرام/تويتر: أفضل mp4
-        "b[ext=mp4]/best"
-    ]
+    # صيغ تختار MP4 عبر HTTP فقط (وتتجنب m3u8)
+    tiktok_first = "best[ext=mp4][vcodec!=none][acodec!=none][protocol^=http]/best[protocol^=http][vcodec!=none][acodec!=none]"
+    youtube_first = "18/best[ext=mp4][vcodec*=avc1][acodec*=mp4a][protocol^=http]"
+    generic_http = "best[ext=mp4][vcodec!=none][acodec!=none][protocol^=http]/best[protocol^=http]"
+
+    try_order = []
+    if FORMAT_OVERRIDE:
+        try_order.append(FORMAT_OVERRIDE)
+    if _is_tiktok(url):
+        try_order += [tiktok_first, generic_http]
+    else:
+        try_order += [youtube_first, generic_http]
 
     last_err = None
     for idx, fmt in enumerate(try_order, start=1):
-        opts = base_opts | {
-            "format": fmt,
-        }
+        opts = base_opts | {"format": fmt}
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
-                # حدد الاسم النهائي
-                # إذا playlist=false سيعيد عنصر واحد
                 fname = ydl.prepare_filename(info)
                 p = Path(fname)
-                # تحقق من الامتداد والحجم
                 if p.exists() and p.is_file():
-                    if p.suffix.lower() not in (".mp4", ".m4v", ".mov", ".webm", ".mkv"):
-                        # إن امتداد غريب، جرّب تغيير اسم الامتداد إلى mp4 فقط إن كان الموقع أرسل mp4 أصلاً
-                        pass
-                    # لو الملف أكبر من حد تيليجرام نعيد None
+                    # نرفض أي امتداد ليس فيديو صالح لتيليجرام كمشاهدة مباشرة
+                    if p.suffix.lower() not in (".mp4", ".m4v", ".mov"):
+                        # في حالة WebM/TS تم تفاديه غالبًا، لكن نتأكد بالحجم والامتداد
+                        log.warning("[ydl] got non-mp4 ext=%s (may not stream inline)", p.suffix)
                     if p.stat().st_size > MAX_UPLOAD_BYTES:
                         log.warning("[ydl] file too big (%.2f MB) using fmt #%d", p.stat().st_size/1024/1024, idx)
-                        # جرّب محاولة أخرى بجودة أدنى:
                         continue
-                    # نجاح
                     return p
         except Exception as e:
             last_err = e
             log.error("[ydl] try #%d fmt='%s' error: %s", idx, fmt, e)
             continue
 
-    # 2) محاولة أخيرة: تقييد الدقة ≤480p لإجبار ملف أصغر (MP4 إن أمكن)
-    low_opts = base_opts | {
-        "format": "best[ext=mp4][height<=480]/best[height<=480]/best"
-    }
+    # محاولة أخيرة بجودة ≤480p عبر HTTP فقط
+    low_http = "best[ext=mp4][height<=480][protocol^=http]/best[height<=480][protocol^=http]"
     try:
-        with yt_dlp.YoutubeDL(low_opts) as ydl:
+        with yt_dlp.YoutubeDL(base_opts | {"format": low_http}) as ydl:
             info = ydl.extract_info(url, download=True)
             fname = ydl.prepare_filename(info)
             p = Path(fname)
@@ -909,7 +929,7 @@ async def download_media(url: str) -> Path|None:
         last_err = e
         log.error("[ydl] low-fallback error: %s", e)
 
-    log.error("[ydl] failed to fetch playable video. last_err=%s", last_err)
+    log.error("[ydl] failed to fetch playable MP4 via HTTP. last_err=%s", last_err)
     return None
 
 # PDF.co تحويلات PDF↔Word
@@ -1507,7 +1527,6 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             path = await download_media(text)
             if path and path.exists() and path.stat().st_size <= MAX_UPLOAD_BYTES:
                 try:
-                    # أرسل كـ فيديو (يدعم المشاهدة المباشرة)
                     await update.message.reply_video(video=InputFile(str(path)), supports_streaming=True)
                 except Exception as e:
                     log.error("[tg] send_video error: %s", e)
@@ -1516,7 +1535,7 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     except Exception:
                         await update.message.reply_text("⚠️ تعذّر إرسال الملف.")
             else:
-                await update.message.reply_text("⚠️ تعذّر التحميل أو أن الملف كبير.")
+                await update.message.reply_text("⚠️ تعذّر التحميل (ربما الرابط يعطي HLS فقط ويحتاج ffmpeg أو كوكيز).")
             return
         if mode == "image_ai":
             prompt = text
@@ -1643,7 +1662,6 @@ async def aidiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try: return version(pkg)
             except PackageNotFoundError: return "not-installed"
         k = (os.getenv("OPENAI_API_KEY") or "").strip()
-        # محاولة اكتشاف ffmpeg (لن يكون مثبت في Render Free عادة)
         from shutil import which
         ff = which("ffmpeg")
         msg = (f"AI_ENABLED={'ON' if AI_ENABLED else 'OFF'}\n"
@@ -1733,4 +1751,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
