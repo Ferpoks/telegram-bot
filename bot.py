@@ -72,7 +72,8 @@ REPLICATE_MODEL_VER   = os.getenv("REPLICATE_MODEL_VER",   "5c7d...")  # اخت�
 OWNER_ID = int(os.getenv("OWNER_ID", "6468743821"))
 OWNER_USERNAME = os.getenv("OWNER_USERNAME", "ferpo_ksa").strip().lstrip("@")
 
-MAX_UPLOAD_MB = 47
+# === رفع حد الإرسال لـ 49MB (مقطع تيليجرام) ===
+MAX_UPLOAD_MB = 49
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 
 def admin_button_url() -> str:
@@ -328,7 +329,7 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "choose_lang_done": "✅ تم ضبط اللغة: {chosen}",
         "myinfo": "👤 اسمك: {name}\n🆔 معرفك: {uid}\n🌐 اللغة: {lng}",
 
-        # صفحات داخلية مع أزرار ملوّنة باللغة المختارة
+        # صفحات داخلية
         "page_ai": "🤖 أدوات الذكاء الاصطناعي:",
         "btn_ai_chat": "🤖 دردشة",
         "btn_ai_write": "✍️ كتابة",
@@ -344,8 +345,6 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "page_services": "🧰 خدمات:",
         "btn_numbers": "📱 أرقام مؤقتة",
         "btn_vcc": "💳 فيزا افتراضية",
-        "services_numbers": "📱 الأرقام المؤقتة (استخدمها بمسؤولية):",
-        "services_vcc": "💳 بطاقات/فيزا افتراضية (قانونية):",
 
         "page_courses": "🎓 الدورات:",
         "course_python": "بايثون من الصفر",
@@ -424,8 +423,6 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "page_services": "🧰 Services:",
         "btn_numbers": "📱 Temporary Numbers",
         "btn_vcc": "💳 Virtual Card",
-        "services_numbers": "📱 Temporary numbers (use responsibly):",
-        "services_vcc": "💳 Virtual/Prepaid card providers:",
 
         "page_courses": "🎓 Courses:",
         "course_python": "Python from Zero",
@@ -1031,7 +1028,7 @@ async def ai_write(prompt: str) -> str:
     if err: return "⚠️ تعذّر التوليد حالياً."
     return (r.choices[0].message.content or "").strip()
 
-# ==== تنزيل وسائط (محسّن) ====
+# ==== تنزيل وسائط (مُحدّث لضمان MP4 قابل للبث) ====
 def _ffmpeg_cmd():
     p = ffmpeg_path()
     return p if p else "ffmpeg"
@@ -1039,6 +1036,16 @@ def _ffmpeg_cmd():
 def _ffprobe_cmd():
     p = ffprobe_path()
     return p if p else "ffprobe"
+
+def _probe_duration(filepath: Path) -> float:
+    try:
+        cmd = [_ffprobe_cmd(), "-v", "error", "-select_streams", "v:0", "-show_entries", "format=duration",
+               "-of", "default=noprint_wrappers=1:nokey=1", str(filepath)]
+        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+        d = float(p.stdout.decode().strip() or "0")
+        return d if d>0 else 0.0
+    except Exception:
+        return 0.0
 
 def _run_ffmpeg(args: list[str]) -> bool:
     try:
@@ -1058,145 +1065,159 @@ def _safe_filename(title: str, ext: str) -> Path:
     return TMP_DIR / f"{title}.{ext}"
 
 def _estimate_target_bitrate(target_size_bytes: int, duration_sec: float) -> tuple[int,int]:
-    # بسيط: خصص 128k للصوت والباقي للفيديو
     if duration_sec <= 0:
-        return (900_000, 128_000)
+        return (1_000_000, 128_000)
     total_br = int((target_size_bytes * 8) / duration_sec)  # bits/s
     audio_br = min(160_000, max(96_000, total_br // 8))
-    video_br = max(200_000, total_br - audio_br)
+    video_br = max(250_000, total_br - audio_br)
     return (video_br, audio_br)
-
-def _probe_duration(filepath: Path) -> float:
-    try:
-        cmd = [_ffprobe_cmd(), "-v", "error", "-select_streams", "v:0", "-show_entries", "format=duration",
-               "-of", "default=noprint_wrappers=1:nokey=1", str(filepath)]
-        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
-        d = float(p.stdout.decode().strip() or "0")
-        return d if d>0 else 0.0
-    except Exception:
-        return 0.0
-
-def _transcode_to_mp4(input_path: Path, out_path: Path, target_bytes: int|None=None) -> Path|None:
-    """حوّل إلى MP4 (H.264 + AAC) مع +faststart. لو target_bytes موجود حاول ضغط مناسب."""
-    args = ["-y", "-i", str(input_path), "-movflags", "+faststart", "-pix_fmt", "yuv420p",
-            "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-b:a", "128k", str(out_path)]
-    if target_bytes:
-        dur = _probe_duration(input_path)
-        vbr, abr = _estimate_target_bitrate(target_bytes, dur)
-        args = ["-y", "-i", str(input_path),
-                "-vf", "scale='min(854,iw)':'-2'",
-                "-movflags", "+faststart", "-pix_fmt", "yuv420p",
-                "-c:v", "libx264", "-preset", "veryfast", "-b:v", str(vbr), "-maxrate", str(int(vbr*1.2)), "-bufsize", str(int(vbr*2)),
-                "-c:a", "aac", "-b:a", str(abr),
-                str(out_path)]
-    ok = _run_ffmpeg(args)
-    return out_path if ok and out_path.exists() else None
 
 def _transcode_audio_only(input_path: Path, out_path: Path) -> Path|None:
     args = ["-y", "-i", str(input_path), "-vn", "-c:a", "aac", "-b:a", "128k", str(out_path)]
     ok = _run_ffmpeg(args)
     return out_path if ok and out_path.exists() else None
 
+# === الجديد: فحص الكوديكات + إعادة تغليف/ترميز لضمان H.264/AAC + faststart ===
+def _probe_codecs(path: Path) -> tuple[str|None, str|None]:
+    try:
+        vc = subprocess.run([_ffprobe_cmd(), "-v", "error", "-select_streams", "v:0",
+                             "-show_entries", "stream=codec_name", "-of", "csv=p=0", str(path)],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+        ac = subprocess.run([_ffprobe_cmd(), "-v", "error", "-select_streams", "a:0",
+                             "-show_entries", "stream=codec_name", "-of", "csv=p=0", str(path)],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+        vcodec = (vc.stdout.decode().strip() or None)
+        acodec = (ac.stdout.decode().strip() or None)
+        return vcodec, acodec
+    except Exception:
+        return None, None
+
+def _remux_to_mp4(input_path: Path, out_path: Path) -> Path|None:
+    args = ["-y", "-i", str(input_path),
+            "-movflags", "+faststart",
+            "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
+            str(out_path)]
+    ok = _run_ffmpeg(args)
+    return out_path if ok and out_path.exists() else None
+
+def _encode_to_mp4(input_path: Path, out_path: Path,
+                   v_bitrate: int | None = None, a_bitrate: int = 128_000,
+                   scale: str | None = None) -> Path|None:
+    args = ["-y", "-i", str(input_path),
+            "-movflags", "+faststart",
+            "-pix_fmt", "yuv420p",
+            "-c:v", "libx264", "-preset", "veryfast", "-profile:v", "main", "-level", "3.1",
+            "-c:a", "aac", "-b:a", str(a_bitrate)]
+    if scale:
+        args[2:2] = ["-vf", f"scale={scale}"]
+    if v_bitrate:
+        args.extend(["-b:v", str(v_bitrate), "-maxrate", str(int(v_bitrate*1.2)), "-bufsize", str(int(v_bitrate*2))])
+    args.append(str(out_path))
+    ok = _run_ffmpeg(args)
+    return out_path if ok and out_path.exists() else None
+
+def _ensure_streamable_mp4(src: Path, title: str, target_bytes: int | None = None) -> Path|None:
+    out_mp4 = _safe_filename(title, "mp4")
+    vcodec, acodec = _probe_codecs(src)
+
+    # لو هو MP4 H.264/AAC أصلاً
+    if src.suffix.lower() == ".mp4" and (vcodec == "h264") and (acodec in {"aac", "mp3"}):
+        ok = _remux_to_mp4(src, out_mp4)
+        if ok and ok.exists():
+            return ok
+
+    # لو H.264 موجود لكن الحاوية غير MP4 -> remux
+    if vcodec == "h264":
+        ok = _remux_to_mp4(src, out_mp4)
+        if ok and ok.exists():
+            return ok
+
+    # ترميز كامل
+    if target_bytes:
+        dur = _probe_duration(src)
+        vbr, abr = _estimate_target_bitrate(target_bytes, dur)
+        return _encode_to_mp4(src, out_mp4, v_bitrate=vbr, a_bitrate=abr, scale="min(854,iw):-2")
+    else:
+        return _encode_to_mp4(src, out_mp4)
+
 async def download_media(url: str) -> Path|None:
     """
-    يحاول تنزيل الفيديو بأفضل صيغة ممكنة، دمج الفيديو+الصوت، تحويل ل MP4،
-    ثم يضمن الحجم أقل من حد تيليجرام. يسقط إلى صوت فقط عند الضرورة.
+    تنزيل + ضمان MP4 قابل للبث، ومحاولة ضغط لو تعدّى الحد.
     """
     if yt_dlp is None:
         log.warning("yt_dlp غير مثبت")
         return None
 
     TMP_DIR.mkdir(parents=True, exist_ok=True)
-    # نجرب أكثر من اختيار للصيغ لتفادي مشاكل تويتر/تيك توك
-    format_candidates = [
-        "bv*+ba/best",  # أفضل فيديو+صوت
-        "bestvideo+bestaudio/best",
-        "best[ext=mp4]/best",
-        "best"  # آخر الحلول
-    ]
-    # مسارات مؤقتة
     ydl_out = str(TMP_DIR / "%(id)s.%(ext)s")
 
+    # فضّل MP4 أولاً
+    fmt = (
+        "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
+        "best[ext=mp4]/"
+        "bv*+ba/best"
+    )
+
+    ydl_opts = {
+        "outtmpl": ydl_out,
+        "format": fmt,
+        "merge_output_format": "mp4",
+        "quiet": True,
+        "no_warnings": True,
+        "retries": 2,
+        "noplaylist": True,
+        "postprocessors": [
+            {"key": "FFmpegVideoRemuxer", "preferedformat": "mp4"},
+        ],
+    }
+
+    fp = ffmpeg_path()
+    if fp:
+        ydl_opts["ffmpeg_location"] = str(Path(fp).parent)
+
+    downloaded_path, info = None, None
     last_err = None
-    downloaded_path = None
-    chosen_info = None
-
-    for fmt in format_candidates:
-        ydl_opts = {
-            "outtmpl": ydl_out,
-            "format": fmt,
-            "merge_output_format": "mp4",
-            "quiet": True,
-            "no_warnings": True,
-            "retries": 2,
-            "noplaylist": True,
-            "postprocessors": [
-                {"key": "FFmpegVideoConvertor", "preferedformat": "mp4"},
-            ],
-            "postprocessor_args": ["-movflags", "+faststart"],
-        }
-        # مرر مكان ffmpeg لو موجود
-        fp = ffmpeg_path()
-        if fp:
-            ydl_opts["ffmpeg_location"] = str(Path(fp).parent)
-
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                # مسار الملف الناتج
-                fname = ydl.prepare_filename(info)
-                base, _ = os.path.splitext(fname)
-                # تحقق من الامتدادات الأكثر شيوعًا
-                for ext in (".mp4",".mkv",".webm",".m4a",".mp3"):
-                    p = Path(base + ext)
-                    if p.exists():
-                        downloaded_path = p
-                        chosen_info = info
-                        break
-            if downloaded_path:
-                break
-        except Exception as e:
-            last_err = str(e)
-            log.error("[ydl] try fmt=%s error: %s", fmt, last_err)
-            continue
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            fname = ydl.prepare_filename(info)
+            base, _ = os.path.splitext(fname)
+            for ext in (".mp4", ".mkv", ".webm", ".m4a", ".mp3"):
+                p = Path(base + ext)
+                if p.exists():
+                    downloaded_path = p
+                    break
+    except Exception as e:
+        last_err = str(e)
+        log.error("[yt-dlp] error: %s", last_err)
 
     if not downloaded_path:
-        log.error("[ydl] failed to download any format. last_err=%s", last_err)
         return None
 
-    # لو الملف ليس MP4 حوّله
-    final_path = downloaded_path
-    if downloaded_path.suffix.lower() != ".mp4":
-        final_path = _safe_filename(chosen_info.get("title","video"), "mp4")
-        out = _transcode_to_mp4(downloaded_path, final_path)
-        if not out:
-            # كحل أخير: أعد الاسم فقط كوثيقة
-            final_path = downloaded_path
+    title = (info or {}).get("title", "video")
 
-    # لو الحجم أكبر من حد تيليجرام -> اضغط ليتوافق
-    if final_path.exists() and final_path.stat().st_size > MAX_UPLOAD_BYTES and FFMPEG_FOUND:
-        # جرّب نسب ضغط متعددة
-        attempts = [
-            {"scale": "854:-2", "note": "480-540p"},
-            {"scale": "640:-2", "note": "360-400p"},
-        ]
-        for a in attempts:
-            tmp_out = _safe_filename(chosen_info.get("title","video") + "_small", "mp4")
-            target = MAX_UPLOAD_BYTES - 200*1024  # هامش صغير
-            out = _transcode_to_mp4(final_path, tmp_out, target_bytes=target)
-            if out and out.stat().st_size <= MAX_UPLOAD_BYTES:
-                final_path = out
-                break
+    # اجبره يصير MP4 قابل للبث
+    final_path = _ensure_streamable_mp4(downloaded_path, title)
+    if not final_path or not final_path.exists():
+        final_path = _ensure_streamable_mp4(downloaded_path, title)
 
-        # لو ما نفع، حوّل لصوت فقط
-        if final_path.stat().st_size > MAX_UPLOAD_BYTES:
-            audio_only = _safe_filename(chosen_info.get("title","audio"), "m4a")
-            out = _transcode_audio_only(final_path, audio_only)
-            if out and out.stat().st_size <= MAX_UPLOAD_BYTES:
-                final_path = out
+    if not final_path or not final_path.exists():
+        log.error("[ensure_mp4] failed.")
+        return None
+
+    # ضغط إذا تجاوز الحد
+    if final_path.stat().st_size > MAX_UPLOAD_BYTES:
+        target = MAX_UPLOAD_BYTES - 200*1024
+        comp = _ensure_streamable_mp4(final_path, title + "_small", target_bytes=target)
+        if comp and comp.exists() and comp.stat().st_size <= MAX_UPLOAD_BYTES:
+            final_path = comp
+        else:
+            # كحل أخير: صوت فقط
+            audio_only = _safe_filename(title + "_audio", "m4a")
+            ao = _transcode_audio_only(final_path, audio_only)
+            if ao and ao.exists() and ao.stat().st_size <= MAX_UPLOAD_BYTES:
+                final_path = ao
             else:
-                # كحل أخير: لا شيء
-                log.error("[ydl] even audio-only too large or failed.")
                 return None
 
     return final_path if final_path.exists() else None
@@ -1487,7 +1508,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "sec_security_geo":
         ai_set_mode(uid, "geo_ip"); await safe_edit(q, "📍 أرسل IP أو دومين.", kb=ai_stop_kb(lang)); return
 
-    # الخدمات (قائمتان داخليًا)
+    # الخدمات
     if q.data == "sec_services":
         await safe_edit(q, T("page_services", lang=lang) + "\n\n" + T("choose_option", lang=lang),
                         kb=InlineKeyboardMarkup([
@@ -1862,6 +1883,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
