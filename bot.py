@@ -112,7 +112,7 @@ IPINFO_TOKEN    = (os.getenv("IPINFO_TOKEN") or "").strip()
 # PDF.co لتحويل PDF↔Word
 PDFCO_API_KEY   = (os.getenv("PDFCO_API_KEY") or "").strip()
 
-# ======= روابط حسب طلبك (مع إمكانية التغيير من متغيرات البيئة) =======
+# ======= روابط حسب طلبك =======
 FOLLOWERS_LINKS = [
     u for u in [
         os.getenv("FOLLOW_LINK_1","https://smmcpan.com/"),
@@ -121,7 +121,6 @@ FOLLOWERS_LINKS = [
     ] if u
 ]
 
-# في نفس قسم "الخدمات": قائمتان منفصلتان (أرقام مؤقتة / فيزا افتراضية)
 SERV_NUMBERS_LINKS = [
     u for u in [
         os.getenv("NUMBERS_LINK_1","https://txtu.app/"),
@@ -133,7 +132,7 @@ SERV_VCC_LINKS = [
     ] if u
 ]
 
-# الدورات (عناوين تُعرّب تلقائيًا)
+# الدورات
 COURSE_PYTHON_URL = os.getenv("COURSE_PYTHON_URL","https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/Y8WctvBLiA6u6AASeZX2IUfDQAolTJ4QFGx9WRCu.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250815%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250815T021202Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=b7e556dd4c8a23f56f5e7cba1a29eadb6c48fa7c0656f463d47a64cd10ebfa81")
 COURSE_CYBER_URL  = os.getenv("COURSE_CYBER_URL","https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/pZ0spOmm1K0dA2qAzUuWUb4CcMMjUPTbn7WMRwAc.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250815%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250815T021253Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=bc11797f9de3cb6f391937936f73f8f2acded12a7d665c5d82e453241dea50c9")
 COURSE_EH_URL     = os.getenv("COURSE_EH_URL","https://www.mediafire.com/folder/r26pp5mpduvnx/%D8%AF%D9%88%D8%B1%D8%A9_%D8%A7%D9%84%D9%87%D8%A7%D9%83%D8%B1_%D8%A7%D9%84%D8%A7%D8%AE%D9%84%D8%A7%D9%82%D9%8A_%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D8%B1%D8%AD%D9%85%D9%86_%D9%88%D8%B5%D9%81%D9%8A")
@@ -141,7 +140,7 @@ COURSE_ECOM_URL   = os.getenv("COURSE_ECOM_URL","https://drive.google.com/drive/
 
 DARK_GPT_URL = os.getenv("DARK_GPT_URL", "https://flowgpt.com/chat/M0GRwnsc2MY0DdXPPmF4X")
 
-# ==== خادِم ويب (health + webhook) ====
+# ==== خادِم ويب ====
 SERVE_HEALTH = os.getenv("SERVE_HEALTH", "1") == "1" or PAY_WEBHOOK_ENABLE
 try:
     from aiohttp import web
@@ -299,41 +298,35 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "files_desc": "تحويلات ملفات: JPG→PDF (محلي)، و PDF↔Word عبر PDF.co إن وُجد المفتاح.",
         "unban_desc": "قوالب جاهزة ورسائل دعم للمنصات.",
         "courses_desc": "دورات مختارة بروابط مباشرة.",
-        "downloader_desc": "أرسل رابط فيديو/صوت (يوتيوب/تويتر/انستغرام...).",
+        "downloader_desc": "أرسل رابط فيديو/صوت (YouTube/Twitter/Instagram/TikTok...).",
         "boost_desc": "روابط منصات زيادة المتابعين (استخدمها بمسؤولية).",
         "darkgpt_desc": "يفتح الرابط:",
         "choose_lang_done": "✅ تم ضبط اللغة: {chosen}",
         "myinfo": "👤 اسمك: {name}\n🆔 معرفك: {uid}\n🌐 اللغة: {lng}",
-
         "page_ai": "🤖 أدوات الذكاء الاصطناعي:",
         "btn_ai_chat": "🤖 دردشة",
         "btn_ai_write": "✍️ كتابة",
         "btn_ai_translate": "🌐 ترجمة",
         "btn_ai_stt": "🎙️ تحويل صوت لنص",
         "btn_ai_image": "🖼️ توليد صور",
-
         "page_security": "🛡️ الأمن:",
         "btn_urlscan": "🔗 فحص رابط",
         "btn_emailcheck": "📧 فحص إيميل",
         "btn_geolookup": "🛰️ موقع IP/دومين",
-
         "page_services": "🧰 خدمات:",
         "btn_numbers": "📱 أرقام مؤقتة",
         "btn_vcc": "💳 فيزا افتراضية",
         "services_numbers": "📱 الأرقام المؤقتة (استخدمها بمسؤولية):",
         "services_vcc": "💳 بطاقات/فيزا افتراضية (قانونية):",
-
         "page_courses": "🎓 الدورات:",
         "course_python": "بايثون من الصفر",
         "course_cyber": "الأمن السيبراني من الصفر",
         "course_eh": "الهكر الأخلاقي",
         "course_ecom": "التجارة الإلكترونية",
-
         "page_files": "🗂️ أدوات الملفات:",
         "btn_jpg2pdf": "JPG → PDF",
         "btn_pdf2word": "PDF → Word",
         "btn_word2pdf": "Word → PDF",
-
         "page_downloader": "⬇️ تنزيل الفيديو:",
         "page_boost": "📈 رشق متابعين:",
     }
@@ -379,51 +372,42 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "files_desc": "File conversions: JPG→PDF (local), PDF↔Word via PDF.co if key set.",
         "unban_desc": "Ready-made support templates & links.",
         "courses_desc": "Curated courses (links).",
-        "downloader_desc": "Send video/audio link (YouTube/Twitter/Instagram...).",
+        "downloader_desc": "Send video/audio link (YouTube/Twitter/Instagram/TikTok...).",
         "boost_desc": "Follower growth sites (use responsibly).",
         "darkgpt_desc": "Opens:",
         "choose_lang_done": "✅ Language set: {chosen}",
         "myinfo": "👤 Name: {name}\n🆔 ID: {uid}\n🌐 Lang: {lng}",
-
         "page_ai": "🤖 AI Tools:",
         "btn_ai_chat": "🤖 Chat",
         "btn_ai_write": "✍️ Writing",
         "btn_ai_translate": "🌐 Translate",
         "btn_ai_stt": "🎙️ Speech-to-Text",
         "btn_ai_image": "🖼️ Image Gen",
-
         "page_security": "🛡️ Security:",
         "btn_urlscan": "🔗 URL Scan",
         "btn_emailcheck": "📧 Email Check",
         "btn_geolookup": "🛰️ IP/Domain Geo",
-
         "page_services": "🧰 Services:",
         "btn_numbers": "📱 Temporary Numbers",
         "btn_vcc": "💳 Virtual Card",
         "services_numbers": "📱 Temporary numbers (use responsibly):",
         "services_vcc": "💳 Virtual/Prepaid card providers:",
-
         "page_courses": "🎓 Courses:",
         "course_python": "Python from Zero",
         "course_cyber": "Cybersecurity from Zero",
         "course_eh": "Ethical Hacking",
         "course_ecom": "E-commerce",
-
         "page_files": "🗂️ File Tools:",
         "btn_jpg2pdf": "JPG → PDF",
         "btn_pdf2word": "PDF → Word",
         "btn_word2pdf": "Word → PDF",
-
         "page_downloader": "⬇️ Downloader:",
         "page_boost": "📈 Followers:",
     }
-
-    # توافق نداءات قديمة: T("ar","key")
     if key in ("ar", "en") and (lang is not None and lang not in ("ar", "en")):
         key, lang = lang, key
     if lang not in ("ar","en"):
         lang = "ar"
-
     D = AR if lang == "ar" else EN
     s = D.get(key, key)
     try:
@@ -673,6 +657,21 @@ async def paylink_create_invoice(order_number: str, amount: float, client_name: 
 _IP_RE = re.compile(r"\b(?:(?:[0-9]{1,3}\.){3}[0-9]{1,3})\b")
 _HOST_RE = re.compile(r"^[a-zA-Z0-9.-]{1,253}\.[A-Za-z]{2,63}$")
 _URL_RE = re.compile(r"https?://[^\s]+")
+
+def _url_host(u: str) -> str:
+    try:
+        return (_urlparse.urlparse(u).hostname or "").lower()
+    except Exception:
+        return ""
+
+def _is_tiktok(u: str) -> bool:
+    u = (u or "").lower()
+    return ("tiktok.com" in u) or ("vm.tiktok.com" in u)
+
+def _is_twitter(u: str) -> bool:
+    u = (u or "").lower()
+    return ("twitter.com" in u) or ("x.com" in u)
+
 DISPOSABLE_DOMAINS = {"mailinator.com","tempmail.com","10minutemail.com","yopmail.com","guerrillamail.com","trashmail.com"}
 
 async def fetch_geo(query: str) -> dict|None:
@@ -742,7 +741,6 @@ def whois_domain(domain: str) -> dict|None:
     except Exception as e:
         return {"error": f"whois error: {e}"}
 
-# فحوص الأمن
 async def urlscan_lookup(u: str) -> str:
     if not URLSCAN_API_KEY:
         return "ℹ️ ضع URLSCAN_API_KEY لتفعيل الفحص."
@@ -753,10 +751,8 @@ async def urlscan_lookup(u: str) -> str:
             async with s.post("https://urlscan.io/api/v1/scan/", headers=headers, json=data, timeout=30) as r:
                 resp = await r.json(content_type=None)
             res = []
-            if "result" in resp:
-                res.append(f"urlscan: {resp['result']}")
-            if "message" in resp:
-                res.append(f"msg: {resp['message']}")
+            if "result" in resp: res.append(f"urlscan: {resp['result']}")
+            if "message" in resp: res.append(f"msg: {resp['message']}")
             return "\n".join(res) or "urlscan: submitted."
     except Exception as e:
         return f"urlscan error: {e}"
@@ -787,6 +783,7 @@ async def ipinfo_lookup(query: str) -> str:
     except Exception as e:
         return f"ipinfo error: {e}"
 
+# ======= فحص الإيميل =======
 async def osint_email(email: str) -> str:
     if not is_valid_email(email): return "⚠️ صيغة الإيميل غير صحيحة."
     local, domain = email.split("@", 1)
@@ -825,48 +822,44 @@ async def osint_email(email: str) -> str:
         pass
     return "\n".join(out)
 
-# =================== تنزيل وسائط (محاولة بدون ffmpeg + تشخيص) ===================
-def _is_tiktok(u: str) -> bool:
-    u = (u or "").lower()
-    return ("tiktok.com" in u) or ("vm.tiktok.com" in u)
-
-def _url_host(u: str) -> str:
-    try:
-        return (_urlparse.urlparse(u).hostname or "").lower()
-    except Exception:
-        return ""
-
+# =================== تنزيل وسائط (محسّن حسب الموقع) ===================
 def _is_valid_mp4(path: Path) -> bool:
     try:
-        if not path.exists() or path.stat().st_size < 120 * 1024:  # أقل من 120KB = غالبًا صفحة HTML خطأ
+        if not path.exists() or path.stat().st_size < 120 * 1024:
             return False
         with open(path, "rb") as f:
             head = f.read(4096)
         if b"<!DOCTYPE html" in head or b"<html" in head.lower():
             return False
-        # ابحث عن صندوق ftyp في بداية الملف
         return b"ftyp" in head[:2048] or b"ftyp" in head
     except Exception:
         return False
 
 def _base_headers_for(url: str) -> dict:
-    TIKTOK_COOKIES = (os.getenv("TIKTOK_COOKIES") or "").strip()
-    TIKTOK_UA = (os.getenv("TIKTOK_USER_AGENT") or
-                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36")
+    host = _url_host(url)
     headers = {
-        "User-Agent": TIKTOK_UA,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
         "Accept": "*/*",
         "Accept-Language": "en-US,en;q=0.9,ar;q=0.8",
         "Connection": "keep-alive",
     }
-    if _is_tiktok(url):
+    if "tiktok.com" in host:
+        TIKTOK_COOKIES = (os.getenv("TIKTOK_COOKIES") or "").strip()
+        TIKTOK_UA = (os.getenv("TIKTOK_USER_AGENT") or headers["User-Agent"])
+        headers["User-Agent"] = TIKTOK_UA
         headers["Referer"] = "https://www.tiktok.com/"
         if TIKTOK_COOKIES:
             headers["Cookie"] = TIKTOK_COOKIES
+    if "twitter.com" in host or "x.com" in host:
+        TW_COOKIES = (os.getenv("TWITTER_COOKIES") or "").strip()
+        TW_UA = (os.getenv("TWITTER_USER_AGENT") or headers["User-Agent"])
+        headers["User-Agent"] = TW_UA
+        headers["Referer"] = "https://x.com/"
+        if TW_COOKIES:
+            headers["Cookie"] = TW_COOKIES
     return headers
 
 def _ytdlp_formats_probe(url: str):
-    """رجّع قائمة الفورمات المتاحة للاختبار /ytdltest."""
     if yt_dlp is None:
         return []
     opts = {
@@ -900,12 +893,6 @@ def _fmt_size(n):
         return "-"
 
 async def download_media(url: str) -> Path|None:
-    """
-    نحاول تنزيل فيديو جاهز (MP4 بصوت وفيديو) بدون ffmpeg.
-    - نتجنب m3u8/dash قدر الإمكان.
-    - نُفضّل ext=mp4 + vcodec!=none + acodec!=none + protocol يبدأ بـ http.
-    - لو خرج ملف صغير/HTML → نعتبره فشل.
-    """
     if yt_dlp is None:
         log.warning("yt_dlp غير مثبت")
         return None
@@ -915,6 +902,7 @@ async def download_media(url: str) -> Path|None:
 
     base_headers = _base_headers_for(url)
     FORMAT_OVERRIDE = (os.getenv("YTDLP_FORMAT_OVERRIDE") or "").strip() or None
+    FORMAT_TWITTER  = (os.getenv("YTDLP_FORMAT_TWITTER") or "").strip() or None
 
     base_opts = {
         "outtmpl": outtmpl,
@@ -923,7 +911,7 @@ async def download_media(url: str) -> Path|None:
         "nocheckcertificate": True,
         "retries": 2,
         "noplaylist": True,
-        "merge_output_format": None,  # لا دمج (بدون ffmpeg)
+        "merge_output_format": None,  # بدون ffmpeg
         "postprocessors": [],
         "prefer_free_formats": False,
         "http_headers": base_headers,
@@ -931,18 +919,31 @@ async def download_media(url: str) -> Path|None:
         "skip_unavailable_fragments": True,
     }
 
-    # صيغ تفضّل MP4 عبر HTTP فقط
-    tiktok_first  = "best[ext=mp4][vcodec!=none][acodec!=none][protocol^=http]/best[protocol^=http][vcodec!=none][acodec!=none]"
+    # أنماط مفلترة لتفادي HLS/DASH قدر الإمكان
+    generic_http  = "best[ext=mp4][vcodec!=none][acodec!=none][protocol^=http]/best[protocol^=http][vcodec!=none][acodec!=none]"
     youtube_first = "18/best[ext=mp4][vcodec*=avc1][acodec*=mp4a][protocol^=http]"
-    generic_http  = "best[ext=mp4][vcodec!=none][acodec!=none][protocol^=http]/best[protocol^=http]"
+    tiktok_first  = "best[ext=mp4][vcodec!=none][acodec!=none][protocol^=http]/best[protocol^=http][vcodec!=none][acodec!=none]"
+    twitter_first = "best[ext=mp4][vcodec!=none][acodec!=none][protocol^=http]/best[ext=mp4][protocol^=http]/best[protocol^=http]"
 
+    host = _url_host(url)
     try_order = []
+
     if FORMAT_OVERRIDE:
         try_order.append(FORMAT_OVERRIDE)
-    if _is_tiktok(url):
+
+    if "tiktok.com" in host or "vm.tiktok.com" in host:
         try_order += [tiktok_first, generic_http]
-    else:
+
+    elif "twitter.com" in host or "x.com" in host:
+        if FORMAT_TWITTER:
+            try_order.append(FORMAT_TWITTER)
+        try_order += [twitter_first, generic_http]
+
+    elif "youtube.com" in host or "youtu.be" in host:
         try_order += [youtube_first, generic_http]
+
+    else:
+        try_order += [generic_http]
 
     last_err = None
     for idx, fmt in enumerate(try_order, start=1):
@@ -953,13 +954,11 @@ async def download_media(url: str) -> Path|None:
                 fname = ydl.prepare_filename(info)
                 p = Path(fname)
                 if p.exists() and p.is_file():
-                    if p.suffix.lower() not in (".mp4", ".m4v", ".mov"):
-                        log.warning("[ydl] non-mp4 (ext=%s), may not stream inline", p.suffix)
                     if p.stat().st_size > MAX_UPLOAD_BYTES:
-                        log.warning("[ydl] file too big (%.2f MB) using fmt #%d", p.stat().st_size/1024/1024, idx)
+                        log.warning("[ydl] file too big (%.2f MB) fmt #%d", p.stat().st_size/1024/1024, idx)
                         continue
                     if not _is_valid_mp4(p):
-                        log.error("[ydl] invalid mp4 (likely HTML or HLS segments without remux) size=%s", _fmt_size(p.stat().st_size))
+                        log.error("[ydl] invalid mp4 (maybe HLS/HTML) size=%s", _fmt_size(p.stat().st_size))
                         continue
                     return p
         except Exception as e:
@@ -983,7 +982,7 @@ async def download_media(url: str) -> Path|None:
     log.error("[ydl] failed to fetch playable MP4 via HTTP. last_err=%s", last_err)
     return None
 
-# PDF.co تحويلات PDF↔Word
+# ==== PDF.co ====
 async def pdfco_convert(endpoint: str, file_bytes: bytes, out_name: str) -> bytes|None:
     if not PDFCO_API_KEY:
         return None
@@ -1055,7 +1054,7 @@ async def ai_image_generate(prompt: str) -> bytes|None:
     if img: return img
     return await openai_image_generate(prompt)
 
-# STT/Translate/Writer
+# ==== STT/Translate/Writer ====
 def _chat_with_fallback(messages):
     if not AI_ENABLED or client is None:
         return None, "ai_disabled"
@@ -1255,7 +1254,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = user_get(uid).get("pref_lang","ar")
     await update.message.reply_text(T("main_menu", lang=lang), reply_markup=main_menu_kb(uid, lang))
 
-# ==== تشخيص التنزيل: /ytdltest ====
+# ==== تشخيص التنزيل ====
 async def ytdltest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if yt_dlp is None:
         await update.message.reply_text("yt-dlp غير مثبت على الخادم.")
@@ -1466,7 +1465,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "sec_security_geo":
         ai_set_mode(uid, "geo_ip"); await safe_edit(q, "📍 أرسل IP أو دومين.", kb=ai_stop_kb(lang)); return
 
-    # الخدمات (قائمتان داخليًا)
+    # الخدمات
     if q.data == "sec_services":
         await safe_edit(q, T("page_services", lang=lang) + "\n\n" + T("choose_option", lang=lang),
                         kb=InlineKeyboardMarkup([
@@ -1623,7 +1622,7 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     except Exception:
                         await update.message.reply_text("⚠️ تعذّر إرسال الملف.")
             else:
-                await update.message.reply_text("⚠️ تعذّر التحميل (قد يكون الرابط HLS فقط ويحتاج ffmpeg، أو يتطلب كوكيز). جرّب /ytdltest <الرابط> للتشخيص.")
+                await update.message.reply_text("⚠️ تعذّر التحميل (قد يكون الرابط HLS فقط ويحتاج ffmpeg، أو يتطلب كوكيز/UA). جرّب /ytdltest <الرابط> للتشخيص.")
             return
         if mode == "image_ai":
             prompt = text
