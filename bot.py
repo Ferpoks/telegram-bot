@@ -112,7 +112,7 @@ IPINFO_TOKEN    = (os.getenv("IPINFO_TOKEN") or "").strip()
 # PDF.co لتحويل PDF↔Word
 PDFCO_API_KEY   = (os.getenv("PDFCO_API_KEY") or "").strip()
 
-# ======= روابط حسب طلبك =======
+# ======= روابط حسب طلبك (مع إمكانية التغيير من متغيرات البيئة) =======
 FOLLOWERS_LINKS = [
     u for u in [
         os.getenv("FOLLOW_LINK_1","https://smmcpan.com/"),
@@ -133,7 +133,7 @@ SERV_VCC_LINKS = [
     ] if u
 ]
 
-# الدورات
+# الدورات (عناوين تُعرّب تلقائيًا)
 COURSE_PYTHON_URL = os.getenv("COURSE_PYTHON_URL","https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/Y8WctvBLiA6u6AASeZX2IUfDQAolTJ4QFGx9WRCu.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250815%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250815T021202Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=b7e556dd4c8a23f56f5e7cba1a29eadb6c48fa7c0656f463d47a64cd10ebfa81")
 COURSE_CYBER_URL  = os.getenv("COURSE_CYBER_URL","https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/pZ0spOmm1K0dA2qAzUuWUb4CcMMjUPTbn7WMRwAc.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250815%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250815T021253Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=bc11797f9de3cb6f391937936f73f8f2acded12a7d665c5d82e453241dea50c9")
 COURSE_EH_URL     = os.getenv("COURSE_EH_URL","https://www.mediafire.com/folder/r26pp5mpduvnx/%D8%AF%D9%88%D8%B1%D8%A9_%D8%A7%D9%84%D9%87%D8%A7%D9%83%D8%B1_%D8%A7%D9%84%D8%A7%D8%AE%D9%84%D8%A7%D9%82%D9%8A_%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D8%B1%D8%AD%D9%85%D9%86_%D9%88%D8%B5%D9%81%D9%8A")
@@ -825,45 +825,96 @@ async def osint_email(email: str) -> str:
         pass
     return "\n".join(out)
 
-# =================== تنزيل وسائط (بدون ffmpeg) ===================
+# =================== تنزيل وسائط (محاولة بدون ffmpeg + تشخيص) ===================
 def _is_tiktok(u: str) -> bool:
     u = (u or "").lower()
     return ("tiktok.com" in u) or ("vm.tiktok.com" in u)
 
-async def download_media(url: str) -> Path|None:
-    """
-    نحاول تنزيل فيديو جاهز (MP4 بصوت وفيديو) بدون ffmpeg.
-    - نمنع بروتوكول m3u8/m3u8_native (HLS) لأنه يحتاج ffmpeg.
-    - نُفضّل ext=mp4 + vcodec!=none + acodec!=none + protocol يبدأ بـ http.
-    - ليوتيوب نضيف itag=18 كخيار واضح.
-    - لتيك توك: نضيف Referer/UA وقد نمرر كوكيز من env (TIKTOK_COOKIES) لو لزم.
-    """
-    if yt_dlp is None:
-        log.warning("yt_dlp غير مثبت")
-        return None
+def _url_host(u: str) -> str:
+    try:
+        return (_urlparse.urlparse(u).hostname or "").lower()
+    except Exception:
+        return ""
 
-    TMP_DIR.mkdir(parents=True, exist_ok=True)
+def _is_valid_mp4(path: Path) -> bool:
+    try:
+        if not path.exists() or path.stat().st_size < 120 * 1024:  # أقل من 120KB = غالبًا صفحة HTML خطأ
+            return False
+        with open(path, "rb") as f:
+            head = f.read(4096)
+        if b"<!DOCTYPE html" in head or b"<html" in head.lower():
+            return False
+        # ابحث عن صندوق ftyp في بداية الملف
+        return b"ftyp" in head[:2048] or b"ftyp" in head
+    except Exception:
+        return False
 
-    outtmpl = str(TMP_DIR / "%(title).50s-%(id)s.%(ext)s")
-
-    # بيئة اختيارية
-    TIKTOK_COOKIES = (os.getenv("TIKTOK_COOKIES") or "").strip()  # Cookie header string
+def _base_headers_for(url: str) -> dict:
+    TIKTOK_COOKIES = (os.getenv("TIKTOK_COOKIES") or "").strip()
     TIKTOK_UA = (os.getenv("TIKTOK_USER_AGENT") or
                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36")
-
-    # لو حاب تفرض فورمات بنفسك من env
-    FORMAT_OVERRIDE = (os.getenv("YTDLP_FORMAT_OVERRIDE") or "").strip() or None
-
-    base_headers = {
+    headers = {
         "User-Agent": TIKTOK_UA,
         "Accept": "*/*",
         "Accept-Language": "en-US,en;q=0.9,ar;q=0.8",
         "Connection": "keep-alive",
     }
     if _is_tiktok(url):
-        base_headers["Referer"] = "https://www.tiktok.com/"
+        headers["Referer"] = "https://www.tiktok.com/"
         if TIKTOK_COOKIES:
-            base_headers["Cookie"] = TIKTOK_COOKIES
+            headers["Cookie"] = TIKTOK_COOKIES
+    return headers
+
+def _ytdlp_formats_probe(url: str):
+    """رجّع قائمة الفورمات المتاحة للاختبار /ytdltest."""
+    if yt_dlp is None:
+        return []
+    opts = {
+        "skip_download": True,
+        "quiet": True,
+        "noprogress": True,
+        "extract_flat": False,
+        "http_headers": _base_headers_for(url),
+    }
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+    fmts = info.get("formats") or []
+    rows = []
+    for f in fmts:
+        rows.append({
+            "id": f.get("format_id"),
+            "ext": f.get("ext"),
+            "protocol": f.get("protocol"),
+            "vcodec": f.get("vcodec"),
+            "acodec": f.get("acodec"),
+            "height": f.get("height"),
+            "filesize": f.get("filesize") or f.get("filesize_approx"),
+            "url_host": _url_host(f.get("url") or ""),
+        })
+    return rows
+
+def _fmt_size(n):
+    try:
+        return f"{n/1024/1024:.1f} MB" if n else "-"
+    except Exception:
+        return "-"
+
+async def download_media(url: str) -> Path|None:
+    """
+    نحاول تنزيل فيديو جاهز (MP4 بصوت وفيديو) بدون ffmpeg.
+    - نتجنب m3u8/dash قدر الإمكان.
+    - نُفضّل ext=mp4 + vcodec!=none + acodec!=none + protocol يبدأ بـ http.
+    - لو خرج ملف صغير/HTML → نعتبره فشل.
+    """
+    if yt_dlp is None:
+        log.warning("yt_dlp غير مثبت")
+        return None
+
+    TMP_DIR.mkdir(parents=True, exist_ok=True)
+    outtmpl = str(TMP_DIR / "%(title).50s-%(id)s.%(ext)s")
+
+    base_headers = _base_headers_for(url)
+    FORMAT_OVERRIDE = (os.getenv("YTDLP_FORMAT_OVERRIDE") or "").strip() or None
 
     base_opts = {
         "outtmpl": outtmpl,
@@ -876,15 +927,14 @@ async def download_media(url: str) -> Path|None:
         "postprocessors": [],
         "prefer_free_formats": False,
         "http_headers": base_headers,
-        # لا نريد تنزيل HLS أصلاً
         "hls_prefer_native": True,
         "skip_unavailable_fragments": True,
     }
 
-    # صيغ تختار MP4 عبر HTTP فقط (وتتجنب m3u8)
-    tiktok_first = "best[ext=mp4][vcodec!=none][acodec!=none][protocol^=http]/best[protocol^=http][vcodec!=none][acodec!=none]"
+    # صيغ تفضّل MP4 عبر HTTP فقط
+    tiktok_first  = "best[ext=mp4][vcodec!=none][acodec!=none][protocol^=http]/best[protocol^=http][vcodec!=none][acodec!=none]"
     youtube_first = "18/best[ext=mp4][vcodec*=avc1][acodec*=mp4a][protocol^=http]"
-    generic_http = "best[ext=mp4][vcodec!=none][acodec!=none][protocol^=http]/best[protocol^=http]"
+    generic_http  = "best[ext=mp4][vcodec!=none][acodec!=none][protocol^=http]/best[protocol^=http]"
 
     try_order = []
     if FORMAT_OVERRIDE:
@@ -903,12 +953,13 @@ async def download_media(url: str) -> Path|None:
                 fname = ydl.prepare_filename(info)
                 p = Path(fname)
                 if p.exists() and p.is_file():
-                    # نرفض أي امتداد ليس فيديو صالح لتيليجرام كمشاهدة مباشرة
                     if p.suffix.lower() not in (".mp4", ".m4v", ".mov"):
-                        # في حالة WebM/TS تم تفاديه غالبًا، لكن نتأكد بالحجم والامتداد
-                        log.warning("[ydl] got non-mp4 ext=%s (may not stream inline)", p.suffix)
+                        log.warning("[ydl] non-mp4 (ext=%s), may not stream inline", p.suffix)
                     if p.stat().st_size > MAX_UPLOAD_BYTES:
                         log.warning("[ydl] file too big (%.2f MB) using fmt #%d", p.stat().st_size/1024/1024, idx)
+                        continue
+                    if not _is_valid_mp4(p):
+                        log.error("[ydl] invalid mp4 (likely HTML or HLS segments without remux) size=%s", _fmt_size(p.stat().st_size))
                         continue
                     return p
         except Exception as e:
@@ -916,14 +967,14 @@ async def download_media(url: str) -> Path|None:
             log.error("[ydl] try #%d fmt='%s' error: %s", idx, fmt, e)
             continue
 
-    # محاولة أخيرة بجودة ≤480p عبر HTTP فقط
+    # محاولة أخيرة ≤480p عبر HTTP فقط
     low_http = "best[ext=mp4][height<=480][protocol^=http]/best[height<=480][protocol^=http]"
     try:
         with yt_dlp.YoutubeDL(base_opts | {"format": low_http}) as ydl:
             info = ydl.extract_info(url, download=True)
             fname = ydl.prepare_filename(info)
             p = Path(fname)
-            if p.exists() and p.is_file() and p.stat().st_size <= MAX_UPLOAD_BYTES:
+            if p.exists() and p.is_file() and p.stat().st_size <= MAX_UPLOAD_BYTES and _is_valid_mp4(p):
                 return p
     except Exception as e:
         last_err = e
@@ -1182,7 +1233,7 @@ async def on_startup(app: Application):
                 BotCommand("revoke","Revoke VIP"), BotCommand("vipinfo","VIP Info"),
                 BotCommand("refreshcmds","Refresh Commands"), BotCommand("aidiag","AI diag"),
                 BotCommand("libdiag","Lib versions"), BotCommand("paylist","Payments list"),
-                BotCommand("restart","Restart"),
+                BotCommand("restart","Restart"), BotCommand("ytdltest","Probe YT-DLP"),
             ],
             scope=BotCommandScopeChat(chat_id=OWNER_ID)
         )
@@ -1203,6 +1254,43 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     lang = user_get(uid).get("pref_lang","ar")
     await update.message.reply_text(T("main_menu", lang=lang), reply_markup=main_menu_kb(uid, lang))
+
+# ==== تشخيص التنزيل: /ytdltest ====
+async def ytdltest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if yt_dlp is None:
+        await update.message.reply_text("yt-dlp غير مثبت على الخادم.")
+        return
+    args = context.args or []
+    if not args:
+        await update.message.reply_text("الاستخدام:\n/ytdltest <URL>")
+        return
+    url = args[0]
+    loop = asyncio.get_running_loop()
+    try:
+        rows = await loop.run_in_executor(None, lambda: _ytdlp_formats_probe(url))
+    except Exception as e:
+        await update.message.reply_text(f"فشل الفحص: {e}")
+        return
+
+    if not rows:
+        await update.message.reply_text("لا توجد Formats مُتاحة أو فشل الاستخراج.")
+        return
+
+    http_ok = [r for r in rows if (r.get("protocol") or "").startswith("http")]
+    http_mp4_both = [r for r in http_ok if (r.get("ext")=="mp4" and r.get("vcodec")!="none" and r.get("acodec")!="none")]
+    hls_only = all(((r.get("protocol") or "").startswith("m3u8")) for r in rows)
+
+    head = []
+    head.append(f"🔎 عدد الفورمات الكُلي: {len(rows)}")
+    head.append(f"🌐 HTTP/HTTPS: {len(http_ok)} | MP4 بالصوت/الفيديو: {len(http_mp4_both)}")
+    if hls_only:
+        head.append("⚠️ يبدو أن الرابط HLS فقط (m3u8) → يحتاج ffmpeg أو Docker لدمج المقاطع.")
+    sample = rows[:12]
+    lines = []
+    for r in sample:
+        lines.append(f"- id={r['id']} ext={r['ext']} proto={r['protocol']} v={r['vcodec']} a={r['acodec']} h={r['height']} size={_fmt_size(r['filesize'])} host={r['url_host']}")
+    txt = "\n".join(head) + "\n\n" + "\n".join(lines)
+    await update.message.reply_text(txt)
 
 # ==== الأزرار ====
 ALLOWED_STATUSES = {ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR}
@@ -1378,7 +1466,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "sec_security_geo":
         ai_set_mode(uid, "geo_ip"); await safe_edit(q, "📍 أرسل IP أو دومين.", kb=ai_stop_kb(lang)); return
 
-    # الخدمات
+    # الخدمات (قائمتان داخليًا)
     if q.data == "sec_services":
         await safe_edit(q, T("page_services", lang=lang) + "\n\n" + T("choose_option", lang=lang),
                         kb=InlineKeyboardMarkup([
@@ -1535,7 +1623,7 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     except Exception:
                         await update.message.reply_text("⚠️ تعذّر إرسال الملف.")
             else:
-                await update.message.reply_text("⚠️ تعذّر التحميل (ربما الرابط يعطي HLS فقط ويحتاج ffmpeg أو كوكيز).")
+                await update.message.reply_text("⚠️ تعذّر التحميل (قد يكون الرابط HLS فقط ويحتاج ffmpeg، أو يتطلب كوكيز). جرّب /ytdltest <الرابط> للتشخيص.")
             return
         if mode == "image_ai":
             prompt = text
@@ -1625,7 +1713,7 @@ async def makepdf_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ==== أوامر المالك ====
 async def help_cmd_owner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
-    await update.message.reply_text("Admin: /id /grant /revoke /vipinfo /refreshcmds /aidiag /libdiag /paylist /restart")
+    await update.message.reply_text("Admin: /id /grant /revoke /vipinfo /refreshcmds /aidiag /libdiag /paylist /restart /ytdltest")
 
 async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
@@ -1661,8 +1749,8 @@ async def aidiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
         def v(pkg):
             try: return version(pkg)
             except PackageNotFoundError: return "not-installed"
-        k = (os.getenv("OPENAI_API_KEY") or "").strip()
         from shutil import which
+        k = (os.getenv("OPENAI_API_KEY") or "").strip()
         ff = which("ffmpeg")
         msg = (f"AI_ENABLED={'ON' if AI_ENABLED else 'OFF'}\n"
                f"Key={'set(len=%d)'%len(k) if k else 'missing'}\n"
@@ -1723,6 +1811,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("makepdf", makepdf_cmd))
+    app.add_handler(CommandHandler("ytdltest", ytdltest_cmd))
 
     # مالك
     app.add_handler(CommandHandler("id", cmd_id))
@@ -1751,5 +1840,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
