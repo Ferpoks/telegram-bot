@@ -77,7 +77,6 @@ log.info("[db] DB_PATH=%s", DB_PATH)
 # OpenAI
 OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
 OPENAI_CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
-OPENAI_VISION = os.getenv("OPENAI_VISION", "0") == "1"
 AI_ENABLED = bool(OPENAI_API_KEY) and (OpenAI is not None)
 client = None  # lazy init
 
@@ -150,7 +149,16 @@ SERV_VCC_LINKS = [
         os.getenv("VCC_LINK_1","https://fake-card.com/virtual-card-mastercard-free-card-bin/228757973743900/"),
     ] if u
 ]
-# دورات (حدّثتها من Environment Variables لديك)
+
+# الألعاب والاشتراكات
+GAMES_SUBS = [
+    ("G2A",   "https://www.g2a.com/"),
+    ("Kinguin","https://www.kinguin.net/"),
+    ("GAMIVO","https://www.gamivo.com/"),
+    ("Eneba", "https://www.eneba.com/"),
+]
+
+# دورات (من Environment Variables لديك)
 COURSE_PYTHON_URL = os.getenv("COURSE_PYTHON_URL","")
 COURSE_CYBER_URL  = os.getenv("COURSE_CYBER_URL","")
 COURSE_EH_URL     = os.getenv("COURSE_EH_URL","https://www.mediafire.com/folder/r26pp5mpduvnx/%D8%AF%D9%88%D8%B1%D8%A9_%D8%A7%D9%84%D9%87%D8%A7%D9%83%D8%B1_%D8%A7%D9%84%D8%A7%D8%AE%D9%84%D8%A7%D9%82%D9%8A_%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D8%B1%D8%AD%D9%85%D9%86_%D9%88%D8%B5%D9%81%D9%8A")
@@ -351,7 +359,7 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "start_pick_lang": "اختر لغتك:",
         "lang_ar": "العربية",
         "lang_en": "English",
-        "hello_name": "مرحباً بك يا {name} في بوت فيربوكس! ✨\nستجد هنا: أدوات الذكاء الاصطناعي، قسم الأمن، خدمات مفيدة، دورات، وبرامج أدوبي.",
+        "hello_name": "مرحباً يا {name}! ✨\nفي هذا البوت ستجد:\n• أدوات الذكاء الاصطناعي (كتابة، ترجمة، صور)\n• الأمن (فحص روابط/إيميل/دومين)\n• الخدمات (أرقام/VCC/الألعاب والاشتراكات)\n• الدورات + برامج أدوبي (ويندوز)\n\nانضم للقناة ثم اختر من القائمة 👇",
         "main_menu": "👇 القائمة الرئيسية",
         "btn_myinfo": "👤 معلوماتي",
         "btn_lang": "🌐 تغيير اللغة",
@@ -364,13 +372,13 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "verify": "✅ تحقّق",
         "back": "↩️ رجوع",
         "sections": "📂 الأقسام",
-        "sec_ai": "🤖 أدوات الذكاء الاصطناعي",
-        "sec_security": "🛡️ الأمن",
+        "sec_ai": "🤖 أدوات الذكاء الاصطناعي (VIP)",
+        "sec_security": "🛡️ الأمن (VIP)",
         "sec_services": "🧰 خدمات",
         "sec_unban": "🚫 فك الباند",
         "sec_courses": "🎓 الدورات",
         "sec_adobe": "🎨 برامج أدوبي (ويندوز)",
-        "sec_darkgpt": "🕶️ Dark GPT",
+        "sec_darkgpt": "🕶️ Dark GPT (VIP)",
         "sec_boost": "📈 رشق متابعين",
         "ai_disabled": "🧠 ميزة الذكاء الاصطناعي غير مفعّلة حالياً.",
         "send_text": "أرسل النص الآن…",
@@ -386,30 +394,34 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "page_ai": "🤖 أدوات الذكاء الاصطناعي:",
         "btn_ai_chat": "🤖 دردشة",
         "btn_ai_write": "✍️ كتابة إعلانية",
-        "btn_ai_translate": "🌐 ترجمة (يمين/يسار)",
-        "btn_ai_image": "🖼️ توليد صور",
+        "btn_ai_translate": "🌐 ترجمة تلقائية",
+        "btn_ai_image": "🖼️ توليد صور (معطلة افتراضياً)",
         "page_security": "🛡️ الأمن:",
-        "btn_urlscan": "🔗 فحص رابط",
+        "btn_urlscan": "🔗 فحص رابط (urlscan)",
         "btn_emailcheck": "📧 فحص إيميل",
         "btn_geolookup": "🛰️ موقع IP/دومين",
+        "btn_domain_osint": "🧾 فحص دومين (WHOIS/MX/IP)",
         "page_services": "🧰 خدمات:",
         "btn_numbers": "📱 أرقام مؤقتة",
         "btn_vcc": "💳 فيزا افتراضية",
+        "btn_gamesubs": "🎮 الألعاب والاشتراكات",
         "services_numbers": "📱 الأرقام المؤقتة (استخدمها بمسؤولية):",
         "services_vcc": "💳 بطاقات/فيزا افتراضية (قانونية):",
+        "services_gamesubs": "🎮 مواقع الألعاب والاشتراكات:",
         "page_courses": "🎓 الدورات:",
         "course_python": "بايثون من الصفر",
         "course_cyber": "الأمن السيبراني من الصفر",
         "course_eh": "الهكر الأخلاقي",
         "course_ecom": "التجارة الإلكترونية",
         "page_boost": "📈 رشق متابعين:",
-        "darkgpt_desc": "يفتح الرابط:"
+        "darkgpt_desc": "يفتح الرابط:",
+        "vip_only": "🔒 هذه الميزة للمشتركين VIP فقط."
     }
     EN = {
         "start_pick_lang": "Pick your language:",
         "lang_ar": "العربية",
         "lang_en": "English",
-        "hello_name": "Welcome {name} to Ferpoks Bot! ✨\nYou’ll find: AI tools, Security, Services, Courses, and Adobe Apps.",
+        "hello_name": "Welcome {name}! ✨\nHere you’ll find:\n• AI tools (writing, translation, images)\n• Security (URL/Email/Domain checks)\n• Services (Numbers/VCC/Games & Subscriptions)\n• Courses + Adobe Apps (Windows)\n\nJoin the channel, then pick from the menu 👇",
         "main_menu": "👇 Main menu",
         "btn_myinfo": "👤 My info",
         "btn_lang": "🌐 Change language",
@@ -418,17 +430,17 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "btn_sections": "📂 Sections",
         "vip_status_on": "⭐ Your VIP is active (lifetime).",
         "vip_status_off": "⚡ Upgrade to VIP",
-        "gate_join": "🔐 Join the channel to use the bot:",
+        "gate_join": "🔐 Please join the channel first:",
         "verify": "✅ Verify",
         "back": "↩️ Back",
         "sections": "📂 Sections",
-        "sec_ai": "🤖 AI Tools",
-        "sec_security": "🛡️ Security",
+        "sec_ai": "🤖 AI Tools (VIP)",
+        "sec_security": "🛡️ Security (VIP)",
         "sec_services": "🧰 Services",
         "sec_unban": "🚫 Unban",
         "sec_courses": "🎓 Courses",
         "sec_adobe": "🎨 Adobe Apps (Windows)",
-        "sec_darkgpt": "🕶️ Dark GPT",
+        "sec_darkgpt": "🕶️ Dark GPT (VIP)",
         "sec_boost": "📈 Followers Boost",
         "ai_disabled": "🧠 AI is disabled right now.",
         "send_text": "Send your text…",
@@ -444,24 +456,28 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "page_ai": "🤖 AI Tools:",
         "btn_ai_chat": "🤖 Chat",
         "btn_ai_write": "✍️ Copywriting",
-        "btn_ai_translate": "🌐 Translate (RTL/LTR)",
-        "btn_ai_image": "🖼️ Image Gen",
+        "btn_ai_translate": "🌐 Auto-Translate",
+        "btn_ai_image": "🖼️ Image Gen (disabled)",
         "page_security": "🛡️ Security:",
-        "btn_urlscan": "🔗 URL Scan",
+        "btn_urlscan": "🔗 URL Scan (urlscan)",
         "btn_emailcheck": "📧 Email Check",
         "btn_geolookup": "🛰️ IP/Domain Geo",
+        "btn_domain_osint": "🧾 Domain WHOIS/MX/IP",
         "page_services": "🧰 Services:",
         "btn_numbers": "📱 Temporary Numbers",
         "btn_vcc": "💳 Virtual Card",
+        "btn_gamesubs": "🎮 Games & Subscriptions",
         "services_numbers": "📱 Temporary numbers (use responsibly):",
         "services_vcc": "💳 Virtual/Prepaid card providers:",
+        "services_gamesubs": "🎮 Game key stores & subscriptions:",
         "page_courses": "🎓 Courses:",
         "course_python": "Python from Zero",
         "course_cyber": "Cybersecurity from Zero",
         "course_eh": "Ethical Hacking",
         "course_ecom": "E-commerce",
         "page_boost": "📈 Followers:",
-        "darkgpt_desc": "Opens:"
+        "darkgpt_desc": "Opens:",
+        "vip_only": "🔒 This feature is for VIP only."
     }
 
     if key in ("ar", "en") and (lang is not None and lang not in ("ar", "en")):
@@ -492,7 +508,6 @@ def _db():
 
 def migrate_db():
     with _conn_lock:
-        c = _db().cursor()
         _db().execute("""
         CREATE TABLE IF NOT EXISTS users (
           id TEXT PRIMARY KEY,
@@ -792,18 +807,29 @@ async def ipinfo_lookup(query: str) -> str:
     except Exception as e:
         return f"ipinfo error: {e}"
 
+def dns_records(domain: str) -> dict:
+    out = {"A": [], "MX": []}
+    if not dnsresolver:
+        return {"error": "dnspython غير مثبت"}
+    try:
+        a = dnsresolver.resolve(domain, "A")
+        out["A"] = [str(x.address) for x in a]
+    except Exception:
+        pass
+    try:
+        mx = dnsresolver.resolve(domain, "MX")
+        out["MX"] = [str(r.exchange).rstrip(".") for r in mx]
+    except Exception:
+        pass
+    return out
+
 async def osint_email(email: str) -> str:
     if not is_valid_email(email): return "⚠️ صيغة الإيميل غير صحيحة."
     local, domain = email.split("@", 1)
-    if dnsresolver:
-        try:
-            answers = dnsresolver.resolve(domain, "MX")
-            mx_hosts = [str(r.exchange).rstrip(".") for r in answers]
-            mx_txt = ", ".join(mx_hosts[:5]) if mx_hosts else "لا يوجد"
-        except dnsexception.DNSException:
-            mx_txt = "لا يوجد (فشل الاستعلام)"
+    mx_data = dns_records(domain)
+    if "error" in mx_data: mx_txt = mx_data["error"]
     else:
-        mx_txt = "dnspython غير مثبت"
+        mx_txt = ", ".join(mx_data.get("MX") or []) or "لا يوجد"
     g_url = f"https://www.gravatar.com/avatar/{md5_hex(email)}?d=404"
     g_st = await http_head(g_url)
     grav = "✅ موجود" if g_st and 200 <= g_st < 300 else "❌ غير موجود"
@@ -847,6 +873,35 @@ async def link_scan(u: str) -> str:
         pass
     return f"🔗 <code>{_escape(u)}</code>\nالمضيف: <code>{_escape(host)}</code>\n" + "\n".join(issues) + f"\n\n{geo_txt}"
 
+async def domain_osint(domain: str) -> str:
+    domain = domain.strip().lower()
+    if not re.fullmatch(r"[a-z0-9.-]+\.[a-z]{2,63}", domain):
+        return "⚠️ أدخل دومين صحيح مثل: example.com"
+    w = whois_domain(domain)
+    dnsd = dns_records(domain)
+    ip = resolve_ip(domain)
+    parts = [f"🧾 <b>{_escape(domain)}</b>"]
+    if w:
+        if w.get("error"):
+            parts.append(f"WHOIS: {w['error']}")
+        else:
+            parts.append("WHOIS:")
+            parts.append(f"- Registrar: {w.get('registrar')}")
+            parts.append(f"- Created: {w.get('creation_date')}")
+            parts.append(f"- Expires: {w.get('expiration_date')}")
+            parts.append(f"- Emails: {w.get('emails')}")
+    if "error" in dnsd:
+        parts.append(f"DNS: {dnsd['error']}")
+    else:
+        parts.append(f"DNS A: {', '.join(dnsd.get('A') or []) or '-'}")
+        parts.append(f"DNS MX: {', '.join(dnsd.get('MX') or []) or '-'}")
+    if ip:
+        geo = await fetch_geo(ip)
+        parts.append(f"\n{fmt_geo(geo)}")
+    else:
+        parts.append("⚠️ لم يتمكن من حل عنوان IP.")
+    return "\n".join(parts)
+
 # ==== ذكاء اصطناعي ====
 def _chat_with_fallback(messages):
     if not AI_ENABLED or OpenAI is None:
@@ -862,7 +917,7 @@ def _chat_with_fallback(messages):
     last_err = None
     for model in ordered:
         try:
-            r = client.chat.completions.create(model=model, messages=messages, temperature=0.7, timeout=60)
+            r = client.chat.completions.create(model=model, messages=messages, temperature=0.4, timeout=60)
             return r, None
         except Exception as e:
             msg = str(e); last_err = msg
@@ -899,68 +954,20 @@ async def ai_write(prompt: str) -> str:
     if err: return "⚠️ تعذّر التوليد حالياً."
     return (r.choices[0].message.content or "").strip()
 
-def format_bilingual(en_text: str, ar_text: str) -> str:
-    # يضع الإنجليزي ثم العربية (العربية باتجاه RTL)
-    return (f"<b>English</b>\n<blockquote>{_escape(en_text)}</blockquote>\n"
-            f"<b>العربية</b>\n<blockquote dir=\"rtl\">{_escape(ar_text)}</blockquote>")
-
-async def translate_bidi(text: str) -> str:
-    """يرجع النص الأصلي (إنجليزي أو عربي) + الترجمة في الاتجاه المعاكس بتنسيق ثنائي الجانب."""
+async def translate_auto(text: str) -> str:
+    """يترجم تلقائياً: عربي→إنجليزي أو إنجليزي→عربي حسب لغة الإدخال."""
     if not AI_ENABLED or OpenAI is None:
         return T("ai_disabled", lang="ar")
-    # اطلب من النموذج تحديد اللغة وترجمة للغة المقابلة
-    prompt = ("Detect the language of the input. If Arabic, translate to concise, correct English. "
-              "If not Arabic (e.g., English), translate to clear Modern Standard Arabic. "
-              "Return JSON with keys: source_lang ('ar'/'en'/'other'), source_text, target_text_en, target_text_ar.")
+    prompt = ("Detect the input language. If Arabic, translate into concise, natural English. "
+              "If not Arabic (e.g., English), translate into clear Modern Standard Arabic. "
+              "Return ONLY the translation, no extra notes.")
     r, err = _chat_with_fallback([
-        {"role":"system","content":"You are a precise bilingual translator and language detector."},
+        {"role":"system","content":"You are a precise bilingual translator."},
         {"role":"user","content": f"{prompt}\n\nINPUT:\n{text}"}
     ])
-    if err: 
+    if err or not r:
         return "⚠️ تعذّر الترجمة حالياً."
-    raw = (r.choices[0].message.content or "").strip()
-    # جرّب استخراج JSON
-    j = None
-    try:
-        j = json.loads(raw)
-    except Exception:
-        # fallback: اطلب ترجمتين مباشر
-        r2, err2 = _chat_with_fallback([
-            {"role":"system","content":"Provide two versions: English paraphrase and Arabic translation."},
-            {"role":"user","content": f"Text:\n{text}\n\nReturn as:\nEnglish:\n...\nArabic:\n..."}
-        ])
-        if err2 or not r2:
-            return "⚠️ تعذّر الترجمة."
-        out = (r2.choices[0].message.content or "").strip()
-        # محاولة بسيطة للفصل
-        en = ar = ""
-        m1 = re.search(r"English:\s*(.+?)(?:\nArabic:|\Z)", out, flags=re.S|re.I)
-        m2 = re.search(r"Arabic:\s*(.+)\Z", out, flags=re.S|re.I)
-        if m1: en = m1.group(1).strip()
-        if m2: ar = m2.group(1).strip()
-        if not en: en = text
-        if not ar: ar = text
-        return format_bilingual(en, ar)
-    # JSON طريق
-    src = (j.get("source_lang") or "").lower()
-    en = j.get("target_text_en") or (text if src=="en" else "")
-    ar = j.get("target_text_ar") or (text if src=="ar" else "")
-    if not en and src!="en":
-        # اطلب نسخة انجليزية
-        r3, _ = _chat_with_fallback([
-            {"role":"system","content":"Translate to English."},
-            {"role":"user","content": text}
-        ])
-        en = (r3.choices[0].message.content or "").strip() if r3 else ""
-    if not ar and src!="ar":
-        r4, _ = _chat_with_fallback([
-            {"role":"system","content":"Translate to Arabic."},
-            {"role":"user","content": text}
-        ])
-        ar = (r4.choices[0].message.content or "").strip() if r4 else ""
-    if not en: en = text
-    if not ar: ar = text
-    return format_bilingual(en, ar)
+    return (r.choices[0].message.content or "").strip()
 
 # ==== Telegram UI ====
 def gate_kb(lang="ar"):
@@ -988,7 +995,7 @@ def sections_kb(lang="ar"):
         [InlineKeyboardButton(T("sec_courses", lang=lang), callback_data="sec_courses")],
         [InlineKeyboardButton(T("sec_adobe", lang=lang), url=ADOBE_DOC_URL)],
         [InlineKeyboardButton(T("sec_boost", lang=lang), callback_data="sec_boost")],
-        [InlineKeyboardButton(T("sec_darkgpt", lang=lang), url=DARK_GPT_URL)],
+        [InlineKeyboardButton(T("sec_darkgpt", lang=lang), callback_data="open_darkgpt")],
         [InlineKeyboardButton(T("back", lang=lang), callback_data="back_home")]
     ]
     return InlineKeyboardMarkup(rows)
@@ -1014,6 +1021,20 @@ async def safe_edit(q, text=None, kb=None):
                 pass
         else:
             log.warning("safe_edit error: %s", e)
+
+# ==== VIP Gate Helper ====
+def _vip_gate_or_kb(uid: int, lang: str, back_cb: str="sections"):
+    if user_is_premium(uid) or uid == OWNER_ID:
+        return None
+    ref = payments_create(uid, VIP_PRICE_SAR, "paylink")
+    pay_url = _build_pay_link(ref) or "https://paylink.sa"
+    txt = T("vip_only", lang=lang) + "\n" + T("vip_pay_title", lang=lang, price=VIP_PRICE_SAR) + "\n" + T("vip_ref", lang=lang, ref=ref)
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(T("go_pay", lang=lang), url=pay_url)],
+        [InlineKeyboardButton(T("check_pay", lang=lang), callback_data=f"verify_pay_{ref}")],
+        [InlineKeyboardButton(T("back", lang=lang), callback_data=back_cb)]
+    ])
+    return txt, kb
 
 # ==== Start / Commands ====
 async def on_startup(app: Application):
@@ -1220,6 +1241,13 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "back_home":
         await safe_edit(q, T("main_menu", lang=lang), kb=main_menu_kb(uid, lang)); return
 
+    # VIP تحقق عام
+    if q.data in ("sec_ai","sec_security","open_darkgpt"):
+        gate = _vip_gate_or_kb(uid, lang)
+        if gate:
+            txt, kb = gate
+            await safe_edit(q, txt, kb=kb); return
+
     # VIP
     if q.data == "vip":
         if user_is_premium(uid) or uid == OWNER_ID:
@@ -1257,7 +1285,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "sections":
         await safe_edit(q, T("sections", lang=lang), kb=sections_kb(lang)); return
 
-    # AI
+    # AI (VIP)
     if q.data == "sec_ai":
         await safe_edit(q, T("page_ai", lang=lang) + "\n\n" + T("choose_option", lang=lang),
                         kb=InlineKeyboardMarkup([
@@ -1273,25 +1301,30 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, T("ai_disabled", lang=lang), kb=sections_kb(lang)); return
         ai_set_mode(uid, "ai_chat")
         await safe_edit(q, "🤖 وضع الدردشة مفعّل. أرسل سؤالك الآن.", kb=ai_stop_kb(lang)); return
+
     if q.data == "ai_stop":
         ai_set_mode(uid, None)
         await safe_edit(q, "🔚 تم إنهاء وضع الذكاء الاصطناعي.", kb=sections_kb(lang)); return
+
     if q.data == "ai_writer":
         ai_set_mode(uid, "writer")
         await safe_edit(q, "✍️ أرسل تفاصيل الإعلان/الفكرة (مثال: منتج، عرض لفترة محدودة، جمهور مستهدف). سأكتب لك عنوانًا جذابًا ونصًا واضحًا مع CTA.", kb=ai_stop_kb(lang)); return
+
     if q.data == "ai_translate":
-        ai_set_mode(uid, "translate_bidi")
-        await safe_edit(q, "🌐 أرسل نصًا (إنجليزي/عربي). سأرجعه بنسختين: English على اليسار والعربية على اليمين (RTL).", kb=ai_stop_kb(lang)); return
+        ai_set_mode(uid, "translate_auto")
+        await safe_edit(q, "🌐 أرسل نصًا: إذا كان إنجليزي سأرجعه بالعربية، وإذا كان عربي سأرجعه بالإنجليزية تلقائيًا.", kb=ai_stop_kb(lang)); return
+
     if q.data == "ai_image":
         ai_set_mode(uid, "image_ai")
-        await safe_edit(q, "🖼️ أرسل وصف الصورة المراد توليدها.", kb=ai_stop_kb(lang)); return
+        await safe_edit(q, "🖼️ أرسل وصف الصورة المراد توليدها. (الميزة الفعلية للتوليد معطلة افتراضيًا في هذا الإصدار).", kb=ai_stop_kb(lang)); return
 
-    # الأمن
+    # الأمن (VIP)
     if q.data == "sec_security":
         await safe_edit(q, T("page_security", lang=lang) + "\n\n" + T("choose_option", lang=lang), kb=InlineKeyboardMarkup([
             [InlineKeyboardButton(T("btn_urlscan", lang=lang), callback_data="sec_security_url")],
             [InlineKeyboardButton(T("btn_emailcheck", lang=lang), callback_data="sec_security_email")],
             [InlineKeyboardButton(T("btn_geolookup", lang=lang), callback_data="sec_security_geo")],
+            [InlineKeyboardButton(T("btn_domain_osint", lang=lang), callback_data="sec_security_domain")],
             [InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]
         ])); return
 
@@ -1301,13 +1334,16 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ai_set_mode(uid, "email_check"); await safe_edit(q, "✉️ أرسل الإيميل للفحص.", kb=ai_stop_kb(lang)); return
     if q.data == "sec_security_geo":
         ai_set_mode(uid, "geo_ip"); await safe_edit(q, "📍 أرسل IP أو دومين.", kb=ai_stop_kb(lang)); return
+    if q.data == "sec_security_domain":
+        ai_set_mode(uid, "domain_osint"); await safe_edit(q, "🧾 أرسل الدومين (example.com) لفحص WHOIS/MX/IP/Geo.", kb=ai_stop_kb(lang)); return
 
-    # الخدمات
+    # خدمات
     if q.data == "sec_services":
-        await safe_edit(q, T("page_services", lang=lang) + "\n\n" + T("services_desc", lang=lang),
+        await safe_edit(q, T("page_services", lang=lang) + "\n\n" + T("choose_option", lang=lang),
                         kb=InlineKeyboardMarkup([
                             [InlineKeyboardButton(T("btn_numbers", lang=lang), callback_data="serv_numbers")],
                             [InlineKeyboardButton(T("btn_vcc", lang=lang), callback_data="serv_vcc")],
+                            [InlineKeyboardButton(T("btn_gamesubs", lang=lang), callback_data="serv_gamesubs")],
                             [InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]
                         ])); return
 
@@ -1322,6 +1358,11 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rows = [[InlineKeyboardButton(u, url=u)] for u in vcc]
         rows.append([InlineKeyboardButton(T("back", lang=lang), callback_data="sec_services")])
         await safe_edit(q, T("services_vcc", lang=lang), kb=InlineKeyboardMarkup(rows)); return
+
+    if q.data == "serv_gamesubs":
+        rows = [[InlineKeyboardButton(name, url=url)] for (name, url) in GAMES_SUBS]
+        rows.append([InlineKeyboardButton(T("back", lang=lang), callback_data="sec_services")])
+        await safe_edit(q, T("services_gamesubs", lang=lang), kb=InlineKeyboardMarkup(rows)); return
 
     # فك الباند
     if q.data == "sec_unban":
@@ -1359,7 +1400,16 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rows.append([InlineKeyboardButton(T("back", lang=lang), callback_data="sections")])
         await safe_edit(q, T("page_boost", lang=lang) + "\n📌 استخدم هذه المنصات بمسؤولية.", kb=InlineKeyboardMarkup(rows)); return
 
-# ==== تنزيل ملف من تيليجرام (يُستخدم للصوت فقط حالياً) ====
+    # Dark GPT (VIP) – فتح الرابط
+    if q.data == "open_darkgpt":
+        # إذا وصل هنا فهو VIP (فوق تحققنا)
+        await safe_edit(q, T("darkgpt_desc", lang=lang) + f"\n{DARK_GPT_URL}", kb=InlineKeyboardMarkup([
+            [InlineKeyboardButton("Open", url=DARK_GPT_URL)],
+            [InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]
+        ]))
+        return
+
+# ==== تنزيل ملف من تيليجرام (للصوت مستقبلاً) ====
 async def tg_download_to_path(bot, file_id: str, suffix: str = "") -> Path:
     TMP_DIR.mkdir(parents=True, exist_ok=True)
     f = await bot.get_file(file_id)
@@ -1382,13 +1432,27 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if msg.text and not msg.text.startswith("/"):
         text = msg.text.strip()
+
+        if mode in ("ai_chat","writer","translate_auto") and not (user_is_premium(uid) or uid==OWNER_ID):
+            gate = _vip_gate_or_kb(uid, lang)
+            if gate:
+                txt, kb = gate
+                await update.message.reply_text(txt, reply_markup=kb, parse_mode="HTML"); return
+
         if mode == "ai_chat":
             await context.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
             await update.message.reply_text(ai_chat_reply(text), reply_markup=ai_stop_kb(lang)); return
         if mode == "writer":
             out = await ai_write(text); await update.message.reply_text(out, parse_mode="HTML"); return
-        if mode == "translate_bidi":
-            out = await translate_bidi(text); await update.message.reply_text(out, parse_mode="HTML"); return
+        if mode == "translate_auto":
+            out = await translate_auto(text); await update.message.reply_text(out, parse_mode="HTML"); return
+
+        if mode in ("link_scan","email_check","geo_ip","domain_osint") and not (user_is_premium(uid) or uid==OWNER_ID):
+            gate = _vip_gate_or_kb(uid, lang)
+            if gate:
+                txt, kb = gate
+                await update.message.reply_text(txt, reply_markup=kb, parse_mode="HTML"); return
+
         if mode == "link_scan":
             out = await link_scan(text); await update.message.reply_text(out, parse_mode="HTML", disable_web_page_preview=True); return
         if mode == "email_check":
@@ -1401,11 +1465,13 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if ip: query = ip
             data = await fetch_geo(query)
             await update.message.reply_text(fmt_geo(data), parse_mode="HTML"); return
+        if mode == "domain_osint":
+            out = await domain_osint(text)
+            await update.message.reply_text(out, parse_mode="HTML"); return
+
         if mode == "image_ai":
-            # استخدم كتابة وصفية للصورة بالموديل النصي (قد تحتاج مولّد صور خارجي لو أردت صورة فعلية)
             await update.message.reply_text("ℹ️ توليد الصور الحقيقية يتطلب تفعيل مولّد صور (OpenAI Images أو Replicate). تم إيقافه في هذا الإصدار.", parse_mode="HTML"); return
 
-    # لا يوجد وضع
     if not mode:
         await update.message.reply_text(T("main_menu", lang=lang), reply_markup=main_menu_kb(uid, lang))
 
