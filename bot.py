@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+ص# -*- coding: utf-8 -*-
 import os, sqlite3, threading, time, asyncio, re, json, logging, base64, hashlib, socket, tempfile, subprocess, shutil, math
 from pathlib import Path
 from io import BytesIO
@@ -217,37 +217,69 @@ async def _payhook(request):
 def _run_http_server():
     if not (AIOHTTP_AVAILABLE and (SERVE_HEALTH or PAY_WEBHOOK_ENABLE)):
         return
+
+    async def _ok(request):
+        # health/ok
+        return web.json_response({"ok": True})
+
+    async def _favicon(_):
+        return web.Response(status=204)
+
+    # مسار عام يتعامل مع أي طلب/مسار لمنع 502 من الحافة
+    async def _any(request):
+        # HEAD يرجّع 200 بدون جسم
+        if request.method.upper() == "HEAD":
+            return web.Response(status=200)
+
+        # مسار تشخيصي اختياري: يرجّع IP الزائر
+        if request.path == "/clientIP":
+            ip = request.headers.get("X-Forwarded-For") or request.remote or "unknown"
+            return web.json_response({"clientIP": ip})
+
+        # رد افتراضي لأي شيء آخر
+        return web.json_response({
+            "ok": True,
+            "path": request.path,
+            "method": request.method
+        })
+
     async def _make_app():
         app = web.Application()
-        async def _ok(_): return web.json_response({"ok": True})
-        async def _favicon(_): return web.Response(status=204)
         # أساسيات
-        app.router.add_get("/favicon.ico", _favicon)
         app.router.add_get("/", _ok)
         app.router.add_get("/health", _ok)
-        # Catch-all لتفادي 502 على مسارات عشوائية
-        app.router.add_get("/{tail:.*}", _ok)
-        # Webhook
+        app.router.add_get("/favicon.ico", _favicon)
+
+        # Webhook الدفع (نفس _payhook الموجودة فوق في ملفك)
         if PAY_WEBHOOK_ENABLE:
             app.router.add_post("/payhook", _payhook)
             app.router.add_get("/payhook", _ok)
+
+        # راوت شامل يصد أي طلبات عشوائية من طرف Render وغيره (GET/POST/HEAD/PUT/…)
+        app.router.add_route("*", "/{tail:.*}", _any)
         return app
+
     def _thread_main():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+
         async def _start():
             app = await _make_app()
             runner = web.AppRunner(app)
             await runner.setup()
-            port = int(os.getenv("PORT", "10000"))
+            port = int(os.getenv("PORT", "10000"))  # Render يمرّر PORT تلقائياً
             site = web.TCPSite(runner, "0.0.0.0", port)
             await site.start()
-            log.info("[http] serving on 0.0.0.0:%d (webhook=%s health=%s)", port, "ON" if PAY_WEBHOOK_ENABLE else "OFF", "ON" if SERVE_HEALTH else "OFF")
+            log.info("[http] serving on 0.0.0.0:%d (health=%s webhook=%s)",
+                     port, "ON", "ON" if PAY_WEBHOOK_ENABLE else "OFF")
+
         loop.run_until_complete(_start())
         try:
             loop.run_forever()
         finally:
-            loop.stop(); loop.close()
+            loop.stop()
+            loop.close()
+
     threading.Thread(target=_thread_main, daemon=True).start()
 
 _run_http_server()
