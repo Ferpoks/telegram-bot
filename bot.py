@@ -1,8 +1,13 @@
-# -*- coding: utf-8 -*-
-import os, sqlite3, threading, time, asyncio, re, json, logging, base64, hashlib, socket, tempfile, subprocess, shutil, math, html
+# We'll write a full Python script to /mnt/data/bot_full.py that integrates the requested changes.
+from textwrap import dedent
+from pathlib import Path
+
+code = r'''# -*- coding: utf-8 -*-
+import os, sqlite3, threading, time, asyncio, re, json, logging, base64, hashlib, socket, tempfile, subprocess, shutil
 from pathlib import Path
 from io import BytesIO
 from dotenv import load_dotenv
+from html import escape as _escape
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("bot")
@@ -39,21 +44,23 @@ try:
 except Exception:
     dnsresolver = None
 try:
-    import yt_dlp
+    import yt_dlp  # ما عاد نستخدمه بعد حذف قسم التنزيل، الإبقاء اختياري
 except Exception:
     yt_dlp = None
 
-# ==== محولات PDF->DOCX (جديد) ====
+# pdf2docx لتحويل PDF -> Word محليًا (بدون API)
 try:
-    import convertapi  # PDF -> DOCX عبر ConvertAPI (اختياري)
+    from pdf2docx import Converter as _PDF2DOCX_Converter
 except Exception:
-    convertapi = None
-try:
-    from pdf2docx import Converter as PDF2DOCX_Converter  # بديل محلي بدون مفاتيح
-except Exception:
-    PDF2DOCX_Converter = None
+    _PDF2DOCX_Converter = None
 
-# تحميل .env محليًا
+# ConvertAPI (Word -> PDF) - يتطلب مفتاح CONVERTAPI_SECRET
+try:
+    import convertapi as _convertapi
+except Exception:
+    _convertapi = None
+
+# تحميل .env محليًا (في Render ما يحتاج لو متغيرات البيئة موجودة)
 ENV_PATH = Path(".env")
 if ENV_PATH.exists() and not os.getenv("RENDER"):
     load_dotenv(ENV_PATH, override=True)
@@ -71,13 +78,21 @@ OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
 OPENAI_CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
 OPENAI_VISION = os.getenv("OPENAI_VISION", "0") == "1"
 AI_ENABLED = bool(OPENAI_API_KEY) and (OpenAI is not None)
-client = OpenAI(api_key=OPENAI_API_KEY) if AI_ENABLED else None
+client = None  # تأجيل الإنشاء لمنع مشاكل عميل httpx في بيئات معينة
+
+def _ensure_openai():
+    global client
+    if client is None and AI_ENABLED and OpenAI is not None:
+        try:
+            client = OpenAI(api_key=OPENAI_API_KEY)
+        except Exception as e:
+            log.error("[openai-init] %s", e)
 
 # Replicate (مولد صور منخفض التكلفة)
 REPLICATE_API_TOKEN = (os.getenv("REPLICATE_API_TOKEN") or "").strip()
 REPLICATE_MODEL_OWNER = os.getenv("REPLICATE_MODEL_OWNER", "stability-ai")
 REPLICATE_MODEL_NAME  = os.getenv("REPLICATE_MODEL_NAME",  "stable-diffusion-xl-base-1.0")
-REPLICATE_MODEL_VER   = os.getenv("REPLICATE_MODEL_VER",   "5c7d...")  # اختياري
+REPLICATE_MODEL_VER   = os.getenv("REPLICATE_MODEL_VER",   "").strip()  # اختياري
 
 OWNER_ID = int(os.getenv("OWNER_ID", "6468743821"))
 OWNER_USERNAME = os.getenv("OWNER_USERNAME", "ferpo_ksa").strip().lstrip("@")
@@ -105,7 +120,7 @@ CHANNEL_ID = None
 
 # ==== دفع (Paylink) ====
 PAY_WEBHOOK_ENABLE = os.getenv("PAY_WEBHOOK_ENABLE", "1") == "1"
-PAY_WEBHOOK_SECRET = os.getenv("PAY_WEBHOOK_SECRET", "").strip()
+PAY_WEBHOOK_SECRET = (os.getenv("PAY_WEBHOOK_SECRET") or "").strip()
 PAYLINK_API_BASE   = os.getenv("PAYLINK_API_BASE", "https://restapi.paylink.sa/api").rstrip("/")
 PAYLINK_API_ID     = (os.getenv("PAYLINK_API_ID") or "").strip()
 PAYLINK_API_SECRET = (os.getenv("PAYLINK_API_SECRET") or "").strip()
@@ -119,10 +134,8 @@ URLSCAN_API_KEY = (os.getenv("URLSCAN_API_KEY") or "").strip()
 KICKBOX_API_KEY = (os.getenv("KICKBOX_API_KEY") or "").strip()
 IPINFO_TOKEN    = (os.getenv("IPINFO_TOKEN") or "").strip()
 
-# PDF.co لتحويل PDF↔Word
+# PDF.co (تم الاستغناء عنها لتحويل PDF->Word لأن endpoint تغيّر) – أبقيناه للمرجعية فقط
 PDFCO_API_KEY   = (os.getenv("PDFCO_API_KEY") or "").strip()
-# ConvertAPI (PDF -> DOCX)
-CONVERTAPI_SECRET = (os.getenv("CONVERTAPI_SECRET") or "").strip()
 
 # ======= روابط حسب طلبك =======
 FOLLOWERS_LINKS = [
@@ -142,15 +155,20 @@ SERV_VCC_LINKS = [
         os.getenv("VCC_LINK_1","https://fake-card.com/virtual-card-mastercard-free-card-bin/228757973743900/"),
     ] if u
 ]
-COURSE_PYTHON_URL = os.getenv("COURSE_PYTHON_URL","https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/Y8WctvBLiA6u6AASeZX2IUfDQAolTJ4QFGx9WRCu.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250815%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250815T021202Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=b7e556dd4c8a23f56f5e7cba1a29eadb6c48fa7c0656f463d47a64cd10ebfa81")
-COURSE_CYBER_URL  = os.getenv("COURSE_CYBER_URL","https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/pZ0spOmm1K0dA2qAzUuWUb4CcMMjUPTbn7WMRwAc.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250815%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250815T021253Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=bc11797f9de3cb6f391937936f73f8f2acded12a7d665c5d82e453241dea50c9")
+COURSE_PYTHON_URL = os.getenv("COURSE_PYTHON_URL","https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/Y8WctvBLiA6u6AASeZX2IUfDQAolTJ4QFGx9WRCu.pdf")
+COURSE_CYBER_URL  = os.getenv("COURSE_CYBER_URL","https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/pZ0spOmm1K0dA2qAzUuWUb4CcMMjUPTbn7WMRwAc.pdf")
 COURSE_EH_URL     = os.getenv("COURSE_EH_URL","https://www.mediafire.com/folder/r26pp5mpduvnx/%D8%AF%D9%88%D8%B1%D8%A9_%D8%A7%D9%84%D9%87%D8%A7%D9%83%D8%B1_%D8%A7%D9%84%D8%A7%D8%AE%D9%84%D8%A7%D9%82%D9%8A_%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D8%B1%D8%AD%D9%85%D9%86_%D9%88%D8%B5%D9%81%D9%8A")
 COURSE_ECOM_URL   = os.getenv("COURSE_ECOM_URL","https://drive.google.com/drive/folders/1-UADEMHUswoCyo853FdTu4R4iuUx_f3I?hl=ar")
 
 DARK_GPT_URL = os.getenv("DARK_GPT_URL", "https://flowgpt.com/chat/M0GRwnsc2MY0DdXPPmF4X")
 
-# ==== خادِم ويب (health + webhook) ====
+# ==== خادِم ويب (health + webhook) ====  (يفتح بورت لـ Render + Fallback)
+import json as _json
+import threading as _thr
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
 SERVE_HEALTH = os.getenv("SERVE_HEALTH", "1") == "1" or PAY_WEBHOOK_ENABLE
+
 try:
     from aiohttp import web
     AIOHTTP_AVAILABLE = True
@@ -208,8 +226,14 @@ def _find_ref_in_obj(obj):
             if got: return got
     return None
 
-# ==== WEBHOOK ====
-async def _payhook(request):
+def _find_ref_in_body_bytes(body: bytes):
+    try:
+        data = _json.loads(body.decode("utf-8", errors="ignore"))
+    except Exception:
+        data = {"raw": body.decode("utf-8", errors="ignore")}
+    return _find_ref_in_obj(data), data
+
+async def _payhook_aiohttp(request):
     if PAY_WEBHOOK_SECRET:
         if request.headers.get("X-PL-Secret") != PAY_WEBHOOK_SECRET:
             return web.json_response({"ok": False, "error": "bad secret"}, status=401)
@@ -225,48 +249,85 @@ async def _payhook(request):
     log.info("[payhook] ref=%s -> activated=%s", ref, activated)
     return web.json_response({"ok": True, "ref": ref, "activated": bool(activated)}, status=200)
 
+class _BasicHandler(BaseHTTPRequestHandler):
+    def _send(self, code=200, body=b"OK", ctype="application/json"):
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        if self.path in ("/", "/health"):
+            self._send(200, _json.dumps({"ok": True}).encode("utf-8"))
+        elif self.path == "/payhook":
+            self._send(200, _json.dumps({"ok": True, "note": "use POST"}).encode("utf-8"))
+        else:
+            self._send(404, _json.dumps({"ok": False, "error": "not found"}).encode("utf-8"))
+
+    def do_POST(self):
+        if self.path == "/payhook":
+            if PAY_WEBHOOK_SECRET and self.headers.get("X-PL-Secret") != PAY_WEBHOOK_SECRET:
+                self._send(401, _json.dumps({"ok": False, "error": "bad secret"}).encode("utf-8")); return
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            body = self.rfile.read(length) if length > 0 else b""
+            ref, data = _find_ref_in_body_bytes(body)
+            if not ref:
+                self._send(200, _json.dumps({"ok": False, "error": "no-ref"}).encode("utf-8")); return
+            activated = payments_mark_paid_by_ref(ref, raw=data)
+            log.info("[payhook-basic] ref=%s -> activated=%s", ref, activated)
+            self._send(200, _json.dumps({"ok": True, "ref": ref, "activated": bool(activated)}).encode("utf-8"))
+        else:
+            self._send(404, _json.dumps({"ok": False, "error": "not found"}).encode("utf-8"))
+
 def _run_http_server():
-    if not (AIOHTTP_AVAILABLE and (SERVE_HEALTH or PAY_WEBHOOK_ENABLE)):
-        return
-    async def _make_app():
-        app = web.Application()
-        async def _favicon(_): return web.Response(status=204)
-        app.router.add_get("/favicon.ico", _favicon)
+    """يشغّل سيرفر HTTP على قيمة PORT في Render. يفضّل aiohttp، ويعمل fallback إلى http.server"""
+    if not SERVE_HEALTH:
+        log.info("[http] SERVE_HEALTH=0 -> لن يتم فتح بورت."); return
 
-        async def _health(_): return web.json_response({"ok": True})
-        async def _health_head(_): return web.Response(status=200)
+    port = int(os.getenv("PORT", "10000"))
+    host = "0.0.0.0"
 
-        if SERVE_HEALTH:
+    def _thread_main_httpserver():
+        try:
+            httpd = HTTPServer((host, port), _BasicHandler)
+            log.info("[http] (fallback) serving on %s:%d (webhook=%s health=%s)", host, port, "ON" if PAY_WEBHOOK_ENABLE else "OFF", "ON")
+            httpd.serve_forever()
+        except Exception as e:
+            log.error("[http] fallback server error: %s", e)
+
+    if AIOHTTP_AVAILABLE:
+        async def _make_app():
+            app = web.Application()
+            async def _health(_): return web.json_response({"ok": True})
             app.router.add_get("/", _health)
             app.router.add_get("/health", _health)
-            app.router.add_head("/", _health_head)
-            app.router.add_head("/health", _health_head)
+            if PAY_WEBHOOK_ENABLE:
+                app.router.add_post("/payhook", _payhook_aiohttp)
+                app.router.add_get("/payhook", _health)
+            return app
 
-        if PAY_WEBHOOK_ENABLE:
-            app.router.add_post("/payhook", _payhook)
-            async def _payhook_get(_): return web.json_response({"ok": True})
-            async def _payhook_head(_): return web.Response(status=200)
-            app.router.add_get("/payhook", _payhook_get)
-            app.router.add_head("/payhook", _payhook_head)
-        return app
-    def _thread_main():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        async def _start():
-            app = await _make_app()
-            runner = web.AppRunner(app)
-            await runner.setup()
-            port = int(os.getenv("PORT", "10000"))
-            site = web.TCPSite(runner, "0.0.0.0", port)
-            await site.start()
-            log.info("[http] serving on 0.0.0.0:%d (webhook=%s health=%s)", port, "ON" if PAY_WEBHOOK_ENABLE else "OFF", "ON" if SERVE_HEALTH else "OFF")
-        loop.run_until_complete(_start())
-        try:
-            loop.run_forever()
-        finally:
-            loop.stop(); loop.close()
-    threading.Thread(target=_thread_main, daemon=True).start()
+        def _thread_main_aiohttp():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            async def _start():
+                app = await _make_app()
+                runner = web.AppRunner(app)
+                await runner.setup()
+                site = web.TCPSite(runner, host, port)
+                await site.start()
+                log.info("[http] serving on %s:%d (webhook=%s health=%s)", host, port, "ON" if PAY_WEBHOOK_ENABLE else "OFF", "ON")
+            loop.run_until_complete(_start())
+            try:
+                loop.run_forever()
+            finally:
+                loop.stop(); loop.close()
 
+        _thr.Thread(target=_thread_main_aiohttp, daemon=True).start()
+    else:
+        _thr.Thread(target=_thread_main_httpserver, daemon=True).start()
+
+# استدعاء مبكّر لضمان أن Render يكتشف البورت
 _run_http_server()
 
 # ==== ffmpeg helpers ====
@@ -303,7 +364,7 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "start_pick_lang": "اختر لغتك:",
         "lang_ar": "العربية",
         "lang_en": "English",
-        "hello_name": "مرحباً بك يا {name} في بوت فيربوكس! ✨\nستجد هنا: أدوات الذكاء الاصطناعي، قسم الأمن، خدمات مفيدة، دورات، تنزيل فيديو، وأدوات ملفات.",
+        "hello_name": "مرحباً بك يا {name} في بوت فيربوكس! ✨\nستجد هنا: أدوات الذكاء الاصطناعي، قسم الأمن، خدمات مفيدة، دورات، وأدوات ملفات.",
         "main_menu": "👇 القائمة الرئيسية",
         "btn_myinfo": "👤 معلوماتي",
         "btn_lang": "🌐 تغيير اللغة",
@@ -323,7 +384,6 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "sec_courses": "🎓 الدورات",
         "sec_files": "🗂️ أدوات الملفات",
         "sec_darkgpt": "🕶️ Dark GPT",
-        "sec_downloader": "⬇️ تنزيل الفيديو",
         "sec_boost": "📈 رشق متابعين",
         "ai_disabled": "🧠 ميزة الذكاء الاصطناعي غير مفعّلة حالياً.",
         "send_text": "أرسل النص الآن…",
@@ -340,10 +400,9 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "ai_chat_off": "🔚 تم إنهاء وضع الذكاء الاصطناعي.",
         "security_desc": "أرسل رابط/دومين/إيميل للفحص. (urlscan, kickbox, ipinfo) – يتطلب مفاتيح.",
         "services_desc": "اختر خدمة:",
-        "files_desc": "تحويلات ملفات: JPG→PDF (محلي)، و PDF↔Word عبر PDF.co/ConvertAPI إن وُجدت المفاتيح.",
+        "files_desc": "أدوات الملفات: JPG→PDF (محلي)، PDF→Word (محلي)، Word→PDF (ConvertAPI)، تحويل صيغ الصور.",
         "unban_desc": "قوالب جاهزة ورسائل دعم للمنصات.",
         "courses_desc": "دورات مختارة بروابط مباشرة.",
-        "downloader_desc": "أرسل رابط فيديو/صوت (YouTube/Twitter/Instagram...).",
         "boost_desc": "روابط منصات زيادة المتابعين (استخدمها بمسؤولية).",
         "darkgpt_desc": "يفتح الرابط:",
         "choose_lang_done": "✅ تم ضبط اللغة: {chosen}",
@@ -374,18 +433,19 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "course_ecom": "التجارة الإلكترونية",
 
         "page_files": "🗂️ أدوات الملفات:",
-        "btn_jpg2pdf": "JPG → PDF",
-        "btn_pdf2word": "PDF → Word",
-        "btn_word2pdf": "Word → PDF",
+        "btn_jpg2pdf": "JPG → PDF (محلي)",
+        "btn_pdf2word_local": "PDF → Word (محلي)",
+        "btn_word2pdf": "Word → PDF (ConvertAPI)",
+        "btn_img2png": "صورة → PNG",
+        "btn_img2webp": "صورة → WEBP",
 
-        "page_downloader": "⬇️ تنزيل الفيديو:",
         "page_boost": "📈 رشق متابعين:",
     }
     EN = {
         "start_pick_lang": "Pick your language:",
         "lang_ar": "العربية",
         "lang_en": "English",
-        "hello_name": "Welcome {name} to Ferpoks Bot! ✨\nYou’ll find: AI tools, Security, Services, Courses, Video Downloader, and File Tools.",
+        "hello_name": "Welcome {name} to Ferpoks Bot! ✨\nYou’ll find: AI tools, Security, Services, Courses, and File Tools.",
         "main_menu": "👇 Main menu",
         "btn_myinfo": "👤 My info",
         "btn_lang": "🌐 Change language",
@@ -405,7 +465,6 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "sec_courses": "🎓 Courses",
         "sec_files": "🗂️ File Tools",
         "sec_darkgpt": "🕶️ Dark GPT",
-        "sec_downloader": "⬇️ Video Downloader",
         "sec_boost": "📈 Followers Boost",
         "ai_disabled": "🧠 AI is disabled right now.",
         "send_text": "Send your text…",
@@ -420,10 +479,9 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "check_pay": "✅ Verify payment",
         "security_desc": "Send URL/domain/email to check (urlscan, kickbox, ipinfo) – needs API keys.",
         "services_desc": "Pick a service:",
-        "files_desc": "File conversions: JPG→PDF (local), PDF↔Word via PDF.co/ConvertAPI if keys set.",
+        "files_desc": "File tools: JPG→PDF (local), PDF→Word (local), Word→PDF (ConvertAPI), image format conversions.",
         "unban_desc": "Ready-made support templates & links.",
         "courses_desc": "Curated courses (links).",
-        "downloader_desc": "Send video/audio link (YouTube/Twitter/Instagram...).",
         "boost_desc": "Follower growth sites (use responsibly).",
         "darkgpt_desc": "Opens:",
         "choose_lang_done": "✅ Language set: {chosen}",
@@ -454,11 +512,12 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "course_ecom": "E-commerce",
 
         "page_files": "🗂️ File Tools:",
-        "btn_jpg2pdf": "JPG → PDF",
-        "btn_pdf2word": "PDF → Word",
-        "btn_word2pdf": "Word → PDF",
+        "btn_jpg2pdf": "JPG → PDF (local)",
+        "btn_pdf2word_local": "PDF → Word (local)",
+        "btn_word2pdf": "Word → PDF (ConvertAPI)",
+        "btn_img2png": "Image → PNG",
+        "btn_img2webp": "Image → WEBP",
 
-        "page_downloader": "⬇️ Downloader:",
         "page_boost": "📈 Followers:",
     }
 
@@ -471,6 +530,8 @@ def T(key: str, lang: str | None = None, **kw) -> str:
     D = AR if lang == "ar" else EN
     s = D.get(key, key)
     try:
+        # اهتم بالهروب حتى لو السلسلة فيها HTML
+        kw = {k: _escape(str(v)) for k,v in kw.items()}
         return s.format(**kw)
     except Exception:
         return s
@@ -736,14 +797,14 @@ def fmt_geo(data: dict) -> str:
     if not data: return "⚠️ تعذّر جلب البيانات."
     if data.get("error"): return f"⚠️ {data['error']}"
     parts = []
-    parts.append(f"🔎 query: <code>{html.escape(str(data.get('query','')))}</code>")
-    parts.append(f"🌍 {html.escape(str(data.get('country','?')))} — {html.escape(str(data.get('regionName','?')))}")
-    parts.append(f"🏙️ {html.escape(str(data.get('city','?')))} — {html.escape(str(data.get('zip','-')))}")
-    parts.append(f"⏰ {html.escape(str(data.get('timezone','-')))}")
-    parts.append(f"📡 ISP/ORG: {html.escape(str(data.get('isp','-')))} / {html.escape(str(data.get('org','-')))}")
-    parts.append(f"🛰️ AS: {html.escape(str(data.get('as','-')))}")
+    parts.append(f"🔎 query: <code>{_escape(str(data.get('query','')))}</code>")
+    parts.append(f"🌍 {data.get('country','?')} — {data.get('regionName','?')}")
+    parts.append(f"🏙️ {data.get('city','?')} — {data.get('zip','-')}")
+    parts.append(f"⏰ {data.get('timezone','-')}")
+    parts.append(f"📡 ISP/ORG: {data.get('isp','-')} / {data.get('org','-')}")
+    parts.append(f"🛰️ AS: {data.get('as','-')}")
     parts.append(f"📍 {data.get('lat','?')}, {data.get('lon','?')}")
-    if data.get("reverse"): parts.append(f"🔁 Reverse: {html.escape(str(data['reverse']))}")
+    if data.get("reverse"): parts.append(f"🔁 Reverse: {_escape(str(data['reverse']))}")
     parts.append("\nℹ️ استخدم هذه المعلومات لأغراض مشروعة فقط.")
     return "\n".join(parts)
 
@@ -835,7 +896,6 @@ async def osint_email(email: str) -> str:
     if not is_valid_email(email): return "⚠️ صيغة الإيميل غير صحيحة."
     local, domain = email.split("@", 1)
     # MX
-    mx_txt = "❓"
     if dnsresolver:
         try:
             answers = dnsresolver.resolve(domain, "MX")
@@ -856,8 +916,8 @@ async def osint_email(email: str) -> str:
     w = whois_domain(domain)
     w_txt = "WHOIS: غير متاح" if not w else (f"WHOIS: {w['error']}" if w.get("error") else f"WHOIS:\n- Registrar: {w.get('registrar')}\n- Created: {w.get('creation_date')}\n- Expires: {w.get('expiration_date')}")
     out = [
-        f"📧 {html.escape(email)}",
-        f"📮 MX: {html.escape(mx_txt)}",
+        f"📧 {email}",
+        f"📮 MX: {mx_txt}",
         f"🖼️ Gravatar: {grav}",
         w_txt,
         f"\n{geo_text}"
@@ -889,80 +949,14 @@ async def link_scan(u: str) -> str:
         issues.append(us)
     except Exception:
         pass
-    return f"🔗 <code>{html.escape(u)}</code>\nالمضيف: <code>{html.escape(host)}</code>\n" + "\n".join(issues) + f"\n\n{geo_txt}"
-
-# PDF.co + ConvertAPI تحويلات PDF↔Word
-async def pdfco_convert(endpoint: str, file_bytes: bytes, out_name: str) -> bytes|None:
-    """
-    ملاحظة: PDF.co يدعم Word->PDF عبر endpoint:
-      pdf/convert/from/doc
-    أما PDF->Word غير مدعوم لديهم مباشرة (سنعالج عبر ConvertAPI أو pdf2docx).
-    """
-    if not PDFCO_API_KEY:
-        return None
-    headers = {"x-api-key": PDFCO_API_KEY}
-    form = aiohttp.FormData()
-    form.add_field('file', file_bytes, filename=out_name)
-    async with aiohttp.ClientSession() as s:
-        async with s.post(f"https://api.pdf.co/v1/{endpoint}", headers=headers, data=form, timeout=120) as r:
-            data = await r.json(content_type=None)
-    if not data.get("url"):
-        log.error("[pdfco] bad response: %s", data)
-        return None
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(data["url"], timeout=120) as r:
-                return await r.read()
-    except Exception as e:
-        log.error("[pdfco] download error: %s", e)
-        return None
-
-async def convert_pdf_to_docx(file_bytes: bytes) -> bytes|None:
-    """
-    PDF -> DOCX:
-      1) ConvertAPI إذا توفر CONVERTAPI_SECRET
-      2) pdf2docx محليًا كخيار احتياطي (بدون مفاتيح)
-    """
-    # ConvertAPI
-    if CONVERTAPI_SECRET and convertapi is not None:
-        try:
-            TMP_DIR.mkdir(parents=True, exist_ok=True)
-            in_path = TMP_DIR / f"in_{int(time.time())}.pdf"
-            out_path = TMP_DIR / f"out_{int(time.time())}.docx"
-            in_path.write_bytes(file_bytes)
-            convertapi.api_credentials = CONVERTAPI_SECRET
-            result = convertapi.convert('docx', {'File': str(in_path)}, from_format='pdf')
-            result.file.save(str(out_path))
-            return out_path.read_bytes()
-        except Exception as e:
-            log.error("[convertapi pdf->docx] %s", e)
-
-    # pdf2docx fallback
-    if PDF2DOCX_Converter is not None:
-        try:
-            TMP_DIR.mkdir(parents=True, exist_ok=True)
-            in_path = TMP_DIR / f"in_{int(time.time())}.pdf"
-            out_path = TMP_DIR / f"out_{int(time.time())}.docx"
-            in_path.write_bytes(file_bytes)
-            cv = PDF2DOCX_Converter(str(in_path))
-            cv.convert(str(out_path))
-            cv.close()
-            return out_path.read_bytes()
-        except Exception as e:
-            log.error("[pdf2docx pdf->docx] %s", e)
-
-    return None
-
-async def convert_doc_to_pdf(file_bytes: bytes) -> bytes|None:
-    """
-    DOC/DOCX -> PDF باستخدام PDF.co (مدعوم)
-    endpoint الصحيح: pdf/convert/from/doc
-    """
-    return await pdfco_convert("pdf/convert/from/doc", file_bytes, "document.docx")
+    return f"🔗 <code>{_escape(u)}</code>\nالمضيف: <code>{_escape(host)}</code>\n" + "\n".join(issues) + f"\n\n{geo_txt}"
 
 # ==== صور AI ====
 async def openai_image_generate(prompt: str) -> bytes|None:
-    if not AI_ENABLED or client is None:
+    if not AI_ENABLED or OpenAI is None:
+        return None
+    _ensure_openai()
+    if client is None:
         return None
     try:
         resp = client.images.generate(model="gpt-image-1", prompt=prompt, size="1024x1024")
@@ -1013,7 +1007,10 @@ async def ai_image_generate(prompt: str) -> bytes|None:
 
 # STT/Translate/Writer
 def _chat_with_fallback(messages):
-    if not AI_ENABLED or client is None:
+    if not AI_ENABLED or OpenAI is None:
+        return None, "ai_disabled"
+    _ensure_openai()
+    if client is None:
         return None, "ai_disabled"
     primary = (OPENAI_CHAT_MODEL or "").strip()
     fallbacks = [m for m in [primary, "gpt-4o-mini", "gpt-4.1-mini", "gpt-4o", "gpt-4.1", "gpt-3.5-turbo"] if m]
@@ -1035,7 +1032,7 @@ def _chat_with_fallback(messages):
     return None, (last_err or "unknown")
 
 def ai_chat_reply(prompt: str) -> str:
-    if not AI_ENABLED or client is None:
+    if not AI_ENABLED or OpenAI is None:
         return T("ai_disabled", lang="ar")
     try:
         r, err = _chat_with_fallback([
@@ -1052,7 +1049,10 @@ def ai_chat_reply(prompt: str) -> str:
         return "⚠️ خطأ غير متوقع."
 
 async def tts_whisper_from_file(filepath: str) -> str:
-    if not AI_ENABLED or client is None:
+    if not AI_ENABLED or OpenAI is None:
+        return T("ai_disabled", lang="ar")
+    _ensure_openai()
+    if client is None:
         return T("ai_disabled", lang="ar")
     try:
         with open(filepath, "rb") as f:
@@ -1063,7 +1063,10 @@ async def tts_whisper_from_file(filepath: str) -> str:
         return "⚠️ تعذّر التحويل."
 
 async def translate_text(text: str, target_lang: str="ar") -> str:
-    if not AI_ENABLED or client is None:
+    if not AI_ENABLED or OpenAI is None:
+        return T("ai_disabled", lang="ar")
+    _ensure_openai()
+    if client is None:
         return T("ai_disabled", lang="ar")
     prompt = f"Translate the following into {target_lang}. Keep formatting:\n\n{text}"
     r, err = _chat_with_fallback([
@@ -1074,7 +1077,7 @@ async def translate_text(text: str, target_lang: str="ar") -> str:
     return (r.choices[0].message.content or "").strip()
 
 async def translate_image_file(path: str, target_lang: str="ar") -> str:
-    if not (AI_ENABLED and client and OPENAI_VISION):
+    if not (AI_ENABLED and OpenAI is not None and OPENAI_VISION):
         return "⚠️ ترجمة الصور تتطلب تمكين OPENAI_VISION=1."
     try:
         with open(path, "rb") as f:
@@ -1085,6 +1088,9 @@ async def translate_image_file(path: str, target_lang: str="ar") -> str:
                 {"type":"input_image","image_url":{"url": f"data:image/jpeg;base64,{b64}"}}
             ]}
         ]
+        _ensure_openai()
+        if client is None:
+            return "⚠️ تعذر إنشاء عميل OpenAI."
         r = client.chat.completions.create(model=OPENAI_CHAT_MODEL, messages=content, temperature=0)
         return (r.choices[0].message.content or "").strip()
     except Exception as e:
@@ -1092,172 +1098,12 @@ async def translate_image_file(path: str, target_lang: str="ar") -> str:
         return "⚠️ تعذّر معالجة الصورة."
 
 async def ai_write(prompt: str) -> str:
-    if not AI_ENABLED or client is None:
+    if not AI_ENABLED or OpenAI is None:
         return T("ai_disabled", lang="ar")
     sysmsg = "اكتب نصًا عربيًا/إنجليزيًا إعلانيًا جذابًا ومختصرًا، مع عناوين قصيرة وCTA واضح."
     r, err = _chat_with_fallback([{"role":"system","content":sysmsg},{"role":"user","content":prompt}])
     if err: return "⚠️ تعذّر التوليد حالياً."
     return (r.choices[0].message.content or "").strip()
-
-# ==== تنزيل وسائط (محسّن) ====
-def _ffmpeg_cmd():
-    p = ffmpeg_path()
-    return p if p else "ffmpeg"
-
-def _ffprobe_cmd():
-    p = ffprobe_path()
-    return p if p else "ffprobe"
-
-def _run_ffmpeg(args: list[str]) -> bool:
-    try:
-        cmd = [_ffmpeg_cmd()] + args
-        log.info("[ffmpeg] run: %s", " ".join(cmd))
-        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600)
-        if p.returncode != 0:
-            log.error("[ffmpeg] error rc=%s stderr=%s", p.returncode, p.stderr.decode(errors="ignore")[:4000])
-            return False
-        return True
-    except Exception as e:
-        log.error("[ffmpeg] exception: %s", e)
-        return False
-
-def _safe_filename(title: str, ext: str) -> Path:
-    title = re.sub(r"[^\w\-.]+", "_", title).strip("._")[:60] or "video"
-    return TMP_DIR / f"{title}.{ext}"
-
-def _estimate_target_bitrate(target_size_bytes: int, duration_sec: float) -> tuple[int,int]:
-    # بسيط: خصص 128k للصوت والباقي للفيديو
-    if duration_sec <= 0:
-        return (900_000, 128_000)
-    total_br = int((target_size_bytes * 8) / duration_sec)  # bits/s
-    audio_br = min(160_000, max(96_000, total_br // 8))
-    video_br = max(200_000, total_br - audio_br)
-    return (video_br, audio_br)
-
-def _probe_duration(filepath: Path) -> float:
-    try:
-        cmd = [_ffprobe_cmd(), "-v", "error", "-select_streams", "v:0", "-show_entries", "format=duration",
-               "-of", "default=noprint_wrappers=1:nokey=1", str(filepath)]
-        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
-        d = float(p.stdout.decode().strip() or "0")
-        return d if d>0 else 0.0
-    except Exception:
-        return 0.0
-
-def _transcode_to_mp4(input_path: Path, out_path: Path, target_bytes: int|None=None) -> Path|None:
-    """حوّل إلى MP4 (H.264 + AAC) مع +faststart. لو target_bytes موجود حاول ضغط مناسب."""
-    args = ["-y", "-i", str(input_path), "-movflags", "+faststart", "-pix_fmt", "yuv420p",
-            "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-b:a", "128k", str(out_path)]
-    if target_bytes:
-        dur = _probe_duration(input_path)
-        vbr, abr = _estimate_target_bitrate(target_bytes, dur)
-        args = ["-y", "-i", str(input_path),
-                "-vf", "scale='min(854,iw)':'-2'",
-                "-movflags", "+faststart", "-pix_fmt", "yuv420p",
-                "-c:v", "libx264", "-preset", "veryfast", "-b:v", str(vbr), "-maxrate", str(int(vbr*1.2)), "-bufsize", str(int(vbr*2)),
-                "-c:a", "aac", "-b:a", str(abr),
-                str(out_path)]
-    ok = _run_ffmpeg(args)
-    return out_path if ok and out_path.exists() else None
-
-def _transcode_audio_only(input_path: Path, out_path: Path) -> Path|None:
-    args = ["-y", "-i", str(input_path), "-vn", "-c:a", "aac", "-b:a", "128k", str(out_path)]
-    ok = _run_ffmpeg(args)
-    return out_path if ok and out_path.exists() else None
-
-async def download_media(url: str) -> Path|None:
-    """
-    يحاول تنزيل الفيديو بأفضل صيغة ممكنة، دمج الفيديو+الصوت، تحويل ل MP4،
-    ثم يضمن الحجم أقل من حد تيليجرام. يسقط إلى صوت فقط عند الضرورة.
-    """
-    if yt_dlp is None:
-        log.warning("yt_dlp غير مثبت")
-        return None
-
-    TMP_DIR.mkdir(parents=True, exist_ok=True)
-    # اختيارات صيغ
-    format_candidates = [
-        "bv*+ba/best",
-        "bestvideo+bestaudio/best",
-        "best[ext=mp4]/best",
-        "best"
-    ]
-    ydl_out = str(TMP_DIR / "%(id)s.%(ext)s")
-
-    last_err = None
-    downloaded_path = None
-    chosen_info = None
-
-    for fmt in format_candidates:
-        ydl_opts = {
-            "outtmpl": ydl_out,
-            "format": fmt,
-            "merge_output_format": "mp4",
-            "quiet": True,
-            "no_warnings": True,
-            "retries": 2,
-            "noplaylist": True,
-            "postprocessors": [
-                {"key": "FFmpegVideoConvertor", "preferedformat": "mp4"},
-            ],
-            "postprocessor_args": ["-movflags", "+faststart"],
-        }
-        fp = ffmpeg_path()
-        if fp:
-            ydl_opts["ffmpeg_location"] = str(Path(fp).parent)
-
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                fname = ydl.prepare_filename(info)
-                base, _ = os.path.splitext(fname)
-                for ext in (".mp4",".mkv",".webm",".m4a",".mp3"):
-                    p = Path(base + ext)
-                    if p.exists():
-                        downloaded_path = p
-                        chosen_info = info
-                        break
-            if downloaded_path:
-                break
-        except Exception as e:
-            last_err = str(e)
-            log.error("[ydl] try fmt=%s error: %s", fmt, last_err)
-            continue
-
-    if not downloaded_path:
-        log.error("[ydl] failed to download any format. last_err=%s", last_err)
-        return None
-
-    final_path = downloaded_path
-    if downloaded_path.suffix.lower() != ".mp4":
-        final_path = _safe_filename(chosen_info.get("title","video"), "mp4")
-        out = _transcode_to_mp4(downloaded_path, final_path)
-        if not out:
-            final_path = downloaded_path
-
-    if final_path.exists() and final_path.stat().st_size > MAX_UPLOAD_BYTES and FFMPEG_FOUND:
-        attempts = [
-            {"scale": "854:-2", "note": "480-540p"},
-            {"scale": "640:-2", "note": "360-400p"},
-        ]
-        for a in attempts:
-            tmp_out = _safe_filename(chosen_info.get("title","video") + "_small", "mp4")
-            target = MAX_UPLOAD_BYTES - 200*1024
-            out = _transcode_to_mp4(final_path, tmp_out, target_bytes=target)
-            if out and out.stat().st_size <= MAX_UPLOAD_BYTES:
-                final_path = out
-                break
-
-        if final_path.stat().st_size > MAX_UPLOAD_BYTES:
-            audio_only = _safe_filename(chosen_info.get("title","audio"), "m4a")
-            out = _transcode_audio_only(final_path, audio_only)
-            if out and out.stat().st_size <= MAX_UPLOAD_BYTES:
-                final_path = out
-            else:
-                log.error("[ydl] even audio-only too large or failed.")
-                return None
-
-    return final_path if final_path.exists() else None
 
 # ==== Telegram UI ====
 def gate_kb(lang="ar"):
@@ -1284,7 +1130,6 @@ def sections_kb(lang="ar"):
         [InlineKeyboardButton(T("sec_unban", lang=lang), callback_data="sec_unban")],
         [InlineKeyboardButton(T("sec_courses", lang=lang), callback_data="sec_courses")],
         [InlineKeyboardButton(T("sec_files", lang=lang), callback_data="sec_files")],
-        [InlineKeyboardButton(T("sec_downloader", lang=lang), callback_data="sec_downloader")],
         [InlineKeyboardButton(T("sec_boost", lang=lang), callback_data="sec_boost")],
         [InlineKeyboardButton(T("sec_darkgpt", lang=lang), url=DARK_GPT_URL)],
         [InlineKeyboardButton(T("back", lang=lang), callback_data="back_home")]
@@ -1403,10 +1248,10 @@ async def must_be_member_or_vip(context: ContextTypes.DEFAULT_TYPE, user_id: int
     return await is_member(context, user_id, retries=3, backoff=0.7)
 
 UNBAN_TEMPLATES = {
-    "instagram": "Hello Instagram Support,\nMy account was disabled by mistake. I believe I didn’t violate the rules. Kindly review and restore it. Thanks.",
-    "facebook": "Hello Facebook Support,\nMy account was restricted/disabled in error. Please review my case and reinstate access. Thank you.",
-    "telegram": "Hello Telegram Support,\nMy account/channel was limited by mistake. I follow the Terms of Service. Please lift the restriction. Thanks.",
-    "epic": "Hello Epic Games Support,\nMy account was banned mistakenly. Please re-check and remove the ban. Appreciate your help."
+    "instagram": "Hello Instagram Support,\nMy account appears to have been disabled/limited by mistake. I always follow the Community Guidelines and believe this was an error. Please review my case and restore access. Thank you for your time.",
+    "facebook": "Hello Facebook Support,\nMy account was restricted/disabled in error. I believe I did not violate the Community Standards. Kindly review my case and reinstate access. Thank you.",
+    "telegram": "Hello Telegram Support,\nMy account/channel seems to be limited by mistake. I respect the Terms of Service and the local laws. Please review my case and lift the restriction. Thanks for your help.",
+    "epic": "Hello Epic Games Support,\nMy account was banned mistakenly. I always follow the rules and would appreciate a manual review of my case and removal of the ban. Thank you."
 }
 UNBAN_LINKS = {
     "instagram": "https://help.instagram.com/contact/606967319425038",
@@ -1425,9 +1270,9 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data in ("set_lang_ar","set_lang_en"):
         new = "ar" if q.data.endswith("_ar") else "en"
         prefs_set_lang(uid, new)
-        uname = (q.from_user.username and "@"+q.from_user.username) or (q.from_user.first_name or "صديقي")
-        uname = html.escape(uname)
-        greeting = T("hello_name", lang=new, name=uname)
+        name = (q.from_user.username and "@"+q.from_user.username) or (q.from_user.first_name or "صديقي")
+        name = _escape(name)
+        greeting = T("hello_name", lang=new, name=name)
         text = f"{greeting}\n\n{T('main_menu', lang=new)}"
         await safe_edit(q, text, kb=main_menu_kb(uid, new))
         return
@@ -1455,9 +1300,8 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit(q, T("must_join", lang=lang), kb=gate_kb(lang)); return
 
     if q.data == "myinfo":
-        uname = (q.from_user.full_name or "").strip() or "—"
-        uname = html.escape(uname)
-        await safe_edit(q, T("myinfo", lang=lang, name=uname, uid=uid, lng=lang.upper()), kb=main_menu_kb(uid, lang)); return
+        name = (q.from_user.full_name or "").strip()
+        await safe_edit(q, T("myinfo", lang=lang, name=name, uid=uid, lng=lang.upper()), kb=main_menu_kb(uid, lang)); return
 
     if q.data == "back_home":
         await safe_edit(q, T("main_menu", lang=lang), kb=main_menu_kb(uid, lang)); return
@@ -1468,13 +1312,13 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, T("vip_status_on", lang=lang), kb=main_menu_kb(uid, lang)); return
         ref = payments_create(uid, VIP_PRICE_SAR, "paylink")
         try:
-            if USE_PAYLINK_API:
+            if USE_PAYLINK_API and PAYLINK_API_ID and PAYLINK_API_SECRET:
                 pay_url, _ = await paylink_create_invoice(ref, VIP_PRICE_SAR, q.from_user.full_name or "Telegram User")
             else:
-                pay_url = _build_pay_link(ref)
+                pay_url = _build_pay_link(ref) or "https://paylink.sa"
             txt = T("vip_pay_title", lang=lang, price=VIP_PRICE_SAR) + "\n" + T("vip_ref", lang=lang, ref=ref)
             await safe_edit(q, txt, kb=InlineKeyboardMarkup([
-                [InlineKeyboardButton(T("go_pay", lang=lang), url=pay_url or "https://paylink.sa")],
+                [InlineKeyboardButton(T("go_pay", lang=lang), url=pay_url)],
                 [InlineKeyboardButton(T("check_pay", lang=lang), callback_data=f"verify_pay_{ref}")],
                 [InlineKeyboardButton(T("back", lang=lang), callback_data="back_home")]
             ]))
@@ -1512,7 +1356,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         ])); return
 
     if q.data == "ai_chat":
-        if not AI_ENABLED or client is None:
+        if not AI_ENABLED or OpenAI is None:
             await safe_edit(q, T("ai_disabled", lang=lang), kb=sections_kb(lang)); return
         ai_set_mode(uid, "ai_chat")
         await safe_edit(q, T("ai_chat_on", lang=lang), kb=ai_stop_kb(lang)); return
@@ -1550,7 +1394,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # الخدمات
     if q.data == "sec_services":
-        await safe_edit(q, T("page_services", lang=lang) + "\n\n" + T("choose_option", lang=lang),
+        await safe_edit(q, T("page_services", lang=lang) + "\n\n" + T("services_desc", lang=lang),
                         kb=InlineKeyboardMarkup([
                             [InlineKeyboardButton(T("btn_numbers", lang=lang), callback_data="serv_numbers")],
                             [InlineKeyboardButton(T("btn_vcc", lang=lang), callback_data="serv_vcc")],
@@ -1576,15 +1420,14 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("Facebook", callback_data="unban_facebook")],
             [InlineKeyboardButton("Telegram", callback_data="unban_telegram")],
             [InlineKeyboardButton("Epic Games", callback_data="unban_epic")],
-            [InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]  # <-- إصلاح الرجوع
+            [InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]
         ])); return
 
     if q.data.startswith("unban_"):
         key = q.data.replace("unban_","")
         msg = UNBAN_TEMPLATES.get(key,"")
         link = UNBAN_LINKS.get(key,"")
-        esc = html.escape(msg)
-        await safe_edit(q, f"📋 Message:\n<code>{esc}</code>\n\n🔗 {html.escape(link)}", kb=InlineKeyboardMarkup([
+        await safe_edit(q, f"📋 Message:\n<code>{_escape(msg)}</code>\n\n🔗 {link}", kb=InlineKeyboardMarkup([
             [InlineKeyboardButton(T("back", lang=lang), callback_data="sec_unban")]
         ])); return
 
@@ -1604,25 +1447,28 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "sec_files":
         await safe_edit(q, T("page_files", lang=lang) + "\n" + T("files_desc", lang=lang), kb=InlineKeyboardMarkup([
             [InlineKeyboardButton(T("btn_jpg2pdf", lang=lang), callback_data="file_jpg2pdf")],
-            [InlineKeyboardButton(T("btn_pdf2word", lang=lang), callback_data="file_pdf2word")],
+            [InlineKeyboardButton(T("btn_pdf2word_local", lang=lang), callback_data="file_pdf2word_local")],
             [InlineKeyboardButton(T("btn_word2pdf", lang=lang), callback_data="file_word2pdf")],
+            [InlineKeyboardButton(T("btn_img2png", lang=lang), callback_data="file_img2png")],
+            [InlineKeyboardButton(T("btn_img2webp", lang=lang), callback_data="file_img2webp")],
             [InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]
         ])); return
 
     if q.data == "file_jpg2pdf":
         ai_set_mode(uid, "file_img_to_pdf", {"paths":[]})
         await safe_edit(q, "📌 أرسل صورة واحدة أو أكثر وسأحوّلها إلى PDF. ثم اضغط /makepdf", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
-    if q.data == "file_pdf2word":
-        ai_set_mode(uid, "file_pdf2word")
-        await safe_edit(q, "📌 أرسل ملف PDF وسيتم تحويله إلى Word.\n- الأفضل: CONVERTAPI_SECRET (اختياري)\n- بديل بدون مفتاح: محليًا عبر pdf2docx", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
+    if q.data == "file_pdf2word_local":
+        ai_set_mode(uid, "file_pdf2word_local")
+        await safe_edit(q, "📌 أرسل ملف PDF وسيتم تحويله إلى Word محليًا (pdf2docx).", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
     if q.data == "file_word2pdf":
         ai_set_mode(uid, "file_word2pdf")
-        await safe_edit(q, "📌 أرسل ملف DOC أو DOCX وسيُحوّل إلى PDF عبر PDF.co (يتطلب PDFCO_API_KEY).", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
-
-    # تنزيل الفيديو
-    if q.data == "sec_downloader":
-        ai_set_mode(uid, "media_dl")
-        await safe_edit(q, T("page_downloader", lang=lang) + "\n" + T("downloader_desc", lang=lang), kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]])); return
+        await safe_edit(q, "📌 أرسل ملف DOC أو DOCX وسيُحوّل إلى PDF (يتطلب CONVERTAPI_SECRET).", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
+    if q.data == "file_img2png":
+        ai_set_mode(uid, "file_img2png")
+        await safe_edit(q, "📌 أرسل صورة (JPG/WEBP/PNG) وسأرجع لك نسخة PNG.", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
+    if q.data == "file_img2webp":
+        ai_set_mode(uid, "file_img2webp")
+        await safe_edit(q, "📌 أرسل صورة (JPG/PNG) وسأرجع لك نسخة WEBP.", kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_files")]])); return
 
     # الرشق
     if q.data == "sec_boost":
@@ -1640,7 +1486,7 @@ async def tg_download_to_path(bot, file_id: str, suffix: str = "") -> Path:
     await f.download_to_drive(tmp_path)
     return Path(tmp_path)
 
-# ==== أدوات ملفات: JPG->PDF + PDF↔Word ====
+# ==== أدوات ملفات: JPG->PDF + PDF->Word + Word->PDF + تحويل صور ====
 def images_to_pdf(image_paths: list[Path]) -> Path|None:
     try:
         imgs = []
@@ -1655,6 +1501,45 @@ def images_to_pdf(image_paths: list[Path]) -> Path|None:
         return out_path
     except Exception as e:
         log.error("[img->pdf] %s", e)
+        return None
+
+def pdf_to_word_local(pdf_path: Path) -> Path|None:
+    if _PDF2DOCX_Converter is None:
+        log.error("[pdf2docx] library not installed")
+        return None
+    try:
+        out_path = TMP_DIR / f"out_{int(time.time())}.docx"
+        cv = _PDF2DOCX_Converter(str(pdf_path))
+        cv.convert(str(out_path), start=0, end=None)
+        cv.close()
+        return out_path if out_path.exists() else None
+    except Exception as e:
+        log.error("[pdf->word local] %s", e)
+        return None
+
+async def word_to_pdf_convertapi(doc_path: Path) -> Path|None:
+    secret = os.getenv("CONVERTAPI_SECRET","").strip()
+    if not secret or _convertapi is None:
+        return None
+    try:
+        _convertapi.api_secret = secret
+        # يحدد الصيغة تلقائياً
+        result = _convertapi.convert('pdf', {'File': str(doc_path)})
+        out_path = TMP_DIR / f"out_{int(time.time())}.pdf"
+        result.file.save(str(out_path))
+        return out_path if out_path.exists() else None
+    except Exception as e:
+        log.error("[word->pdf convertapi] %s", e)
+        return None
+
+def image_to_format(img_path: Path, fmt: str) -> Path|None:
+    try:
+        im = Image.open(img_path).convert("RGB")
+        out_path = TMP_DIR / f"img_{int(time.time())}.{fmt.lower()}"
+        im.save(out_path, format=fmt.upper())
+        return out_path if out_path.exists() else None
+    except Exception as e:
+        log.error("[img->%s] %s", fmt, e)
         return None
 
 # ==== حارس الرسائل ====
@@ -1691,35 +1576,6 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if ip: query = ip
             data = await fetch_geo(query)
             await update.message.reply_text(fmt_geo(data), parse_mode="HTML"); return
-        if mode == "media_dl":
-            if yt_dlp is None:
-                await update.message.reply_text("⚠️ yt-dlp غير مثبت على الخادِم. أضف إلى requirements.txt: yt-dlp>=2024.12.31"); return
-            if not _URL_RE.search(text):
-                await update.message.reply_text("أرسل رابط صالح (http/https)."); return
-            await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_VIDEO)
-            path = await download_media(text)
-            if path and path.exists() and path.stat().st_size <= MAX_UPLOAD_BYTES:
-                try:
-                    if path.suffix.lower() in (".mp4", ".mkv", ".webm", ".mov"):
-                        await update.message.reply_video(video=InputFile(str(path)), supports_streaming=True)
-                    else:
-                        await update.message.reply_document(document=InputFile(str(path)))
-                except Exception as e:
-                    log.error("[send] error: %s", e)
-                    await update.message.reply_text("⚠️ تعذّر إرسال الملف.")
-            else:
-                await update.message.reply_text("⚠️ تعذّر التحميل أو أن الملف كبير.")
-            return
-        if mode == "image_ai":
-            prompt = text
-            await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_PHOTO)
-            img_bytes = await ai_image_generate(prompt)
-            if img_bytes:
-                bio = BytesIO(img_bytes); bio.name = "ai.png"
-                await update.message.reply_photo(photo=InputFile(bio))
-            else:
-                await update.message.reply_text("⚠️ تعذّر توليد الصورة.")
-            return
 
     # ملفات/صوت/صور
     if msg.voice or msg.audio:
@@ -1735,6 +1591,20 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if mode == "translate" and OPENAI_VISION:
             out = await translate_image_file(str(p), (extra or {}).get("to","ar"))
             await update.message.reply_text(out or "⚠️ لم أستطع قراءة النص من الصورة."); return
+        if mode == "file_img2png":
+            outp = image_to_format(p, "png")
+            if outp:
+                await update.message.reply_document(InputFile(str(outp)))
+            else:
+                await update.message.reply_text("⚠️ فشل التحويل إلى PNG.")
+            return
+        if mode == "file_img2webp":
+            outp = image_to_format(p, "webp")
+            if outp:
+                await update.message.reply_document(InputFile(str(outp)))
+            else:
+                await update.message.reply_text("⚠️ فشل التحويل إلى WEBP.")
+            return
         if mode == "file_img_to_pdf":
             st_paths = (extra or {}).get("paths", [])
             st_paths.append(str(p))
@@ -1743,33 +1613,52 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     if msg.document:
-        p = await tg_download_to_path(context.bot, msg.document.file_id, suffix=f"_{msg.document.file_name or ''}")
+        filename = msg.document.file_name or ""
+        suffix = "_" + filename
+        p = await tg_download_to_path(context.bot, msg.document.file_id, suffix=suffix)
+        low = filename.lower()
         if mode == "file_img_to_pdf":
-            st_paths = (extra or {}).get("paths", [])
-            st_paths.append(str(p))
-            ai_set_mode(uid, "file_img_to_pdf", {"paths": st_paths})
-            await update.message.reply_text(f"✅ تم إضافة ملف صورة ({len(st_paths)}). أرسل /makepdf للإخراج أو أرسل صورًا إضافية.")
-            return
-        if mode == "file_pdf2word":
-            with open(p, "rb") as f: data = f.read()
-            out = await convert_pdf_to_docx(data)
-            if out:
-                path = TMP_DIR / f"out_{int(time.time())}.docx"
-                path.write_bytes(out)
-                await update.message.reply_document(InputFile(str(path)))
+            # لو أرسل صور كـ وثائق
+            try:
+                Image.open(p)
+                st_paths = (extra or {}).get("paths", [])
+                st_paths.append(str(p))
+                ai_set_mode(uid, "file_img_to_pdf", {"paths": st_paths})
+                await update.message.reply_text(f"✅ تم إضافة ملف صورة ({len(st_paths)}). أرسل /makepdf للإخراج أو أرسل صورًا إضافية.")
+                return
+            except Exception:
+                await update.message.reply_text("⚠️ الملف ليس صورة صالحة.")
+                return
+        if mode == "file_pdf2word_local":
+            if not low.endswith(".pdf"):
+                await update.message.reply_text("⚠️ أرسل PDF."); return
+            out = pdf_to_word_local(p)
+            if out and out.exists() and out.stat().st_size <= MAX_UPLOAD_BYTES:
+                await update.message.reply_document(InputFile(str(out)))
             else:
-                await update.message.reply_text("⚠️ فشل التحويل (PDF → Word). وفّر CONVERTAPI_SECRET أو ثبّت pdf2docx.")
+                await update.message.reply_text("⚠️ فشل التحويل (PDF → Word).")
             return
         if mode == "file_word2pdf":
-            with open(p, "rb") as f: data = f.read()
-            out = await convert_doc_to_pdf(data)
-            if out:
-                path = TMP_DIR / f"out_{int(time.time())}.pdf"
-                path.write_bytes(out)
-                await update.message.reply_document(InputFile(str(path)))
+            if not (low.endswith(".doc") or low.endswith(".docx")):
+                await update.message.reply_text("⚠️ أرسل ملف Word (DOC/DOCX)."); return
+            out = await word_to_pdf_convertapi(p)
+            if out is None:
+                await update.message.reply_text("⚠️ تحتاج تعيين المتغير CONVERTAPI_SECRET لتفعيل Word → PDF.")
+            elif out.exists() and out.stat().st_size <= MAX_UPLOAD_BYTES:
+                await update.message.reply_document(InputFile(str(out)))
             else:
-                msg_txt = "⚠️ فشل التحويل (Word → PDF). تحتاج PDFCO_API_KEY صالح لـ PDF.co."
-                await update.message.reply_text(msg_txt); return
+                await update.message.reply_text("⚠️ فشل التحويل (Word → PDF).")
+            return
+        if mode == "file_img2png":
+            outp = image_to_format(p, "png")
+            if outp: await update.message.reply_document(InputFile(str(outp)))
+            else: await update.message.reply_text("⚠️ فشل التحويل إلى PNG.")
+            return
+        if mode == "file_img2webp":
+            outp = image_to_format(p, "webp")
+            if outp: await update.message.reply_document(InputFile(str(outp)))
+            else: await update.message.reply_text("⚠️ فشل التحويل إلى WEBP.")
+            return
 
     if not mode:
         await update.message.reply_text(T("main_menu", lang=lang), reply_markup=main_menu_kb(uid, lang))
@@ -1837,6 +1726,7 @@ async def aidiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
                f"Key={'set(len=%d)'%len(k) if k else 'missing'}\n"
                f"Model={OPENAI_CHAT_MODEL}\n"
                f"openai={v('openai')}\n"
+               f"httpx={v('httpx')}\n"
                f"ffmpeg={'FOUND' if ffm else 'MISSING'}{(' @'+ffm) if ffm else ''}\n"
                f"ffprobe={'FOUND' if ffp else 'MISSING'}{(' @'+ffp) if ffp else ''}")
         await update.message.reply_text(msg)
@@ -1852,6 +1742,7 @@ async def libdiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except PackageNotFoundError: return "not-installed"
         msg = (f"python-telegram-bot={v('python-telegram-bot')}\n"
                f"aiohttp={v('aiohttp')}\n"
+               f"httpx={v('httpx')}\n"
                f"Pillow={v('Pillow')}\n"
                f"yt-dlp={v('yt-dlp')}\n"
                f"python-whois={v('python-whois')}\n"
@@ -1923,6 +1814,9 @@ def main():
 
 if __name__ == "__main__":
     main()
+'''
+Path("/mnt/data/bot_full.py").write_text(code, encoding="utf-8")
+print("Wrote /mnt/data/bot_full.py (size bytes):", len(code.encode("utf-8")))
 
 
 
