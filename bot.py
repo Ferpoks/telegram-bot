@@ -27,7 +27,7 @@ from telegram.error import BadRequest
 # ========= Others =========
 import aiohttp
 from dotenv import load_dotenv
-from PIL import Image  # نستخدمها للصورة إن احتجنا تحويل بسيط
+from PIL import Image
 try:
     import yt_dlp
 except Exception:
@@ -59,8 +59,8 @@ MAIN_CHANNEL_LINK = f"https://t.me/{MAIN_CHANNEL_USERNAMES[0]}" if MAIN_CHANNEL_
 PUBLIC_BASE_URL = (os.getenv("PUBLIC_BASE_URL") or "").rstrip("/")
 SERVE_HEALTH = os.getenv("SERVE_HEALTH","1") == "1"
 
-WELCOME_ANIMATION = (os.getenv("WELCOME_ANIMATION") or "").strip()
-WELCOME_PHOTO = (os.getenv("WELCOME_PHOTO") or "").strip()
+WELCOME_ANIMATION = (os.getenv("WELCOME_ANIMATION") or "").strip()  # gif/webp/mp4 أو ملف تيليجرام (file_id)
+WELCOME_PHOTO = (os.getenv("WELCOME_PHOTO") or "").strip()          # بديل ثابت
 
 # AI
 OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
@@ -90,7 +90,7 @@ URLSCAN_API_KEY = (os.getenv("URLSCAN_API_KEY") or "").strip()
 KICKBOX_API_KEY = (os.getenv("KICKBOX_API_KEY") or "").strip()
 IPINFO_TOKEN    = (os.getenv("IPINFO_TOKEN") or "").strip()
 
-# Courses (روابطك الجديدة ممكن تكون مؤقتة؛ الأفضل وضعها في ENV)
+# Courses
 COURSE_PYTHON_URL = os.getenv("COURSE_PYTHON_URL","")
 COURSE_CYBER_URL  = os.getenv("COURSE_CYBER_URL","")
 COURSE_EH_URL     = os.getenv("COURSE_EH_URL","https://www.mediafire.com/folder/r26pp5mpduvnx/%D8%AF%D9%88%D8%B1%D8%A9_%D8%A7%D9%84%D9%87%D8%A7%D9%83%D8%B1_%D8%A7%D9%84%D8%A7%D8%AE%D9%84%D8%A7%D9%82%D9%8A_%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D8%B1%D8%AD%D9%85%D9%86_%D9%88%D8%B5%D9%81%D9%8A")
@@ -126,7 +126,7 @@ def admin_button_url() -> str:
         return f"tg://user?id={OWNER_ID}"
     return "https://t.me/"
 
-# health server + webhook
+# ========= Health/Webhook server in a separate Thread =========
 from aiohttp import web
 
 def _public_url(path: str) -> str:
@@ -168,24 +168,35 @@ async def _payhook(request: web.Request):
     log.info("[payhook] ref=%s -> %s", ref, activated)
     return web.json_response({"ok": True, "ref": ref, "activated": bool(activated)})
 
-def run_health_server():
-    if not SERVE_HEALTH: 
+def run_health_server_threaded():
+    """شغّل aiohttp في ثريد مستقل (لوب مختلف) لتفادي تضارب حلقات asyncio مع run_polling."""
+    if not SERVE_HEALTH:
         return
     port = int(os.getenv("PORT","10000"))
-    app = web.Application()
-    app.router.add_get("/", _aio_health)
-    app.router.add_get("/health", _aio_health)
-    if PAY_WEBHOOK_ENABLE:
-        app.router.add_post("/payhook", _payhook)
-        app.router.add_get("/payhook", _aio_health)
-    loop = asyncio.get_event_loop()
-    runner = web.AppRunner(app)
-    async def _start():
-        await runner.setup()
-        site = web.TCPSite(runner, "0.0.0.0", port)
-        await site.start()
-        log.info("[http] serving on 0.0.0.0:%d", port)
-    loop.create_task(_start())
+
+    def _thread():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        app = web.Application()
+        app.router.add_get("/", _aio_health)
+        app.router.add_get("/health", _aio_health)
+        if PAY_WEBHOOK_ENABLE:
+            app.router.add_post("/payhook", _payhook)
+            app.router.add_get("/payhook", _aio_health)
+        runner = web.AppRunner(app)
+        async def _start():
+            await runner.setup()
+            site = web.TCPSite(runner, "0.0.0.0", port)
+            await site.start()
+            log.info("[http] serving on 0.0.0.0:%d", port)
+        loop.run_until_complete(_start())
+        try:
+            loop.run_forever()
+        finally:
+            loop.run_until_complete(runner.cleanup())
+            loop.close()
+
+    threading.Thread(target=_thread, daemon=True).start()
 
 # ffmpeg presence (optional)
 def ffmpeg_path():
@@ -325,7 +336,6 @@ def _db():
 
 def migrate_db():
     with _db_lock:
-        c = _db().cursor()
         _db().execute("""
         CREATE TABLE IF NOT EXISTS users (
           id TEXT PRIMARY KEY,
@@ -656,7 +666,7 @@ async def ai_write(prompt: str) -> str:
         return "⚠️ تعذّر التوليد حالياً."
 
 async def ai_auto_translate(text: str) -> str:
-    """إذا عربي -> إنجليزي، وإلا إنجليزي -> عربي. ويُظهر الناتجين لتسهيل القراءة."""
+    """إذا عربي -> إنجليزي، وإلا إنجليزي -> عربي. ويُظهر الاتجاه بوضوح."""
     if not AI_ENABLED or OpenAI is None:
         return "🧠 الذكاء الاصطناعي غير مفعّل."
     _ensure_openai()
@@ -790,7 +800,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     u = user_get(uid)
     lang = u.get("pref_lang","ar")
-    # ترحيب باسم المستخدم + صورة/أنيميشن إن توفرت
     name = (update.effective_user.full_name or "").strip() or "صديقي"
     greet = T("hello_name", lang=lang, name=name)
     summary = (
@@ -807,11 +816,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• ⭐ Upgrade to lifetime VIP"
     )
     text = f"{greet}\n\n{summary}\n\n{T('main_menu',lang=lang)}"
-    # animation/photo
     sent_media = False
     try:
         if WELCOME_ANIMATION:
-            await context.bot.send_animation(update.effective_chat.id, WELCOME_ANIMATION, caption=None)
+            await context.bot.send_animation(update.effective_chat.id, WELCOME_ANIMATION)
             sent_media = True
         elif WELCOME_PHOTO:
             await context.bot.send_photo(update.effective_chat.id, WELCOME_PHOTO)
@@ -953,7 +961,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rows.append([InlineKeyboardButton(T("back", lang=lang), callback_data="sec_services")])
         await safe_edit(q, "🎮 أفضل مواقع شراء الألعاب والاشتراكات:", kb=InlineKeyboardMarkup(rows)); return
 
-    # Unban
+    # Unban (رسائل قوية)
     if q.data == "sec_unban":
         rows = [
             [InlineKeyboardButton("Instagram", callback_data="unban_instagram")],
@@ -968,13 +976,13 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         key = q.data.split("_",1)[1]
         strong = {
             "instagram": ("Instagram Support Appeal",
-                          "Hello Instagram Support,\n\nMy account has been restricted/disabled in error. I strictly adhere to the Community Guidelines and believe this action was triggered by an automated system. I request a manual review and reinstatement at the earliest convenience.\n\nI’m ready to provide any additional information you require to verify ownership and compliance.\n\nThank you for your time and assistance."),
+                          "Hello Instagram Support,\n\nMy account has been restricted/disabled in error. I strictly adhere to the Community Guidelines and believe this action was triggered by an automated system. I respectfully request a manual review and reinstatement.\n\nI am ready to provide any required verification or additional information. Thank you for your time."),
             "facebook": ("Facebook Support Appeal",
-                         "Hello Facebook Support,\n\nMy account was mistakenly restricted/disabled. I respect and follow the Community Standards, and I believe this action is the result of an automated filter. Kindly conduct a manual review and restore access.\n\nI can provide identity or further details if needed. Thank you."),
+                         "Hello Facebook Support,\n\nMy account was mistakenly restricted/disabled. I fully comply with the Community Standards and believe this was an automated false positive. Please conduct a manual review and restore access.\n\nI can provide identity or evidence if needed. Thank you."),
             "telegram": ("Telegram Support Appeal",
                          "Hello Telegram Support,\n\nMy account/channel appears to be limited due to a false positive. I comply with the Terms of Service and local laws. Please manually review my case and lift the restriction.\n\nThanks for your help."),
             "epic": ("Epic Games Support Appeal",
-                     "Hello Epic Games Support,\n\nMy account was banned by mistake. I respect all policies and never intended to violate any rule. Please perform a manual review and remove the ban. I can verify ownership or provide any evidence required.\n\nThank you.")
+                     "Hello Epic Games Support,\n\nMy account was banned by mistake. I respect all your policies and never intended to violate any rule. Please review my case manually and remove the ban. I can verify ownership or provide any evidence required.\n\nThank you.")
         }
         title, msg = strong.get(key, ("Support Appeal",""))
         link = {
@@ -1038,7 +1046,7 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not mode:
         await update.message.reply_text(T("main_menu", lang=lang), reply_markup=main_menu_kb(uid, lang))
 
-# owner cmds (مختصرة)
+# owner cmds
 async def cmd_id(update, context):
     if update.effective_user.id == OWNER_ID:
         await update.message.reply_text(str(update.effective_user.id))
@@ -1101,10 +1109,10 @@ async def restart_cmd(update, context):
 async def on_error(update, context):
     log.error("error: %s", getattr(context, "error", "unknown"))
 
-# ------------- Runner (fix event loop) -------------
-async def _run_bot():
+# ------------- Runner -------------
+def main():
     init_db()
-    run_health_server()
+    run_health_server_threaded()  # سيرفر الصحة/الويبهوك على ثريد مستقل
 
     app = (
         Application.builder()
@@ -1128,35 +1136,15 @@ async def _run_bot():
     app.add_handler(CommandHandler("restart", restart_cmd))
 
     app.add_handler(CallbackQueryHandler(on_button))
-
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, guard_messages))
 
     app.add_error_handler(on_error)
 
-    # startup
-    await on_startup(app)
+    # startup hooks
+    app.post_init(on_startup)
 
-    # manual lifecycle (بدل run_polling)
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
-    try:
-        await app.updater.wait()
-    finally:
-        await app.updater.stop()
-        await app.stop()
-        await app.shutdown()
-
-def main():
-    try:
-        asyncio.run(_run_bot())
-    except RuntimeError as e:
-        # fallback لو البيئة فيها لوب شغّال مسبقًا
-        if "running event loop" in str(e):
-            loop = asyncio.get_event_loop()
-            loop.run_until_complete(_run_bot())
-        else:
-            raise
+    # polling (حلقة مستقلة عن سيرفر aiohttp)
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
