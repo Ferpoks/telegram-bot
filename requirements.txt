@@ -6,6 +6,8 @@ yt-dlp>=2024.12.31
 python-whois>=0.9.4
 dnspython>=2.6.1
 python-dotenv>=1.0.1
+pdf2docx>=0.5.8
+convertapi>=1.6.0
 
 
 
