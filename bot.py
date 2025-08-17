@@ -26,11 +26,9 @@ from telegram.ext import (
 from telegram.constants import ChatMemberStatus, ChatAction
 from telegram.error import BadRequest
 
-# ==== Network / Utils ====
-import urllib.parse as _urlparse
 import aiohttp
 try:
-    import whois as pywhois  # pip: python-whois
+    import whois as pywhois
 except Exception:
     pywhois = None
 try:
@@ -38,12 +36,8 @@ try:
     import dns.exception as dnsexception
 except Exception:
     dnsresolver = None
-try:
-    import yt_dlp  # موجود كاختياري؛ ما عندنا تنزيل فيديو
-except Exception:
-    yt_dlp = None
 
-# تحميل .env محليًا
+# تحميل .env محلياً (في Render يكفي Environment)
 ENV_PATH = Path(".env")
 if ENV_PATH.exists() and not os.getenv("RENDER"):
     load_dotenv(ENV_PATH, override=True)
@@ -53,7 +47,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN") or ""
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN مفقود")
 
-DB_PATH = os.getenv("DB_PATH", "/tmp/bot.db")   # مهم: /tmp لتفادي Permission Denied
+DB_PATH = os.getenv("DB_PATH", "/var/data/bot.db")
 TMP_DIR = Path(os.getenv("TMP_DIR", "/tmp"))
 
 # OpenAI
@@ -61,7 +55,7 @@ OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
 OPENAI_CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
 OPENAI_VISION = os.getenv("OPENAI_VISION", "0") == "1"
 AI_ENABLED = bool(OPENAI_API_KEY) and (OpenAI is not None)
-client = None
+client = None  # lazy init
 
 def _ensure_openai():
     global client
@@ -71,7 +65,7 @@ def _ensure_openai():
         except Exception as e:
             log.error("[openai-init] %s", e)
 
-# Replicate (اختياري للصُور)
+# Replicate (للصور الاختيارية)
 REPLICATE_API_TOKEN = (os.getenv("REPLICATE_API_TOKEN") or "").strip()
 REPLICATE_MODEL_OWNER = os.getenv("REPLICATE_MODEL_OWNER", "stability-ai")
 REPLICATE_MODEL_NAME  = os.getenv("REPLICATE_MODEL_NAME",  "stable-diffusion-xl-base-1.0")
@@ -96,9 +90,36 @@ def need_admin_text(lang="ar") -> str:
     return M.get(lang,"ar")
 
 WELCOME_PHOTO = os.getenv("WELCOME_PHOTO","assets/ferpoks.jpg")
+
+# أنيميشن الترحيب
+START_ANIM_FILE_ID = (os.getenv("START_ANIM_FILE_ID") or "").strip()
+START_ANIM_URL     = (os.getenv("START_ANIM_URL") or "").strip()
+
+async def send_welcome_media(bot, chat_id: int, caption: str, kb=None):
+    """يرسل أنيميشن إن توفر (file_id أو URL)، وإلا صورة ثابتة، وإلا نص."""
+    try:
+        if START_ANIM_FILE_ID:
+            await bot.send_animation(chat_id, START_ANIM_FILE_ID, caption=caption,
+                                     parse_mode="HTML", reply_markup=kb)
+            return
+        if START_ANIM_URL:
+            await bot.send_animation(chat_id, START_ANIM_URL, caption=caption,
+                                     parse_mode="HTML", reply_markup=kb)
+            return
+        if WELCOME_PHOTO and (WELCOME_PHOTO.startswith("http") or Path(WELCOME_PHOTO).exists()):
+            await bot.send_photo(
+                chat_id,
+                WELCOME_PHOTO if WELCOME_PHOTO.startswith("http") else InputFile(WELCOME_PHOTO),
+                caption=caption, parse_mode="HTML", reply_markup=kb
+            )
+            return
+    except Exception as e:
+        log.warning("[welcome-media] %s", e)
+    await bot.send_message(chat_id, caption, parse_mode="HTML", reply_markup=kb)
+
 CHANNEL_ID = None
 
-# ==== دفع (Paylink) (بدون تغيير) ====
+# ==== دفع (Paylink) ====
 PAY_WEBHOOK_ENABLE = os.getenv("PAY_WEBHOOK_ENABLE", "1") == "1"
 PAY_WEBHOOK_SECRET = (os.getenv("PAY_WEBHOOK_SECRET") or "").strip()
 PAYLINK_API_BASE   = os.getenv("PAYLINK_API_BASE", "https://restapi.paylink.sa/api").rstrip("/")
@@ -115,77 +136,194 @@ KICKBOX_API_KEY = (os.getenv("KICKBOX_API_KEY") or "").strip()
 IPINFO_TOKEN    = (os.getenv("IPINFO_TOKEN") or "").strip()
 
 # ======= روابط حسب طلبك =======
-FOLLOWERS_LINKS = [
-    u for u in [
-        os.getenv("FOLLOW_LINK_1","https://smmcpan.com/"),
-        os.getenv("FOLLOW_LINK_2","https://saudifollow.com/"),
-        os.getenv("FOLLOW_LINK_3","https://drd3m.me/"),
-    ] if u
-]
+FOLLOWERS_LINKS = [u for u in [
+    os.getenv("FOLLOW_LINK_1","https://smmcpan.com/"),
+    os.getenv("FOLLOW_LINK_2","https://saudifollow.com/"),
+    os.getenv("FOLLOW_LINK_3","https://drd3m.me/"),
+] if u]
+
 SERV_NUMBERS_LINKS = [u for u in [os.getenv("NUMBERS_LINK_1","https://txtu.app/")] if u]
 SERV_VCC_LINKS = [u for u in [os.getenv("VCC_LINK_1","https://fake-card.com/virtual-card-mastercard-free-card-bin/228757973743900/")] if u]
 
-# دورات (تم تحديث الروابط كما طلبت — ملاحظة: هذه روابط موقّتة)
-COURSE_PYTHON_URL = "https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/Y8WctvBLiA6u6AASeZX2IUfDQAolTJ4QFGx9WRCu.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250817%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250817T101848Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=619f21a524e6e7c5c2e4a4196323c099978dceefb2d3557f697240df0a14e9db"
-COURSE_CYBER_URL  = "https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/pZ0spOmm1K0dA2qAzUuWUb4CcMMjUPTbn7WMRwAc.pdf?X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAT2PZV5Y3LHXL7XVA%2F20250817%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20250817T101926Z&X-Amz-SignedHeaders=host&X-Amz-Expires=7200&X-Amz-Signature=14cc8420107a73dbfe657a1e560ef9dcb762feaf1ba81c4380ae9afe9ff05ba3"
-COURSE_EH_URL     = os.getenv("COURSE_EH_URL","https://www.mediafire.com/folder/r26pp5mpduvnx/%D8%AF%D9%88%D8%B1%D8%A9_%D8%A7%D9%84%D9%87%D8%A7%D9%83%D8%B1_%D8%A7%D9%84%D8%A7%D8%AE%D9%84%D8%A7%D9%82%D9%8A_%D8%B9%D8%A8%D8%AF%D8%A7%D9%84%D8%B1%D8%AD%D9%85%D9%86_%D9%88%D8%B5%D9%81%D9%8A")
+# دورات (حدّثتها بالروابط اللي عطيتني)
+COURSE_PYTHON_URL = os.getenv("COURSE_PYTHON_URL",
+    "https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/Y8WctvBLiA6u6AASeZX2IUfDQAolTJ4QFGx9WRCu.pdf")
+COURSE_CYBER_URL  = os.getenv("COURSE_CYBER_URL",
+    "https://kyc-digital-files.s3.eu-central-1.amazonaws.com/digitals/xWNop/pZ0spOmm1K0dA2qAzUuWUb4CcMMjUPTbn7WMRwAc.pdf")
+COURSE_EH_URL     = os.getenv("COURSE_EH_URL","https://www.mediafire.com/folder/r26pp5mpduvnx/...")
 COURSE_ECOM_URL   = os.getenv("COURSE_ECOM_URL","https://drive.google.com/drive/folders/1-UADEMHUswoCyo853FdTu4R4iuUx_f3I?hl=ar")
 
 # قسم برامج أدوبي (ويندوز)
-ADOBE_DOC_URL = "https://docs.google.com/document/d/1gEbrkUBi0SPd69X1XPnbh8RnaE6_IrKD9f95iXbFXV4/edit?tab=t.0#heading=h.atsysbnclvpy"
+ADOBE_WIN_URL = os.getenv("ADOBE_WIN_URL",
+    "https://docs.google.com/document/d/1gEbrkUBi0SPd69X1XPnbh8RnaE6_IrKD9f95iXbFXV4/edit?tab=t.0#heading=h.atsysbnclvpy")
 
 DARK_GPT_URL = os.getenv("DARK_GPT_URL", "https://flowgpt.com/chat/M0GRwnsc2MY0DdXPPmF4X")
 
 # ==== خادِم ويب (health + webhook) ====
-from aiohttp import web
-def _public_url(path: str) -> str:
-    base = (os.getenv("PUBLIC_BASE_URL") or "").rstrip("/")
+import json as _json
+import threading as _thr
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+SERVE_HEALTH = os.getenv("SERVE_HEALTH", "1") == "1" or PAY_WEBHOOK_ENABLE
+
+try:
+    from aiohttp import web
+    AIOHTTP_AVAILABLE = True
+except Exception:
+    AIOHTTP_AVAILABLE = False
+
+def _build_pay_link(ref: str) -> str:
+    base = (PAYLINK_CHECKOUT_BASE or "").strip()
     if not base:
-        host = os.getenv("RENDER_EXTERNAL_HOSTNAME","").strip()
-        base = f"https://{host}" if host else ""
+        return ""
+    if "{ref}" in base:
+        return base.format(ref=ref)
+    sep = "&" if "?" in base else "?"
+    return f"{base}{sep}ref={ref}"
+
+def _public_url(path: str) -> str:
+    base = PUBLIC_BASE_URL or ""
+    if not base:
+        base = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME','').strip()}" if os.getenv("RENDER_EXTERNAL_HOSTNAME") else ""
     return (base or "").rstrip("/") + path
 
+def _looks_like_ref(s: str) -> bool:
+    return bool(re.fullmatch(r"\d{6,}-\d{9,}", s or ""))
+
+def _find_ref_in_obj(obj):
+    if not obj: return None
+    if isinstance(obj, (str, bytes)):
+        s = obj.decode() if isinstance(obj, bytes) else obj
+        m = re.search(r"(?:orderNumber|merchantOrderNumber|merchantOrderNo|reference|customerRef|customerReference)\s*[:=]\s*['\"]?([\w\-:]+)", s)
+        if m and _looks_like_ref(m.group(1)): return m.group(1)
+        m = re.search(r"[?&]ref=([\w\-:]+)", s)
+        if m and _looks_like_ref(m.group(1)): return m.group(1)
+        m = re.search(r"(\d{6,}-\d{9,})", s)
+        if m: return m.group(1)
+        return None
+    if isinstance(obj, dict):
+        for k in ("orderNumber","merchantOrderNumber","merchantOrderNo","ref","reference","customerRef","customerReference"):
+            v = obj.get(k)
+            if isinstance(v, str) and _looks_like_ref(v.strip()):
+                return v.strip()
+        for v in obj.values():
+            got = _find_ref_in_obj(v)
+            if got: return got
+        return None
+    if isinstance(obj, (list, tuple)):
+        for v in obj:
+            got = _find_ref_in_obj(v)
+            if got: return got
+    return None
+
+def _find_ref_in_body_bytes(body: bytes):
+    try:
+        data = _json.loads(body.decode("utf-8", errors="ignore"))
+    except Exception:
+        data = {"raw": body.decode("utf-8", errors="ignore")}
+    return _find_ref_in_obj(data), data
+
 async def _payhook_aiohttp(request):
-    if PAY_WEBHOOK_SECRET and request.headers.get("X-PL-Secret") != PAY_WEBHOOK_SECRET:
-        return web.json_response({"ok": False, "error": "bad secret"}, status=401)
+    if PAY_WEBHOOK_SECRET:
+        if request.headers.get("X-PL-Secret") != PAY_WEBHOOK_SECRET:
+            return web.json_response({"ok": False, "error": "bad secret"}, status=401)
     try:
         data = await request.json()
     except Exception:
         data = {"raw": await request.text()}
-    ref = None
-    try:
-        # محاولة استخراج ref شائعة:
-        for k in ("orderNumber","merchantOrderNumber","reference","customerRef","ref"):
-            if k in data and isinstance(data[k], str):
-                ref = data[k]
-                break
-    except Exception:
-        pass
+    ref = _find_ref_in_obj(data)
     if not ref:
+        log.warning("[payhook] no-ref; sample keys: %s", list(data.keys())[:8])
         return web.json_response({"ok": False, "error": "no-ref"}, status=200)
     activated = payments_mark_paid_by_ref(ref, raw=data)
     log.info("[payhook] ref=%s -> activated=%s", ref, activated)
     return web.json_response({"ok": True, "ref": ref, "activated": bool(activated)}, status=200)
 
+class _BasicHandler(BaseHTTPRequestHandler):
+    def _send(self, code=200, body=b"OK", ctype="application/json"):
+        self.send_response(code); self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body))); self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        if self.path in ("/", "/health"):
+            self._send(200, _json.dumps({"ok": True}).encode("utf-8"))
+        elif self.path == "/payhook":
+            self._send(200, _json.dumps({"ok": True, "note": "use POST"}).encode("utf-8"))
+        else:
+            self._send(404, _json.dumps({"ok": False, "error": "not found"}).encode("utf-8"))
+
+    def do_POST(self):
+        if self.path == "/payhook":
+            if PAY_WEBHOOK_SECRET and self.headers.get("X-PL-Secret") != PAY_WEBHOOK_SECRET:
+                self._send(401, _json.dumps({"ok": False, "error": "bad secret"}).encode("utf-8")); return
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            body = self.rfile.read(length) if length > 0 else b""
+            ref, data = _find_ref_in_body_bytes(body)
+            if not ref:
+                self._send(200, _json.dumps({"ok": False, "error": "no-ref"}).encode("utf-8")); return
+            activated = payments_mark_paid_by_ref(ref, raw=data)
+            log.info("[payhook-basic] ref=%s -> activated=%s", ref, activated)
+            self._send(200, _json.dumps({"ok": True, "ref": ref, "activated": bool(activated)}).encode("utf-8"))
+        else:
+            self._send(404, _json.dumps({"ok": False, "error": "not found"}).encode("utf-8"))
+
 def _run_http_server():
-    if os.getenv("SERVE_HEALTH","1") != "1":
-        return
-    host, port = "0.0.0.0", int(os.getenv("PORT","10000"))
-    async def _health(_): return web.json_response({"ok": True})
-    app = web.Application()
-    app.router.add_get("/", _health)
-    app.router.add_get("/health", _health)
-    if PAY_WEBHOOK_ENABLE:
-        app.router.add_post("/payhook", _payhook_aiohttp)
-        app.router.add_get("/payhook", _health)
-    async def _start():
-        runner = web.AppRunner(app); await runner.setup()
-        site = web.TCPSite(runner, host, port); await site.start()
-        log.info("[http] serving on %s:%d (webhook=%s health=ON)", host, port, "ON" if PAY_WEBHOOK_ENABLE else "OFF")
-    loop = asyncio.get_event_loop()
-    loop.create_task(_start())
+    if not SERVE_HEALTH:
+        log.info("[http] SERVE_HEALTH=0 -> لن يتم فتح بورت."); return
+    port = int(os.getenv("PORT", "10000")); host = "0.0.0.0"
+
+    def _thread_main_httpserver():
+        try:
+            httpd = HTTPServer((host, port), _BasicHandler)
+            log.info("[http] (fallback) serving on %s:%d (webhook=%s health=%s)", host, port, "ON" if PAY_WEBHOOK_ENABLE else "OFF", "ON")
+            httpd.serve_forever()
+        except Exception as e:
+            log.error("[http] fallback server error: %s", e)
+
+    if AIOHTTP_AVAILABLE:
+        async def _make_app():
+            app = web.Application()
+            async def _health(_): return web.json_response({"ok": True})
+            app.router.add_get("/", _health); app.router.add_get("/health", _health)
+            if PAY_WEBHOOK_ENABLE:
+                app.router.add_post("/payhook", _payhook_aiohttp); app.router.add_get("/payhook", _health)
+            return app
+
+        def _thread_main_aiohttp():
+            loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop)
+            async def _start():
+                app = await _make_app(); runner = web.AppRunner(app)
+                await runner.setup(); site = web.TCPSite(runner, host, port)
+                await site.start()
+                log.info("[http] serving on %s:%d (webhook=%s health=%s)", host, port, "ON" if PAY_WEBHOOK_ENABLE else "OFF", "ON")
+            loop.run_until_complete(_start())
+            try: loop.run_forever()
+            finally: loop.stop(); loop.close()
+        _thr.Thread(target=_thread_main_aiohttp, daemon=True).start()
+    else:
+        _thr.Thread(target=_thread_main_httpserver, daemon=True).start()
 
 _run_http_server()
+
+# ==== ffmpeg helpers (اختياري) ====
+def _ensure_bin_on_path():
+    bin_dir = Path.cwd() / "bin"
+    if bin_dir.exists():
+        os.environ["PATH"] = f"{str(bin_dir)}:{os.environ.get('PATH','')}"
+_ensure_bin_on_path()
+
+def ffmpeg_path() -> str|None:
+    p = shutil.which("ffmpeg")
+    if p: return p
+    local = Path.cwd()/ "bin" / "ffmpeg"
+    return str(local) if local.exists() else None
+
+def ffprobe_path() -> str|None:
+    p = shutil.which("ffprobe")
+    if p: return p
+    local = Path.cwd()/ "bin" / "ffprobe"
+    return str(local) if local.exists() else None
 
 # ==== i18n ====
 def T(key: str, lang: str | None = None, **kw) -> str:
@@ -193,7 +331,7 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "start_pick_lang": "اختر لغتك:",
         "lang_ar": "العربية",
         "lang_en": "English",
-        "hello_name": "مرحباً بك يا {name} في بوت فيربوكس! ✨\nستجد: أدوات الذكاء الاصطناعي، الأمن، خدمات مفيدة، دورات، وبرامج أدوبي.",
+        "hello_name": "مرحباً بك يا {name} في بوت فيربوكس! ✨\nستجد هنا: أدوات الذكاء الاصطناعي، قسم الأمن، خدمات مفيدة، دورات، وبرامج أدوبي.",
         "main_menu": "👇 القائمة الرئيسية",
         "btn_myinfo": "👤 معلوماتي",
         "btn_lang": "🌐 تغيير اللغة",
@@ -211,7 +349,7 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "sec_services": "🧰 خدمات",
         "sec_unban": "🚫 فك الباند",
         "sec_courses": "🎓 الدورات",
-        "sec_adobe": "🅰️ برامج أدوبي (ويندوز)",
+        "sec_adobe": "💻 برامج أدوبي (ويندوز)",
         "sec_darkgpt": "🕶️ Dark GPT",
         "sec_boost": "📈 رشق متابعين",
         "ai_disabled": "🧠 ميزة الذكاء الاصطناعي غير مفعّلة حالياً.",
@@ -225,11 +363,13 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "vip_ref": "🔖 مرجعك: <code>{ref}</code>",
         "go_pay": "🚀 الذهاب للدفع",
         "check_pay": "✅ تحقّق الدفع",
+        "ai_chat_on": "🤖 وضع الدردشة مفعّل. أرسل سؤالك الآن.",
+        "ai_chat_off": "🔚 تم إنهاء وضع الذكاء الاصطناعي.",
 
         "page_ai": "🤖 أدوات الذكاء الاصطناعي:",
         "btn_ai_chat": "🤖 دردشة",
-        "btn_ai_write": "✍️ كتابة إعلان/وصف",
-        "btn_ai_translate": "🌐 ترجمة (عربي يمين × إنجليزي يسار)",
+        "btn_ai_write": "✍️ كتابة (إعلان/وصف)",
+        "btn_ai_translate": "↔️ ترجمة ثنائية (AR | EN)",
         "btn_ai_stt": "🎙️ تحويل صوت لنص",
         "btn_ai_image": "🖼️ توليد صور",
 
@@ -251,13 +391,13 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "course_ecom": "التجارة الإلكترونية",
 
         "page_boost": "📈 رشق متابعين:",
-        "adobe_desc": "برامج أدوبي (ويندوز) — قائمة وروابط مباشرة:",
+        "page_adobe": "💻 برامج أدوبي (ويندوز):",
     }
     EN = {
         "start_pick_lang": "Pick your language:",
         "lang_ar": "العربية",
         "lang_en": "English",
-        "hello_name": "Welcome {name} to Ferpoks Bot! ✨\nYou’ll find: AI tools, Security, Services, Courses, and Adobe programs.",
+        "hello_name": "Welcome {name} to Ferpoks Bot! ✨\nYou’ll find: AI tools, Security, Services, Courses, and Adobe (Windows).",
         "main_menu": "👇 Main menu",
         "btn_myinfo": "👤 My info",
         "btn_lang": "🌐 Change language",
@@ -275,7 +415,7 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "sec_services": "🧰 Services",
         "sec_unban": "🚫 Unban",
         "sec_courses": "🎓 Courses",
-        "sec_adobe": "🅰️ Adobe (Windows)",
+        "sec_adobe": "💻 Adobe (Windows)",
         "sec_darkgpt": "🕶️ Dark GPT",
         "sec_boost": "📈 Followers Boost",
         "ai_disabled": "🧠 AI is disabled right now.",
@@ -289,11 +429,13 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "vip_ref": "🔖 Your reference: <code>{ref}</code>",
         "go_pay": "🚀 Go to payment",
         "check_pay": "✅ Verify payment",
+        "ai_chat_on": "🤖 Chat mode is ON. Send your question.",
+        "ai_chat_off": "🔚 AI chat stopped.",
 
         "page_ai": "🤖 AI Tools:",
         "btn_ai_chat": "🤖 Chat",
-        "btn_ai_write": "✍️ Ad/Copy Writing",
-        "btn_ai_translate": "🌐 Translate (Arabic RTL × English LTR)",
+        "btn_ai_write": "✍️ Writing (Ad/Copy)",
+        "btn_ai_translate": "↔️ Bilingual (AR | EN)",
         "btn_ai_stt": "🎙️ Speech-to-Text",
         "btn_ai_image": "🖼️ Image Gen",
 
@@ -315,9 +457,10 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "course_ecom": "E-commerce",
 
         "page_boost": "📈 Followers:",
-        "adobe_desc": "Adobe programs (Windows) — curated list and direct links:",
+        "page_adobe": "💻 Adobe (Windows):",
     }
 
+    # توافق نداءات قديمة: T("ar","key")
     if key in ("ar", "en") and (lang is not None and lang not in ("ar", "en")):
         key, lang = lang, key
     if lang not in ("ar","en"):
@@ -336,15 +479,18 @@ _conn_lock = threading.RLock()
 def _db():
     conn = getattr(_db, "_conn", None)
     if conn is not None: return conn
-    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    path = DB_PATH
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     _db._conn = conn
-    log.info("[db] using %s", DB_PATH)
+    log.info("[db] using %s", path)
     return conn
 
 def migrate_db():
     with _conn_lock:
+        c = _db().cursor()
+        _db().execute("DROP TABLE IF EXISTS users_old;")
         _db().execute("""
         CREATE TABLE IF NOT EXISTS users (
           id TEXT PRIMARY KEY,
@@ -355,6 +501,20 @@ def migrate_db():
           vip_since INTEGER DEFAULT 0,
           pref_lang TEXT DEFAULT 'ar'
         );""")
+        c.execute("PRAGMA table_info(users)")
+        ucols = {row["name"] for row in c.fetchall()}
+        need = {
+            "premium": "INTEGER DEFAULT 0",
+            "verified_ok":"INTEGER DEFAULT 0",
+            "verified_at":"INTEGER DEFAULT 0",
+            "vip_forever":"INTEGER DEFAULT 0",
+            "vip_since":"INTEGER DEFAULT 0",
+            "pref_lang":"TEXT DEFAULT 'ar'"
+        }
+        for col,defn in need.items():
+            if col not in ucols:
+                _db().execute(f"ALTER TABLE users ADD COLUMN {col} {defn};")
+
         _db().execute("""
         CREATE TABLE IF NOT EXISTS ai_state (
           user_id TEXT PRIMARY KEY,
@@ -362,6 +522,13 @@ def migrate_db():
           extra TEXT DEFAULT NULL,
           updated_at INTEGER
         );""")
+        c.execute("PRAGMA table_info(ai_state)")
+        acols = {row["name"] for row in c.fetchall()}
+        if "extra" not in acols:
+            _db().execute("ALTER TABLE ai_state ADD COLUMN extra TEXT DEFAULT NULL;")
+        if "updated_at" not in acols:
+            _db().execute("ALTER TABLE ai_state ADD COLUMN updated_at INTEGER;")
+
         _db().execute("""
         CREATE TABLE IF NOT EXISTS payments (
             ref TEXT PRIMARY KEY,
@@ -477,6 +644,12 @@ def payments_mark_paid_by_ref(ref: str, raw=None) -> bool:
         log.error("[payments_mark_paid] grant error: %s", e)
     return True
 
+def payments_last(limit=10):
+    with _conn_lock:
+        c = _db().cursor()
+        c.execute("SELECT * FROM payments ORDER BY created_at DESC LIMIT ?", (limit,))
+        return [dict(x) for x in c.fetchall()]
+
 # ==== Paylink API ====
 _paylink_token = None
 _paylink_token_exp = 0
@@ -522,7 +695,42 @@ async def paylink_create_invoice(order_number: str, amount: float, client_name: 
             return pay_url, data
 
 # ==== أدوات تقنية ====
+_IP_RE = re.compile(r"\b(?:(?:[0-9]{1,3}\.){3}[0-9]{1,3})\b")
+_HOST_RE = re.compile(r"^[a-zA-Z0-9.-]{1,253}\.[A-Za-z]{2,63}$")
 _URL_RE = re.compile(r"https?://[^\s]+")
+DISPOSABLE_DOMAINS = {"mailinator.com","tempmail.com","10minutemail.com","yopmail.com","guerrillamail.com","trashmail.com"}
+
+async def fetch_geo(query: str) -> dict|None:
+    url = f"http://ip-api.com/json/{query}?fields=status,message,country,regionName,city,isp,org,as,query,lat,lon,timezone,zip,reverse"
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(url, timeout=15) as r:
+                data = await r.json(content_type=None)
+                if data.get("status") != "success":
+                    return {"error": data.get("message","lookup failed")}
+                return data
+    except Exception as e:
+        log.warning("[geo] fetch error: %s", e)
+        return {"error": "network error"}
+
+def fmt_geo(data: dict) -> str:
+    if not data: return "⚠️ تعذّر جلب البيانات."
+    if data.get("error"): return f"⚠️ {data['error']}"
+    parts = []
+    parts.append(f"🔎 query: <code>{_escape(str(data.get('query','')))}</code>")
+    parts.append(f"🌍 {data.get('country','?')} — {data.get('regionName','?')}")
+    parts.append(f"🏙️ {data.get('city','?')} — {data.get('zip','-')}")
+    parts.append(f"⏰ {data.get('timezone','-')}")
+    parts.append(f"📡 ISP/ORG: {data.get('isp','-')} / {data.get('org','-')}")
+    parts.append(f"🛰️ AS: {data.get('as','-')}")
+    parts.append(f"📍 {data.get('lat','?')}, {data.get('lon','?')}")
+    if data.get("reverse"): parts.append(f"🔁 Reverse: {_escape(str(data['reverse']))}")
+    parts.append("\nℹ️ استخدم هذه المعلومات لأغراض مشروعة فقط.")
+    return "\n".join(parts)
+
+def is_valid_email(e: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,63}", e or ""))
+
 def md5_hex(s: str) -> str:
     return hashlib.md5(s.strip().lower().encode()).hexdigest()
 
@@ -544,36 +752,6 @@ def resolve_ip(host: str) -> str|None:
     except Exception:
         return None
 
-def is_valid_email(e: str) -> bool:
-    return bool(re.fullmatch(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,63}", e or ""))
-
-async def fetch_geo(query: str) -> dict|None:
-    url = f"http://ip-api.com/json/{query}?fields=status,message,country,regionName,city,isp,org,as,query,lat,lon,timezone,zip,reverse"
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(url, timeout=15) as r:
-                data = await r.json(content_type=None)
-                if data.get("status") != "success":
-                    return {"error": data.get("message","lookup failed")}
-                return data
-    except Exception as e:
-        return {"error": "network error"}
-
-def fmt_geo(data: dict) -> str:
-    if not data: return "⚠️ تعذّر جلب البيانات."
-    if data.get("error"): return f"⚠️ {data['error']}"
-    parts = []
-    parts.append(f"🔎 query: <code>{_escape(str(data.get('query','')))}</code>")
-    parts.append(f"🌍 {data.get('country','?')} — {data.get('regionName','?')}")
-    parts.append(f"🏙️ {data.get('city','?')} — {data.get('zip','-')}")
-    parts.append(f"⏰ {data.get('timezone','-')}")
-    parts.append(f"📡 ISP/ORG: {data.get('isp','-')} / {data.get('org','-')}")
-    parts.append(f"🛰️ AS: {data.get('as','-')}")
-    parts.append(f"📍 {data.get('lat','?')}, {data.get('lon','?')}")
-    if data.get("reverse"): parts.append(f"🔁 Reverse: {_escape(str(data['reverse']))}")
-    parts.append("\nℹ️ استخدم هذه المعلومات لأغراض مشروعة فقط.")
-    return "\n".join(parts)
-
 def whois_domain(domain: str) -> dict|None:
     if pywhois is None:
         return {"error": "python-whois غير مثبت"}
@@ -589,6 +767,7 @@ def whois_domain(domain: str) -> dict|None:
     except Exception as e:
         return {"error": f"whois error: {e}"}
 
+# فحوص الأمن
 async def urlscan_lookup(u: str) -> str:
     if not URLSCAN_API_KEY:
         return "ℹ️ ضع URLSCAN_API_KEY لتفعيل الفحص."
@@ -599,10 +778,8 @@ async def urlscan_lookup(u: str) -> str:
             async with s.post("https://urlscan.io/api/v1/scan/", headers=headers, json=data, timeout=30) as r:
                 resp = await r.json(content_type=None)
             res = []
-            if "result" in resp:
-                res.append(f"urlscan: {resp['result']}")
-            if "message" in resp:
-                res.append(f"msg: {resp['message']}")
+            if "result" in resp: res.append(f"urlscan: {resp['result']}")
+            if "message" in resp: res.append(f"msg: {resp['message']}")
             return "\n".join(res) or "urlscan: submitted."
     except Exception as e:
         return f"urlscan error: {e}"
@@ -619,29 +796,72 @@ async def kickbox_lookup(email: str) -> str:
     except Exception as e:
         return f"kickbox error: {e}"
 
+async def ipinfo_lookup(query: str) -> str:
+    if not IPINFO_TOKEN:
+        return "ℹ️ ضع IPINFO_TOKEN لتفعيل ipinfo."
+    try:
+        url = f"https://ipinfo.io/{query}?token={IPINFO_TOKEN}"
+        async with aiohttp.ClientSession() as s:
+            async with s.get(url, timeout=15) as r:
+                data = await r.json(content_type=None)
+        keys = ["ip","hostname","city","region","country","loc","org","asn"]
+        parts = [f"{k}: {data.get(k,'-')}" for k in keys if k in data]
+        return "ipinfo:\n" + "\n".join(parts)
+    except Exception as e:
+        return f"ipinfo error: {e}"
+
+async def osint_email(email: str) -> str:
+    if not is_valid_email(email): return "⚠️ صيغة الإيميل غير صحيحة."
+    local, domain = email.split("@", 1)
+    if dnsresolver:
+        try:
+            answers = dnsresolver.resolve(domain, "MX")
+            mx_hosts = [str(r.exchange).rstrip(".") for r in answers]
+            mx_txt = ", ".join(mx_hosts[:5]) if mx_hosts else "لا يوجد"
+        except dnsexception.DNSException:
+            mx_txt = "لا يوجد (فشل الاستعلام)"
+    else:
+        mx_txt = "dnspython غير مثبت"
+    g_url = f"https://www.gravatar.com/avatar/{md5_hex(email)}?d=404"
+    g_st = await http_head(g_url)
+    grav = "✅ موجود" if g_st and 200 <= g_st < 300 else "❌ غير موجود"
+    ip = resolve_ip(domain)
+    geo_text = fmt_geo(await fetch_geo(ip)) if ip else "⚠️ تعذّر حلّ IP للدومين."
+    w = whois_domain(domain)
+    w_txt = "WHOIS: غير متاح" if not w else (f"WHOIS: {w['error']}" if w.get("error") else f"WHOIS:\n- Registrar: {w.get('registrar')}\n- Created: {w.get('creation_date')}\n- Expires: {w.get('expiration_date')}")
+    out = [
+        f"📧 {email}",
+        f"📮 MX: {mx_txt}",
+        f"🖼️ Gravatar: {grav}",
+        w_txt,
+        f"\n{geo_text}"
+    ]
+    try:
+        kb = await kickbox_lookup(email)
+        out.append(kb)
+    except Exception:
+        pass
+    return "\n".join(out)
+
 async def link_scan(u: str) -> str:
     if not _URL_RE.search(u or ""):
         return "⚠️ أرسل رابط يبدأ بـ http:// أو https://"
-    meta = _urlparse.urlparse(u)
-    host = meta.hostname or ""
-    scheme = meta.scheme
+    meta = re.match(r"https?://([^/]+)", u)
+    host = meta.group(1) if meta else ""
+    scheme = "https" if u.startswith("https://") else "http"
     issues = []
     if scheme != "https": issues.append("❗️ بدون تشفير HTTPS")
     ip = resolve_ip(host) if host else None
     geo_txt = fmt_geo(await fetch_geo(ip)) if ip else "⚠️ تعذّر حلّ IP للمضيف."
     status = await http_head(u)
-    if status is None:
-        issues.append("⚠️ فشل الوصول (HEAD)")
-    else:
-        issues.append(f"🔎 حالة HTTP: {status}")
+    if status is None: issues.append("⚠️ فشل الوصول (HEAD)")
+    else: issues.append(f"🔎 حالة HTTP: {status}")
     try:
-        us = await urlscan_lookup(u)
-        issues.append(us)
-    except Exception:
-        pass
+        us = await urlscan_lookup(u); issues.append(us)
+    except Exception: pass
     return f"🔗 <code>{_escape(u)}</code>\nالمضيف: <code>{_escape(host)}</code>\n" + "\n".join(issues) + f"\n\n{geo_txt}"
 
-# ==== صور/نصوص AI ====
+# ==== صور AI ====
 async def openai_image_generate(prompt: str) -> bytes|None:
     if not AI_ENABLED or OpenAI is None:
         return None
@@ -656,6 +876,45 @@ async def openai_image_generate(prompt: str) -> bytes|None:
         log.error("[image-gen] %s", e)
         return None
 
+async def replicate_image_generate(prompt: str) -> bytes|None:
+    if not REPLICATE_API_TOKEN:
+        return None
+    try:
+        model = f"{REPLICATE_MODEL_OWNER}/{REPLICATE_MODEL_NAME}"
+        url = f"https://api.replicate.com/v1/predictions"
+        headers = {"Authorization": f"Token {REPLICATE_API_TOKEN}", "Content-Type":"application/json"}
+        payload = {"version": REPLICATE_MODEL_VER or None, "input": {"prompt": prompt}}
+        payload = {k:v for k,v in payload.items() if v is not None}
+        async with aiohttp.ClientSession() as s:
+            async with s.post(url, headers=headers, json={"version": payload.get("version"), "input": payload["input"]}, timeout=60) as r:
+                pred = await r.json()
+            pred_url = pred.get("urls",{}).get("get")
+            for _ in range(40):
+                await asyncio.sleep(2)
+                async with aiohttp.ClientSession() as s:
+                    async with s.get(pred_url, headers=headers, timeout=30) as r:
+                        cur = await r.json()
+                if cur.get("status") in ("succeeded","failed","canceled"):
+                    pred = cur; break
+            if pred.get("status") != "succeeded":
+                log.error("[replicate] status=%s err=%s", pred.get("status"), pred.get("error"))
+                return None
+            outputs = pred.get("output") or []
+            if not outputs: return None
+            img_url = outputs[0]
+            async with aiohttp.ClientSession() as s:
+                async with s.get(img_url, timeout=60) as r:
+                    return await r.read()
+    except Exception as e:
+        log.error("[replicate] %s", e)
+        return None
+
+async def ai_image_generate(prompt: str) -> bytes|None:
+    img = await replicate_image_generate(prompt)
+    if img: return img
+    return await openai_image_generate(prompt)
+
+# Chat / Translate / Write
 def _chat_with_fallback(messages):
     if not AI_ENABLED or OpenAI is None:
         return None, "ai_disabled"
@@ -663,7 +922,7 @@ def _chat_with_fallback(messages):
     if client is None:
         return None, "ai_disabled"
     primary = (OPENAI_CHAT_MODEL or "").strip()
-    fallbacks = [m for m in [primary, "gpt-4o-mini", "gpt-4.1-mini", "gpt-4o", "gpt-4.1"] if m]
+    fallbacks = [m for m in [primary, "gpt-4o-mini", "gpt-4.1-mini", "gpt-4o", "gpt-4.1", "gpt-3.5-turbo"] if m]
     seen = set(); ordered = []
     for m in fallbacks:
         if m not in seen: ordered.append(m); seen.add(m)
@@ -686,7 +945,7 @@ def ai_chat_reply(prompt: str) -> str:
         return T("ai_disabled", lang="ar")
     try:
         r, err = _chat_with_fallback([
-            {"role":"system","content":"أجب بالعربية أو الإنجليزية حسب لغة المستخدم بإيجاز ووضوح."},
+            {"role":"system","content":"أجب بالعربية أو الإنجليزية بحسب لغة المستخدم، باختصار ووضوح."},
             {"role":"user","content":prompt}
         ])
         if err == "ai_disabled": return T("ai_disabled", lang="ar")
@@ -697,6 +956,38 @@ def ai_chat_reply(prompt: str) -> str:
     except Exception as e:
         log.error("[ai] unexpected: %s", e)
         return "⚠️ خطأ غير متوقع."
+
+# ترجمة ثنائية: يعيد AR ثم EN ويضبط الاتجاه
+def _bidi_wrap(ar_text: str, en_text: str) -> str:
+    RLE = "\u202B"; LRE = "\u202A"; PDF = "\u202C"
+    return (f"{RLE}العربية:{PDF}\n{RLE}{ar_text}{PDF}\n\n"
+            f"{LRE}English:{PDF}\n{LRE}{en_text}{PDF}")
+
+async def translate_text_bilingual(text: str) -> str:
+    if not AI_ENABLED or OpenAI is None:
+        return T("ai_disabled", lang="ar")
+    _ensure_openai()
+    if client is None:
+        return T("ai_disabled", lang="ar")
+    prompt = (
+        "You are a precise bilingual translator. "
+        "Return BOTH Arabic and English versions. Keep formatting, emojis, URLs, and numbers. "
+        "Output EXACTLY this shape:\n"
+        "AR:\n<arabic>\n\nEN:\n<english>"
+        f"\n\nText:\n{text}"
+    )
+    r, err = _chat_with_fallback([
+        {"role":"system","content":"Translate accurately and concisely."},
+        {"role":"user","content": prompt}
+    ])
+    if err: return "⚠️ تعذّر الترجمة حالياً."
+    raw = (r.choices[0].message.content or "").strip()
+    # استخراج AR/EN
+    m_ar = re.search(r"AR:\s*(.+?)(?:\nEN:|\Z)", raw, re.S|re.I)
+    m_en = re.search(r"EN:\s*(.+)$", raw, re.S|re.I)
+    ar = (m_ar.group(1).strip() if m_ar else raw).strip()
+    en = (m_en.group(1).strip() if m_en else raw).strip()
+    return _bidi_wrap(ar, en)
 
 async def tts_whisper_from_file(filepath: str) -> str:
     if not AI_ENABLED or OpenAI is None:
@@ -712,41 +1003,13 @@ async def tts_whisper_from_file(filepath: str) -> str:
         log.error("[whisper] %s", e)
         return "⚠️ تعذّر التحويل."
 
-async def translate_bilingual(text: str) -> str:
-    """ترجمة بنمط ثنائي: يعرض العربية (RTL) والإنجليزية (LTR) معاً بشكل منسّق."""
-    if not AI_ENABLED or OpenAI is None:
-        return T("ai_disabled", lang="ar")
-    _ensure_openai()
-    if client is None:
-        return T("ai_disabled", lang="ar")
-    sys = (
-        "You are a professional bilingual translator. Return TWO sections:\n"
-        "1) Arabic (RTL) — high quality, natural, keep formatting where possible.\n"
-        "2) English (LTR) — high quality, natural.\n"
-        "Rules: No extra commentary. Keep lists and line breaks. If the input is already in one language, translate to the other — but still show both sections."
-    )
-    user = f"Text to translate (bilingual output):\n\n{text}"
-    r, err = _chat_with_fallback([{"role":"system","content":sys},{"role":"user","content":user}])
-    if err:
-        return "⚠️ تعذّر الترجمة حالياً."
-    out = (r.choices[0].message.content or "").strip()
-
-    # إضافة توجيه اتجاه: RLE/PDF للعربية — LRE/PDF للإنجليزية
-    RLE = "\u202B"; LRE = "\u202A"; PDF = "\u202C"
-    # محاولة تزيين العناوين
-    formatted = (
-        f"🇸🇦 {RLE}العربية (RTL){PDF}\n{RLE}{out.splitlines()[0] if out else ''}{PDF}\n\n"
-        f"🇺🇸 {LRE}English (LTR){PDF}\n{LRE}{out}{PDF}"
-    )
-    # لو تقسيم بسيط غير دقيق، نكتفي بالنص كما هو:
-    return out if len(out) > 2000 else formatted
-
 async def ai_write(prompt: str) -> str:
     if not AI_ENABLED or OpenAI is None:
         return T("ai_disabled", lang="ar")
     sysmsg = (
-        "أنت كاتب تسويق ذكي. اكتب نصًا واضحًا ومقنعًا للإعلانات أو صفحات الهبوط أو وصف المنتجات.\n"
-        "أخرج: عنوان جذاب، نقاط فوائد مختصرة، دعوة لاتخاذ إجراء (CTA)، ونبرة تناسب الجمهور."
+        "أنت كاتب إعلانات محترف. اكتب نصاً واضحاً وقوياً يصلح لإعلان/وصف خدمة أو منتج. "
+        "يتضمن: عنوان جذاب، نقاط مختصرة للمزايا، دعوة لاتخاذ إجراء (CTA). "
+        "إن أمكن قدّم أيضاً نسخة مختصرة بالإنجليزية أسفل العربية."
     )
     r, err = _chat_with_fallback([{"role":"system","content":sysmsg},{"role":"user","content":prompt}])
     if err: return "⚠️ تعذّر التوليد حالياً."
@@ -850,15 +1113,16 @@ async def on_startup(app: Application):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     init_db()
-    uid = update.effective_user.id; chat_id = update.effective_chat.id
-    u = user_get(uid)
+    uid = update.effective_user.id
+    u = user_get(uid); pref = u.get("pref_lang","ar")
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton(T("lang_ar", lang="ar"), callback_data="set_lang_ar"),
          InlineKeyboardButton(T("lang_en", lang="ar"), callback_data="set_lang_en")]
     ])
-    await context.bot.send_message(chat_id, T("start_pick_lang", lang=u.get("pref_lang","ar")), reply_markup=kb)
-    # بديل صورة متحركة: أرسل GIF ترحيبي (اختياري)
-    # await context.bot.send_animation(chat_id, animation="https://media.giphy.com/media/xTiTnyZfy6f4S8kVaw/giphy.gif")
+    name = (update.effective_user.username and "@"+update.effective_user.username) or (update.effective_user.first_name or "صديقي")
+    name = _escape(name)
+    caption = f"{T('hello_name', lang=pref, name=name)}\n\n{T('start_pick_lang', lang=pref)}"
+    await send_welcome_media(context.bot, update.effective_chat.id, caption, kb)
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -896,44 +1160,34 @@ async def must_be_member_or_vip(context: ContextTypes.DEFAULT_TYPE, user_id: int
     if user_is_premium(user_id) or user_id == OWNER_ID: return True
     return await is_member(context, user_id, retries=3, backoff=0.7)
 
-# قوالب فكّ الباند (مقوية)
+# رسائل فك الباند (شديدة الاحتراف)
 UNBAN_TEMPLATES = {
     "instagram": (
-        "Subject: Request for Immediate Review and Restoration of My Instagram Account\n\n"
-        "Dear Instagram Support,\n\n"
-        "My account appears to have been mistakenly disabled/limited. I strictly follow the Community Guidelines and "
-        "believe this action is a false positive. I do not engage in spam, impersonation, or harmful content. "
-        "I kindly request a manual review by a human moderator and the restoration of my account.\n\n"
-        "If any content triggered the action, I’m ready to remove it and comply immediately. "
-        "Please let me know if you require additional information for verification.\n\n"
-        "Thank you for your time and assistance.\n"
-        "Best regards,"
+        "Hello Instagram Support,\n\n"
+        "My account was restricted/disabled in what appears to be an automated action. "
+        "I strictly follow the Community Guidelines and never engage in misleading or harmful activity. "
+        "This seems to be a false positive. I kindly request a manual review of my account and the full restoration of access. "
+        "I’m happy to provide any additional details you need.\n\nThank you for your time."
     ),
     "facebook": (
-        "Subject: Urgent Appeal – Account Disabled in Error\n\n"
-        "Dear Facebook Support,\n\n"
-        "My account was disabled/restricted unexpectedly. I respect Facebook’s Community Standards and believe this "
-        "decision was made in error (possibly by automated systems). I request a manual review and reinstatement. "
-        "I’m available to confirm my identity and comply with any additional requirements.\n\n"
-        "Thank you for your prompt help.\n"
-        "Sincerely,"
+        "Hello Facebook Support,\n\n"
+        "My account was disabled or limited by mistake. I understand and respect the Community Standards and I believe I have not violated them. "
+        "Please conduct a manual review of my case and restore my access as soon as possible. "
+        "Your help is appreciated.\n\nThank you."
     ),
     "telegram": (
-        "Subject: Appeal to Lift Restriction on Telegram Account/Channel\n\n"
-        "Dear Telegram Support,\n\n"
-        "My account/channel seems to be limited by mistake. I always adhere to Telegram’s Terms of Service and local laws. "
-        "I do not promote illegal activities or abusive behavior. Kindly perform a manual review and lift the restriction.\n\n"
-        "If further verification is required, I’m ready to provide it immediately.\n\n"
-        "Thank you for your support."
+        "Hello Telegram Support,\n\n"
+        "It looks like my account/channel was restricted by an automated system. "
+        "I fully comply with the Terms of Service and local regulations. "
+        "I kindly request a manual review and the removal of the limitation. "
+        "I am available to provide any verification if needed.\n\nThank you."
     ),
     "epic": (
-        "Subject: Appeal for Ban Removal – Epic Games Account\n\n"
-        "Dear Epic Games Support,\n\n"
-        "My account has been banned due to what I believe is a misunderstanding. I follow the rules and do not use cheats, "
-        "exploits, or third-party tools. I respectfully request a thorough manual review and the removal of the ban. "
-        "If any clarification or logs are needed, I’m happy to cooperate.\n\n"
-        "Thank you for your time."
-    ),
+        "Hello Epic Games Support,\n\n"
+        "My account appears to have been banned in error. I always follow the rules and do not use cheats or abusive behavior. "
+        "Please perform a manual review of my account and lift the ban if possible. "
+        "Thank you for your assistance."
+    )
 }
 UNBAN_LINKS = {
     "instagram": "https://help.instagram.com/contact/606967319425038",
@@ -959,13 +1213,16 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit(q, text, kb=main_menu_kb(uid, new))
         return
 
+    # زر تغيير اللغة
     if q.data == "pick_lang":
         await safe_edit(q, T("start_pick_lang", lang=lang), kb=InlineKeyboardMarkup([
             [InlineKeyboardButton(T("lang_ar", lang=lang), callback_data="set_lang_ar"),
              InlineKeyboardButton(T("lang_en", lang=lang), callback_data="set_lang_en")],
             [InlineKeyboardButton(T("back", lang=lang), callback_data="back_home")]
-        ])); return
+        ]))
+        return
 
+    # تحقق الانضمام
     if q.data == "verify":
         ok = await is_member(context, uid, force=True, retries=3, backoff=0.7)
         if ok:
@@ -974,6 +1231,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, T("not_verified", lang=lang) + "\n" + need_admin_text(lang), kb=gate_kb(lang))
         return
 
+    # صلاحية الانضمام
     if not await must_be_member_or_vip(context, uid):
         await safe_edit(q, T("must_join", lang=lang), kb=gate_kb(lang)); return
 
@@ -993,9 +1251,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if USE_PAYLINK_API and PAYLINK_API_ID and PAYLINK_API_SECRET:
                 pay_url, _ = await paylink_create_invoice(ref, VIP_PRICE_SAR, q.from_user.full_name or "Telegram User")
             else:
-                # لو تستخدم Checkout جاهز
-                base = (PAYLINK_CHECKOUT_BASE or "").strip()
-                pay_url = f"{base}?ref={ref}" if base else "https://paylink.sa"
+                pay_url = _build_pay_link(ref) or "https://paylink.sa"
             txt = T("vip_pay_title", lang=lang, price=VIP_PRICE_SAR) + "\n" + T("vip_ref", lang=lang, ref=ref)
             await safe_edit(q, txt, kb=InlineKeyboardMarkup([
                 [InlineKeyboardButton(T("go_pay", lang=lang), url=pay_url)],
@@ -1040,28 +1296,21 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit(q, T("ai_disabled", lang=lang), kb=sections_kb(lang)); return
         ai_set_mode(uid, "ai_chat")
         await safe_edit(q, T("ai_chat_on", lang=lang), kb=ai_stop_kb(lang)); return
-
     if q.data == "ai_stop":
         ai_set_mode(uid, None)
         await safe_edit(q, T("ai_chat_off", lang=lang), kb=sections_kb(lang)); return
-
     if q.data == "ai_writer":
         ai_set_mode(uid, "writer")
-        await safe_edit(q, "✍️ أرسل تفاصيل الإعلان/الوصف (المنتج/الخدمة، الجمهور، الهدف، النبرة…)\nسأجهّز لك عنوان جذاب + نقاط فوائد + CTA.",
-                        kb=ai_stop_kb(lang)); return
-
+        await safe_edit(q, T("send_text", lang=lang), kb=ai_stop_kb(lang)); return
     if q.data == "ai_translate":
-        ai_set_mode(uid, "translate_bidi")
-        await safe_edit(q, "🌐 أرسل النص الآن.\nسيتم عرض: 🇸🇦 العربية (يمين/RTL) × 🇺🇸 الإنجليزية (يسار/LTR) في نفس الرسالة.",
-                        kb=ai_stop_kb(lang)); return
-
+        ai_set_mode(uid, "translate")
+        await safe_edit(q, T("send_text", lang=lang), kb=ai_stop_kb(lang)); return
     if q.data == "ai_stt":
         ai_set_mode(uid, "stt")
-        await safe_edit(q, "🎙️ أرسل مذكرة صوتية وسأحوّلها إلى نص.", kb=ai_stop_kb(lang)); return
-
+        await safe_edit(q, T("send_text", lang=lang), kb=ai_stop_kb(lang)); return
     if q.data == "ai_image":
         ai_set_mode(uid, "image_ai")
-        await safe_edit(q, "🖼️ أرسل وصف الصورة التي تريد توليدها.", kb=ai_stop_kb(lang)); return
+        await safe_edit(q, T("send_text", lang=lang), kb=ai_stop_kb(lang)); return
 
     # الأمن
     if q.data == "sec_security":
@@ -1087,11 +1336,13 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             [InlineKeyboardButton(T("btn_vcc", lang=lang), callback_data="serv_vcc")],
                             [InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]
                         ])); return
+
     if q.data == "serv_numbers":
         nums = SERV_NUMBERS_LINKS or ["https://txtu.app/"]
         rows = [[InlineKeyboardButton(u, url=u)] for u in nums]
         rows.append([InlineKeyboardButton(T("back", lang=lang), callback_data="sec_services")])
         await safe_edit(q, T("services_numbers", lang=lang), kb=InlineKeyboardMarkup(rows)); return
+
     if q.data == "serv_vcc":
         vcc  = SERV_VCC_LINKS or ["https://fake-card.com/virtual-card-mastercard-free-card-bin/228757973743900/"]
         rows = [[InlineKeyboardButton(u, url=u)] for u in vcc]
@@ -1100,21 +1351,21 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # فك الباند
     if q.data == "sec_unban":
-        await safe_edit(q, "اختر المنصة لرسالة فكّ الباند القوية وروابط التواصل:",
-                        kb=InlineKeyboardMarkup([
-                            [InlineKeyboardButton("Instagram", callback_data="unban_instagram")],
-                            [InlineKeyboardButton("Facebook", callback_data="unban_facebook")],
-                            [InlineKeyboardButton("Telegram", callback_data="unban_telegram")],
-                            [InlineKeyboardButton("Epic Games", callback_data="unban_epic")],
-                            [InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]
-                        ])); return
+        await safe_edit(q, T("unban_desc", lang=lang), kb=InlineKeyboardMarkup([
+            [InlineKeyboardButton("Instagram", callback_data="unban_instagram")],
+            [InlineKeyboardButton("Facebook", callback_data="unban_facebook")],
+            [InlineKeyboardButton("Telegram", callback_data="unban_telegram")],
+            [InlineKeyboardButton("Epic Games", callback_data="unban_epic")],
+            [InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]
+        ])); return
 
     if q.data.startswith("unban_"):
         key = q.data.replace("unban_","")
         msg = UNBAN_TEMPLATES.get(key,"")
         link = UNBAN_LINKS.get(key,"")
-        await safe_edit(q, f"📋 انسخ الرسالة الجاهزة:\n<code>{_escape(msg)}</code>\n\n🔗 تقديم الطلب: {link}",
-                        kb=InlineKeyboardMarkup([[InlineKeyboardButton(T("back", lang=lang), callback_data="sec_unban")]])); return
+        await safe_edit(q, f"📋 Message:\n<code>{_escape(msg)}</code>\n\n🔗 {link}", kb=InlineKeyboardMarkup([
+            [InlineKeyboardButton(T("back", lang=lang), callback_data="sec_unban")]
+        ])); return
 
     # الدورات
     if q.data == "sec_courses":
@@ -1128,22 +1379,20 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rows.append([InlineKeyboardButton(T("back", lang=lang), callback_data="sections")])
         await safe_edit(q, T("page_courses", lang=lang), kb=InlineKeyboardMarkup(rows)); return
 
-    # برامج أدوبي
+    # برامج أدوبي (ويندوز)
     if q.data == "sec_adobe":
-        await safe_edit(q, T("adobe_desc", lang=lang),
-                        kb=InlineKeyboardMarkup([
-                            [InlineKeyboardButton("فتح المستند", url=ADOBE_DOC_URL)],
-                            [InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]
-                        ])); return
+        rows = [[InlineKeyboardButton("فتح المستند", url=ADOBE_WIN_URL)],
+                [InlineKeyboardButton(T("back", lang=lang), callback_data="sections")]]
+        await safe_edit(q, T("page_adobe", lang=lang), kb=InlineKeyboardMarkup(rows)); return
 
     # الرشق
     if q.data == "sec_boost":
         links = FOLLOWERS_LINKS or ["https://smmcpan.com/","https://saudifollow.com/","https://drd3m.me/"]
         rows = [[InlineKeyboardButton(u.replace("https://","").rstrip("/"), url=u)] for u in links]
         rows.append([InlineKeyboardButton(T("back", lang=lang), callback_data="sections")])
-        await safe_edit(q, T("page_boost", lang=lang) + "\n" + "روابط منصات زيادة المتابعين (استخدمها بمسؤولية).", kb=InlineKeyboardMarkup(rows)); return
+        await safe_edit(q, T("page_boost", lang=lang) + "\n" + "روابط منصات موثوقة لزيادة المتابعين.", kb=InlineKeyboardMarkup(rows)); return
 
-# ==== تنزيل ملف/صوت من تيليجرام (لاستخدام STT) ====
+# ==== تنزيل ملف من تيليجرام ====
 async def tg_download_to_path(bot, file_id: str, suffix: str = "") -> Path:
     TMP_DIR.mkdir(parents=True, exist_ok=True)
     f = await bot.get_file(file_id)
@@ -1171,34 +1420,28 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(ai_chat_reply(text), reply_markup=ai_stop_kb(lang)); return
         if mode == "writer":
             out = await ai_write(text); await update.message.reply_text(out, parse_mode="HTML"); return
-        if mode == "translate_bidi":
-            out = await translate_bilingual(text); await update.message.reply_text(out, parse_mode="HTML"); return
+        if mode == "translate":
+            out = await translate_text_bilingual(text); await update.message.reply_text(out); return
         if mode == "link_scan":
             out = await link_scan(text); await update.message.reply_text(out, parse_mode="HTML", disable_web_page_preview=True); return
         if mode == "email_check":
-            if not is_valid_email(text):
-                await update.message.reply_text("⚠️ صيغة الإيميل غير صحيحة."); return
-            # whois/dns/ipinfo مختصر هنا
-            w = whois_domain(text.split("@",1)[1])
-            mx_txt = "تحقق MX يتطلب dnspython"
-            if dnsresolver:
-                try:
-                    answers = dnsresolver.resolve(text.split("@",1)[1], "MX")
-                    mx_hosts = [str(r.exchange).rstrip(".") for r in answers]
-                    mx_txt = ", ".join(mx_hosts[:5]) if mx_hosts else "لا يوجد"
-                except dnsexception.DNSException:
-                    mx_txt = "لا يوجد (فشل الاستعلام)"
-            kb = await kickbox_lookup(text)
-            who = ("WHOIS: "+w.get("registrar","-")) if w and not w.get("error") else ("WHOIS: "+w.get("error","N/A"))
-            await update.message.reply_text(f"📧 {text}\n📮 MX: {mx_txt}\n{who}\n{kb}"); return
+            out = await osint_email(text); await update.message.reply_text(out, parse_mode="HTML"); return
         if mode == "geo_ip":
             target = text
             query = target
-            if re.fullmatch(r"[a-zA-Z0-9.-]{1,253}\.[A-Za-z]{2,63}", target or ""):
+            if _HOST_RE.match(target):
                 ip = resolve_ip(target)
                 if ip: query = ip
             data = await fetch_geo(query)
             await update.message.reply_text(fmt_geo(data), parse_mode="HTML"); return
+        if mode == "image_ai":
+            await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_PHOTO)
+            img_bytes = await ai_image_generate(text)
+            if img_bytes:
+                await update.message.reply_photo(InputFile(BytesIO(img_bytes), filename="ai.png"))
+            else:
+                await update.message.reply_text("⚠️ لم أستطع توليد الصورة حالياً.")
+            return
 
     if msg.voice or msg.audio:
         if mode == "stt":
@@ -1207,18 +1450,14 @@ async def guard_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             out = await tts_whisper_from_file(str(p))
             await update.message.reply_text(out); return
 
-    if msg.photo:
-        # ما عندنا تحويل ملفات؛ لكن لو أردت بالمستقبل ترجمة صور بالـ Vision فعّل OPENAI_VISION=1 وأضف هنا.
-        pass
-
-    if msg.document:
-        # لا شيء خاص بالملفات الآن
-        pass
-
     if not mode:
         await update.message.reply_text(T("main_menu", lang=lang), reply_markup=main_menu_kb(uid, lang))
 
-# ==== أوامر المالك ====
+# ==== أدوات مساعدة للمالك ====
+async def echo_anim_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id == OWNER_ID and update.message and update.message.animation:
+        await update.message.reply_text(f"file_id: {update.message.animation.file_id}")
+
 async def help_cmd_owner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
     await update.message.reply_text("Admin: /id /grant /revoke /vipinfo /refreshcmds /aidiag /libdiag /paylist /restart")
@@ -1258,12 +1497,14 @@ async def aidiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try: return version(pkg)
             except PackageNotFoundError: return "not-installed"
         k = (os.getenv("OPENAI_API_KEY") or "").strip()
+        ffm = ffmpeg_path(); ffp = ffprobe_path()
         msg = (f"AI_ENABLED={'ON' if AI_ENABLED else 'OFF'}\n"
                f"Key={'set(len=%d)'%len(k) if k else 'missing'}\n"
                f"Model={OPENAI_CHAT_MODEL}\n"
                f"openai={v('openai')}\n"
                f"httpx={v('httpx')}\n"
-               f"python={os.sys.version.split()[0]}")
+               f"ffmpeg={'FOUND' if ffm else 'MISSING'}{(' @'+ffm) if ffm else ''}\n"
+               f"ffprobe={'FOUND' if ffp else 'MISSING'}{(' @'+ffp) if ffp else ''}")
         await update.message.reply_text(msg)
     except Exception as e:
         await update.message.reply_text(f"aidiag error: {e}")
@@ -1280,7 +1521,6 @@ async def libdiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
                f"httpx={v('httpx')}\n"
                f"python-whois={v('python-whois')}\n"
                f"dnspython={v('dnspython')}\n"
-               f"yt-dlp={v('yt-dlp')}\n"
                f"python={os.sys.version.split()[0]}")
         await update.message.reply_text(msg)
     except Exception as e:
@@ -1288,11 +1528,7 @@ async def libdiag(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def paylist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID: return
-    rows = []
-    with _conn_lock:
-        c = _db().cursor()
-        c.execute("SELECT * FROM payments ORDER BY created_at DESC LIMIT 15")
-        rows = [dict(x) for x in c.fetchall()]
+    rows = payments_last(15)
     if not rows:
         await update.message.reply_text("لا توجد مدفوعات بعد."); return
     txt = []
@@ -1311,6 +1547,18 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
 
 # ==== Main ====
 def main():
+    # تأكد من صلاحية مجلد DB
+    try:
+        Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+        test = Path(DB_PATH).parent / ".w"
+        test.write_text("ok", encoding="utf-8"); test.unlink(missing_ok=True)
+    except Exception as e:
+        # fallback إلى /tmp إن ما فيه صلاحية
+        global DB_PATH
+        DB_PATH = "/tmp/bot.db"
+        log.warning("skip dump source: %s", e)
+        Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+
     init_db()
     app = (Application.builder()
            .token(BOT_TOKEN)
@@ -1338,11 +1586,10 @@ def main():
     app.add_handler(CallbackQueryHandler(on_button))
 
     # رسائل
+    app.add_handler(MessageHandler(filters.ANIMATION, echo_anim_id))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, guard_messages))
     app.add_handler(MessageHandler(filters.VOICE, guard_messages))
     app.add_handler(MessageHandler(filters.AUDIO, guard_messages))
-    app.add_handler(MessageHandler(filters.PHOTO, guard_messages))
-    app.add_handler(MessageHandler(filters.Document.ALL, guard_messages))
 
     app.add_error_handler(on_error)
     app.run_polling()
