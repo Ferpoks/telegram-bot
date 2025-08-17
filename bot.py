@@ -1,8 +1,4 @@
-# We'll write a full Python script to /mnt/data/bot_full.py that integrates the requested changes.
-from textwrap import dedent
-from pathlib import Path
-
-code = r'''# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 import os, sqlite3, threading, time, asyncio, re, json, logging, base64, hashlib, socket, tempfile, subprocess, shutil
 from pathlib import Path
 from io import BytesIO
@@ -11,6 +7,20 @@ from html import escape as _escape
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("bot")
+
+# ===== نسخ آمن اختياري لملف السورس إلى /var/data (بدون توقف التطبيق لو فشل) =====
+def _dump_source_safely():
+    try:
+        target = Path("/var/data/bot_full.py")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        src = Path(__file__).read_text(encoding="utf-8")
+        target.write_text(src, encoding="utf-8")
+        logging.info("wrote source to %s", target)
+    except Exception as e:
+        logging.warning("skip dump source: %s", e)
+
+_dump_source_safely()
+# =============================================================================
 
 # ==== OpenAI (اختياري) ====
 try:
@@ -477,6 +487,8 @@ def T(key: str, lang: str | None = None, **kw) -> str:
         "vip_ref": "🔖 Your reference: <code>{ref}</code>",
         "go_pay": "🚀 Go to payment",
         "check_pay": "✅ Verify payment",
+        "ai_chat_on": "🤖 Chat mode enabled. Send your message.",
+        "ai_chat_off": "🔚 AI chat ended.",
         "security_desc": "Send URL/domain/email to check (urlscan, kickbox, ipinfo) – needs API keys.",
         "services_desc": "Pick a service:",
         "files_desc": "File tools: JPG→PDF (local), PDF→Word (local), Word→PDF (ConvertAPI), image format conversions.",
@@ -1814,9 +1826,7 @@ def main():
 
 if __name__ == "__main__":
     main()
-'''
-Path("/mnt/data/bot_full.py").write_text(code, encoding="utf-8")
-print("Wrote /mnt/data/bot_full.py (size bytes):", len(code.encode("utf-8")))
+
 
 
 
