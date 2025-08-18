@@ -59,7 +59,7 @@ MAIN_CHANNEL_LINK = f"https://t.me/{MAIN_CHANNEL_USERNAMES[0]}" if MAIN_CHANNEL_
 PUBLIC_BASE_URL = (os.getenv("PUBLIC_BASE_URL") or "").rstrip("/")
 SERVE_HEALTH = os.getenv("SERVE_HEALTH","1") == "1"
 
-WELCOME_ANIMATION = (os.getenv("WELCOME_ANIMATION") or "").strip()  # gif/webp/mp4 أو ملف تيليجرام (file_id)
+WELCOME_ANIMATION = (os.getenv("WELCOME_ANIMATION") or "").strip()  # gif/mp4/file_id (تجنّب webp كأنيميشن)
 WELCOME_PHOTO = (os.getenv("WELCOME_PHOTO") or "").strip()          # بديل ثابت
 
 # AI
@@ -169,7 +169,7 @@ async def _payhook(request: web.Request):
     return web.json_response({"ok": True, "ref": ref, "activated": bool(activated)})
 
 def run_health_server_threaded():
-    """شغّل aiohttp في ثريد مستقل (لوب مختلف) لتفادي تضارب حلقات asyncio مع run_polling."""
+    """يشغّل aiohttp في ثريد مستقل (لوب مختلف) لتفادي تضارب حلقات asyncio مع run_polling."""
     if not SERVE_HEALTH:
         return
     port = int(os.getenv("PORT","10000"))
@@ -1118,6 +1118,7 @@ def main():
         Application.builder()
         .token(BOT_TOKEN)
         .concurrent_updates(True)
+        .post_init(on_startup)   # ← الإصلاح هنا: إضافتها قبل build()
         .build()
     )
 
@@ -1140,10 +1141,6 @@ def main():
 
     app.add_error_handler(on_error)
 
-    # startup hooks
-    app.post_init(on_startup)
-
-    # polling (حلقة مستقلة عن سيرفر aiohttp)
     app.run_polling()
 
 if __name__ == "__main__":
